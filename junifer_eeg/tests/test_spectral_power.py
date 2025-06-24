@@ -20,7 +20,7 @@ def test_spectral_power_basic():
 
     # Test marker
     marker = SpectralPower()
-    input_data = {"raw_object": raw}
+    input_data = {"data": raw}
     result = marker.compute(input_data)
 
     # Check output
@@ -45,5 +45,5 @@ def test_spectral_power_initialization():
     assert marker is not None
 
     # Test with parameters
-    marker = SpectralPower(on="BOLD", name="test_marker")
+    marker = SpectralPower(on="EEG", name="test_marker")
     assert marker is not None

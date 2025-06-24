@@ -1,6 +1,5 @@
 """EEG preprocessors module."""
 
-from .eeg_loader import EEGLoader  # noqa: F401
+from .eeg_filter import EEGFilter
 
-
-__all__ = ["EEGLoader"] 
+__all__ = ["EEGFilter"]

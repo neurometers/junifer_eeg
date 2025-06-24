@@ -1,22 +1,35 @@
-"""Example junifer pipeline configuration for EEG analysis."""
+# EEG Analysis Pipeline Configuration
+# Following junifer's standard pattern
 
-# Import the junifer_eeg extension to register components
+workdir: .
+
+# Import the junifer_eeg extension to register all components
 with:
   - junifer_eeg
 
-# Configure the data grabber for EEG files
+# Configure the data grabber using junifer's PatternDataGrabber
 datagrabber:
-  kind: EEGDataGrabber
-  datadir: /path/to/your/eeg/data
+  kind: PatternDataGrabber
+  datadir: data
+  patterns:
+    EEG:
+      pattern: "{subject}_eeg.edf"
+      space: "native"
+  replacements:
+    - subject
+  types:
+    - EEG
 
-# Define the elements (subjects) to process
+# Define the subjects to process
 elements:
   - subject1
   - subject2
 
-# Configure preprocessing to load EEG data
+# Configure preprocessing
 preprocess:
-  - kind: EEGLoader
+  - kind: EEGFilter
+    low_freq: 1.0
+    high_freq: 40.0
     on: EEG
 
 # Configure the markers to compute
@@ -25,7 +38,20 @@ markers:
     kind: SpectralPower
     on: EEG
 
-# Configure storage
+# Configure storage using HDF5 (not deprecated SQLite)
 storage:
-  kind: SQLiteFeatureStorage
-  uri: eeg_features.sqlite 
+  kind: HDF5FeatureStorage
+  uri: eeg_results.hdf5
+
+# Optional: Queue configuration for HTCondor (following Fede's pattern)
+queue:
+  jobname: eeg_spectral_power_analysis
+  kind: HTCondor
+  env:
+    kind: conda
+    name: junifer_dev
+  mem: 8G
+  cpus: 1
+  disk: 5G
+  verbose: info
+  collect: yes 

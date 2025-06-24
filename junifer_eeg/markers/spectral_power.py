@@ -12,11 +12,10 @@ class SpectralPower(BaseMarker):
     """Simple spectral power marker using MNE.
 
     Computes power in standard EEG frequency bands.
-    Uses BOLD data type as it's the closest to time-series EEG data.
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "pandas"}
-    _MARKER_INOUT_MAPPINGS: ClassVar = {"BOLD": {"spectral_power": "vector"}}
+    _MARKER_INOUT_MAPPINGS: ClassVar = {"EEG": {"spectral_power": "vector"}}
 
     def __init__(self, on: str | None = None, name: str | None = None) -> None:
         """Initialize the SpectralPower marker."""
@@ -30,7 +29,7 @@ class SpectralPower(BaseMarker):
         Parameters
         ----------
         input : dict
-            Input data containing 'raw_object' with MNE Raw object.
+            Input data containing 'data' with MNE Raw object.
         extra_input : dict, optional
             Additional input data.
 
@@ -41,7 +40,7 @@ class SpectralPower(BaseMarker):
 
         """
         # Get the MNE Raw object
-        raw = input["raw_object"]
+        raw = input["data"]
 
         # Define frequency bands
         bands = {

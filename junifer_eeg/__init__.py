@@ -10,6 +10,8 @@ __email__ = "g.marraffini@neurometers.ai"
 
 
 # Import main modules
-from . import markers  # noqa: F401
-from . import datagrabber  # noqa: F401
-from . import preprocessors  # noqa: F401 
+from . import (
+    datareader,
+    markers,
+    preprocessors,
+)

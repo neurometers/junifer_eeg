@@ -1,1 +1,1 @@
-"""Tests module for junifer_eeg.""" 
+"""Tests module for junifer_eeg."""

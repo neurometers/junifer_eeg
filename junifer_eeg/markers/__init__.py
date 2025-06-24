@@ -1,6 +1,5 @@
 """EEG markers module."""
 
-from .spectral_power import SpectralPower  # noqa: F401
+from .spectral_power import SpectralPower
 
-
-__all__ = ["SpectralPower"] 
+__all__ = ["SpectralPower"]
