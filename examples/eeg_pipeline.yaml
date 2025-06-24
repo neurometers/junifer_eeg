@@ -1,0 +1,31 @@
+"""Example junifer pipeline configuration for EEG analysis."""
+
+# Import the junifer_eeg extension to register components
+with:
+  - junifer_eeg
+
+# Configure the data grabber for EEG files
+datagrabber:
+  kind: EEGDataGrabber
+  datadir: /path/to/your/eeg/data
+
+# Define the elements (subjects) to process
+elements:
+  - subject1
+  - subject2
+
+# Configure preprocessing to load EEG data
+preprocess:
+  - kind: EEGLoader
+    on: EEG
+
+# Configure the markers to compute
+markers:
+  - name: spectral_power_analysis
+    kind: SpectralPower
+    on: EEG
+
+# Configure storage
+storage:
+  kind: SQLiteFeatureStorage
+  uri: eeg_features.sqlite 
