@@ -201,28 +201,7 @@ Currently supported:
 - Fully compatible with junifer's validation and metadata systems
 - Supports all junifer storage backends (SQLite, HDF5, etc.)
 
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for your changes
-5. Run the test suite (`pytest`)
-6. Commit your changes (`git commit -m 'Add amazing feature'`)
-7. Push to the branch (`git push origin feature/amazing-feature`)
-8. Open a Pull Request
-
-## License
-
-This project is licensed under the AGPL-3.0 License - see the LICENSE file for details.
-
 ## Authors
 
 - Giovanni Marraffini (g.marraffini@neurometers.ai)
 - Fede Raimondo (f.raimondo@fz-juelich.de)
-
-## Acknowledgments
-
-- Built following the [junifer extension documentation](https://github.com/juaml/junifer/blob/main/docs/extending.rst)
-- Uses [MNE-Python](https://mne.tools/) for EEG data handling
-- Integrates seamlessly with the [junifer](https://github.com/juaml/junifer) ecosystem 
