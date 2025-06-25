@@ -38,237 +38,112 @@ pip install -e .
 
 ## Quick Start
 
-### YAML Configuration (Recommended)
+### For Non-Python Users (Command Line Only)
 
-Create a YAML configuration file using junifer's standard `PatternDataGrabber`:
+1. **Install**: `pip install junifer junifer_eeg`
+2. **Prepare Data**: Convert EEG to EDF format, name as `{subject}_eeg.edf`
+3. **Copy Example**: `cp examples/simple_eeg_pipeline.yaml my_analysis.yaml`
+4. **Edit Config**: Update `datadir` path to your EEG files
+5. **Run**: `junifer run my_analysis.yaml`
+6. **Results**: Features saved in `eeg_basic_features.hdf5`
+
+### Simple Configuration (`examples/simple_eeg_pipeline.yaml`)
 
 ```yaml
-# eeg_analysis.yaml
-workdir: .
-
-# Import the junifer_eeg extension to register EEG components
 with:
-  - junifer_eeg
+  - "junifer_eeg"
+workdir: "."
 
-# Use junifer's default PatternDataGrabber with EEG data type
 datagrabber:
   kind: PatternDataGrabber
-  datadir: data
   patterns:
     EEG:
       pattern: "{subject}_eeg.edf"
       space: "native"
-  replacements:
-    - subject
-  types:
-    - EEG
+  datadir: "./your_data_directory"  # Update this
+  types: [EEG]
+  replacements: [subject]
 
-# Define subjects to process
-elements:
-  - subject1
-  - subject2
-
-# Configure preprocessing
 preprocess:
   - kind: EEGFilter
     low_freq: 1.0
     high_freq: 40.0
     on: EEG
 
-# Configure markers
 markers:
-  - name: spectral_power_analysis
-    kind: SpectralPower
+  - kind: SpectralPower
+    on: EEG
+  - kind: KolmogorovComplexity
+    nbins: 16
     on: EEG
 
-# Configure storage using HDF5 (SQLite is deprecated)
 storage:
   kind: HDF5FeatureStorage
-  uri: eeg_results.hdf5
+  uri: "eeg_basic_features.hdf5"
 
-# Optional: HTCondor queue configuration
-queue:
-  jobname: eeg_spectral_power
-  kind: HTCondor
-  env:
-    kind: conda
-    name: junifer_dev
-  mem: 8G
-  cpus: 1
-  disk: 5G
-  verbose: info
-  collect: yes
+elements:
+  - subject: "subject1"
 ```
 
-Run using junifer CLI:
+### Advanced Configuration (`examples/eeg_pipeline_config.yaml`)
 
-```bash
-junifer run eeg_analysis.yaml
-```
+Full pipeline with all available markers - see file for complete example.
 
-### Python API
+### Working with Results
 
 ```python
-from junifer.datagrabber import PatternDataGrabber
-from junifer_eeg.datareader import EEGDataReader
-from junifer_eeg.preprocessors import EEGFilter
-from junifer_eeg.markers import SpectralPower
+import pandas as pd
+import h5py
 
-# Configure data grabber (uses junifer's default PatternDataGrabber)
-dg = PatternDataGrabber(
-    datadir="data",
-    patterns={"EEG": {"pattern": "{subject}_eeg.edf", "space": "native"}},
-    replacements=["subject"],
-    types=["EEG"]
-)
+# Load HDF5 results
+df_spectral = pd.read_hdf('eeg_basic_features.hdf5', key='SpectralPower')
+df_complexity = pd.read_hdf('eeg_basic_features.hdf5', key='KolmogorovComplexity')
 
-# Use EEGDataReader (extends DefaultDataReader)
-reader = EEGDataReader()
-
-# Process data
-with dg:
-    element = "subject1"
-    data = dg[element]
-    
-    # Read EEG data
-    data = reader.fit_transform(data)
-    
-    # Apply filtering
-    filter_obj = EEGFilter(low_freq=1.0, high_freq=40.0, on="EEG")
-    data = filter_obj.fit_transform(data)
-    
-    # Compute spectral power
-    marker = SpectralPower(on="EEG")
-    result = marker.fit_transform(data)
+# Analyze features
+print(df_spectral.mean())  # Average power per frequency band
 ```
 
-## Components
+## Available Markers
 
-### EEGDataReader
+| Marker | Description | Parameters |
+|--------|-------------|------------|
+| `SpectralPower` | Power in EEG frequency bands (delta, theta, alpha, beta) | None |
+| `KolmogorovComplexity` | Algorithmic complexity measure | `nbins` |
+| `PermutationEntropy` | Temporal complexity measure | `kernel`, `tau` |
+| `PowerSpectralDensityEstimator` | Detailed PSD analysis | `fmin`, `fmax`, `n_fft` |
+| `ContingentNegativeVariation` | Event-related potential analysis | None |
+| `TimeDecoding` | Temporal information decoding | `condition_method`, `n_splits` |
 
-Extends junifer's `DefaultDataReader` by modifying global extension mappings:
+## Data Requirements
 
-- **Architecture**: Extends `_extensions`, `_readers`, and `PATTERNS_SCHEMA` at import time
-- **Supported formats**: EDF, BDF files via MNE-Python
-- **Data type**: Adds `EEG` as a valid data type in junifer's validation schema
-- **Integration**: Works seamlessly with `PatternDataGrabber`
-
-```python
-# The reader appears "empty" because it extends junifer's global mappings:
-default_module._extensions.update({".edf": "EDF", ".bdf": "EDF"})
-default_module._readers["EDF"] = {"func": _read_edf, "params": None}
-validation_module.PATTERNS_SCHEMA["EEG"] = {...}
-```
-
-### EEGFilter
-
-Simple preprocessing component for frequency filtering:
-
-- **Input**: EEG data (MNE Raw objects)
-- **Output**: Filtered EEG data
-- **Parameters**:
-  - `low_freq`: Low frequency cutoff (Hz)
-  - `high_freq`: High frequency cutoff (Hz)
-  - `on`: Data type to process ("EEG")
-- **Method**: Uses MNE's `filter()` method
-
-### SpectralPower
-
-Marker for computing spectral power features:
-
-- **Input**: EEG data (MNE Raw objects)
-- **Output**: Power spectral density features per channel and frequency band
-- **Frequency bands**: 
-  - Delta: 1-4 Hz
-  - Theta: 4-8 Hz  
-  - Alpha: 8-13 Hz
-  - Beta: 13-30 Hz
-- **Features**: `{channel}_{band}` format (e.g., "Cz_alpha", "Fz_beta")
-- **Method**: Uses MNE's `compute_psd()` with mean power per band
-
-## Data Organization
-
-Organize your EEG data to match your YAML pattern:
-
-```
-data/
-├── subject1_eeg.edf
-├── subject2_eeg.edf
-├── subject3_eeg.edf
-└── ...
-```
-
-Or for more complex patterns:
-```
-data/
-├── sub-001/
-│   └── ses-baseline/
-│       └── eeg/
-│           └── sub-001_ses-baseline_task-localglobal.edf
-└── sub-002/
-    └── ses-baseline/
-        └── eeg/
-            └── sub-002_ses-baseline_task-localglobal.edf
-```
-
-With corresponding pattern:
-```yaml
-patterns:
-  EEG:
-    pattern: "{subject}/{session}/eeg/{subject}_{session}_task-localglobal.edf"
-    space: "native"
-replacements:
-  - subject
-  - session
-```
-
-## Key Features
-
-- ✅ **No custom data grabber** - Uses junifer's `PatternDataGrabber`
-- ✅ **Extends DefaultDataReader** - Clean extension via global mappings
-- ✅ **EEG data type support** - Proper semantic data type (not BOLD)
-- ✅ **HDF5 storage** - Uses recommended storage format
-- ✅ **junifer CLI integration** - No custom CLI needed
-- ✅ **HTCondor ready** - Queue configuration for cluster computing
-- ✅ **MNE integration** - Leverages MNE-Python for EEG processing
-
-## Dependencies
-
-- junifer >= 0.0.4
-- mne >= 1.6.0
-- numpy >= 1.26.0
-- pandas >= 2.0.0
+- **Format**: EDF files (European Data Format)
+- **Naming**: `{subject}_eeg.edf` (e.g., `subject1_eeg.edf`)
+- **Directory**: All files in single folder
+- **Channels**: Standard EEG electrode names recommended
 
 ## Testing
 
 ```bash
-# Run tests
+# Run all tests
 pytest
 
-# Run with coverage
-pytest --cov=junifer_eeg
-
-# Run specific test
+# Run specific tests  
 pytest junifer_eeg/tests/test_spectral_power.py -v
+
+# Run validation tests (requires NICE package)
+pytest junifer_eeg/tests/validation/ -v
 ```
 
-## Examples
 
-See the `examples/` directory for:
-
-- `eeg_pipeline.yaml` - Complete YAML configuration
-- `simple_eeg_analysis.py` - Python API usage
-- `README.md` - Detailed examples and explanations
 
 ## Contributing
 
 This extension follows junifer's architectural patterns. When contributing:
 
 1. Use junifer's existing components when possible
-2. Extend global mappings for new data types/formats
-3. Follow junifer's registration decorators
-4. Use proper data type semantics
-5. Include comprehensive tests
+2. Follow junifer's registration decorators  
+3. Include comprehensive tests
+4. Use HDF5 for data storage
 
 ## License
 
