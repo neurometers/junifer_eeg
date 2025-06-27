@@ -11,6 +11,12 @@ from .power_spectral_density import (
 from .spectral_power import SpectralPower
 from .time_decoding import TimeDecoding
 from .time_locked_topography import TimeLockedTopography
+from .utils import (
+    aggregate_data,
+    apply_roi_trial_aggregation,
+    get_data_for_rois,
+    get_roi_mapping,
+)
 
 __all__ = [
     "ContingentNegativeVariation",
@@ -22,4 +28,9 @@ __all__ = [
     "SpectralPower",
     "TimeDecoding",
     "TimeLockedTopography",
+    # Utility functions
+    "aggregate_data",
+    "apply_roi_trial_aggregation",
+    "get_data_for_rois",
+    "get_roi_mapping",
 ]

@@ -115,8 +115,8 @@ class TestJuniferEEGAgainstReference:
                 result = self.compute_marker_result(marker, raw)
 
                 # Extract complexity values for comparison
-                # Our marker returns: {'kolmogorov_complexity': {'data': array, 'col_names': list}}
-                our_data = result["kolmogorov_complexity"][
+                # Our marker returns: {'kolmogorovcomplexity': {'data': array, 'col_names': list}}
+                our_data = result["kolmogorovcomplexity"][
                     "data"
                 ]  # Shape: (1, n_channels)
                 our_values = our_data.flatten()  # Convert to 1D array
@@ -192,7 +192,7 @@ class TestJuniferEEGAgainstReference:
                 )
 
                 result = self.compute_marker_result(marker, raw)
-                our_data = result["permutation_entropy"][
+                our_data = result["permutationentropy"][
                     "data"
                 ]  # Shape: (1, n_channels)
                 our_values = our_data.flatten()  # Convert to 1D array
@@ -250,7 +250,7 @@ class TestJuniferEEGAgainstReference:
                 result = self.compute_marker_result(marker, raw)
 
                 # Extract slopes and intercepts - our marker returns separate features
-                our_slopes_data = result["cnv_slope"][
+                our_slopes_data = result["cnvslope"][
                     "data"
                 ]  # Shape: (1, n_channels)
                 # our_intercepts_data = result["cnv_intercept"][

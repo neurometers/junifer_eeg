@@ -1,0 +1,131 @@
+with:
+  - junifer_eeg
+
+elements:
+  - element1
+
+datagrabber:
+  kind: PatternDataGrabber  
+  datadir: ../junifer_eeg/tests/test_data
+  types:
+    - EEG
+  patterns:
+    EEG:
+      pattern: "subject1_eeg.edf"
+      space: native
+  replacements: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: ../comprehensive_aggregation_results.hdf5
+  single_output: true
+
+workdir: /tmp/junifer_workdir
+
+# Test all markers with different aggregation combinations
+markers:
+  # 1. KolmogorovComplexity - ROI aggregation only
+  - name: KC_ROI_Regions
+    kind: KolmogorovComplexity
+    rois: [F, C, P, O]  # Brain regions
+    roi_aggregation_method: [mean, std]
+    nbins: 16
+    on: EEG
+
+  # 2. KolmogorovComplexity - Trial aggregation only  
+  - name: KC_Trial_AllChannels
+    kind: KolmogorovComplexity
+    trial_aggregation_method: [mean, std]
+    epoch_length: 1.5
+    overlap: 0.0
+    nbins: 16
+    on: EEG
+
+  # 3. KolmogorovComplexity - Both ROI and trial aggregation
+  - name: KC_Full_Aggregation
+    kind: KolmogorovComplexity
+    rois: [Cz, Pz, Oz]  # Individual electrodes
+    roi_aggregation_method: [mean]
+    trial_aggregation_method: [mean, std]
+    epoch_length: 2.0
+    overlap: 0.0
+    nbins: 16
+    on: EEG
+
+  # 4. SpectralPower - ROI aggregation only
+  - name: SP_ROI_Frontal
+    kind: SpectralPower
+    rois: [F, FC]  # Frontal regions
+    roi_aggregation_method: [mean, std]
+    on: EEG
+
+  # 5. SpectralPower - Trial aggregation only
+  - name: SP_Trial_SingleElectrodes
+    kind: SpectralPower
+    rois: [Fp1, Fp2, O1, O2]  # Specific electrodes
+    trial_aggregation_method: [mean, std]
+    epoch_length: 1.0
+    overlap: 0.5
+    on: EEG
+
+  # 6. PermutationEntropy - Both aggregations
+  - name: PE_Full_Aggregation
+    kind: PermutationEntropy
+    rois: [C, P]  # Central and Parietal
+    roi_aggregation_method: [mean, std]
+    trial_aggregation_method: [mean]
+    epoch_length: 2.0
+    overlap: 0.0
+    kernel: 3
+    tau: 5
+    on: EEG
+
+  # 7. PermutationEntropy - ROI aggregation only
+  - name: PE_ROI_SingleElectrodes
+    kind: PermutationEntropy
+    rois: [Cz, Fz, Pz]
+    roi_aggregation_method: [mean]
+    kernel: 3
+    tau: 8
+    on: EEG
+
+  # 8. ContingentNegativeVariation - Trial aggregation only
+  - name: CNV_Trial_AllChannels
+    kind: ContingentNegativeVariation
+    trial_aggregation_method: [mean, std]
+    epoch_length: 1.5
+    overlap: 0.2
+    on: EEG
+
+  # 9. ContingentNegativeVariation - Both aggregations
+  - name: CNV_Full_Aggregation
+    kind: ContingentNegativeVariation
+    rois: [F, C, O]  # Multiple regions
+    roi_aggregation_method: [mean]
+    trial_aggregation_method: [mean, std]
+    epoch_length: 2.0
+    overlap: 0.0
+    on: EEG
+
+  # 10. PowerSpectralDensitySummary - ROI aggregation only
+  - name: PSD_ROI_Regions
+    kind: PowerSpectralDensitySummary
+    rois: [F, T, P, O]  # Four major regions
+    roi_aggregation_method: [mean, std]
+    percentile: 75
+    fmin: 1
+    fmax: 30
+    on: EEG
+
+  # 11. PowerSpectralDensitySummary - Both aggregations
+  - name: PSD_Full_Aggregation
+    kind: PowerSpectralDensitySummary
+    rois: [Cz, C3, C4]  # Central electrodes
+    roi_aggregation_method: [mean]
+    trial_aggregation_method: [mean, std]
+    epoch_length: 1.0
+    overlap: 0.0
+    percentile: 50
+    fmin: 2
+    fmax: 40
+    on: EEG 

@@ -54,13 +54,15 @@ class TestKolmogorovComplexity:
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "kolmogorov_complexity" in result
-        data = result["kolmogorov_complexity"]["data"]
-        col_names = result["kolmogorov_complexity"]["col_names"]
+        assert "kolmogorovcomplexity" in result
+        data = result["kolmogorovcomplexity"]["data"]
+        col_names = result["kolmogorovcomplexity"]["col_names"]
 
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
-        assert all("kolmogorov" in name for name in col_names)
+        assert all(
+            "elec" in name for name in col_names
+        )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all(data > 0)  # Complexity should be positive
 
@@ -86,13 +88,15 @@ class TestPermutationEntropy:
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "permutation_entropy" in result
-        data = result["permutation_entropy"]["data"]
-        col_names = result["permutation_entropy"]["col_names"]
+        assert "permutationentropy" in result
+        data = result["permutationentropy"]["data"]
+        col_names = result["permutationentropy"]["col_names"]
 
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
-        assert all("permutation_entropy" in name for name in col_names)
+        assert all(
+            "elec" in name for name in col_names
+        )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all((data >= 0) & (data <= 1))  # PE should be normalized
 
@@ -114,20 +118,24 @@ class TestContingentNegativeVariation:
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "cnv_slope" in result
-        assert "cnv_intercept" in result
+        assert "cnvslope" in result
+        assert "cnvintercept" in result
 
-        slope_data = result["cnv_slope"]["data"]
-        intercept_data = result["cnv_intercept"]["data"]
-        slope_names = result["cnv_slope"]["col_names"]
-        intercept_names = result["cnv_intercept"]["col_names"]
+        slope_data = result["cnvslope"]["data"]
+        intercept_data = result["cnvintercept"]["data"]
+        slope_names = result["cnvslope"]["col_names"]
+        intercept_names = result["cnvintercept"]["col_names"]
 
         assert slope_data.shape == (1, 2)  # 1 observation, 2 channels
         assert intercept_data.shape == (1, 2)
         assert len(slope_names) == 2
         assert len(intercept_names) == 2
-        assert all("cnv_slope" in name for name in slope_names)
-        assert all("cnv_intercept" in name for name in intercept_names)
+        assert all(
+            "elec" in name for name in slope_names
+        )  # Check for electrode naming
+        assert all(
+            "elec" in name for name in intercept_names
+        )  # Check for electrode naming
         assert np.all(np.isfinite(slope_data))
         assert np.all(np.isfinite(intercept_data))
 
@@ -191,12 +199,14 @@ class TestPowerSpectralDensitySummary:
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "psd_summary" in result
-        data = result["psd_summary"]["data"]
-        col_names = result["psd_summary"]["col_names"]
+        assert "psdsummary" in result
+        data = result["psdsummary"]["data"]
+        col_names = result["psdsummary"]["col_names"]
 
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
-        assert all("psd_p50" in name for name in col_names)
+        assert all(
+            "elec" in name for name in col_names
+        )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all(data >= 0)  # PSD summary should be non-negative

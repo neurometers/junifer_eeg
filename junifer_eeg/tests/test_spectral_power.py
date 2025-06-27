@@ -24,16 +24,16 @@ def test_spectral_power_basic():
     result = marker.compute(input_data)
 
     # Check output
-    assert "spectral_power" in result
-    assert "data" in result["spectral_power"]
-    assert "col_names" in result["spectral_power"]
-    assert isinstance(result["spectral_power"]["data"], np.ndarray)
-    assert len(result["spectral_power"]["col_names"]) == 4  # 4 bands
+    assert "spectralpower" in result
+    assert "data" in result["spectralpower"]
+    assert "col_names" in result["spectralpower"]
+    assert isinstance(result["spectralpower"]["data"], np.ndarray)
+    assert len(result["spectralpower"]["col_names"]) == 4  # 4 bands
 
     # Check that alpha power is higher (since we have 10Hz signal)
-    col_names = result["spectral_power"]["col_names"]
-    alpha_idx = col_names.index("Cz_alpha")
-    alpha_power = result["spectral_power"]["data"][0, alpha_idx]
+    col_names = result["spectralpower"]["col_names"]
+    alpha_idx = next(i for i, name in enumerate(col_names) if "alpha" in name)
+    alpha_power = result["spectralpower"]["data"][0, alpha_idx]
 
     # Alpha should have higher power than others for 10Hz signal
     assert alpha_power > 0
