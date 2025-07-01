@@ -9,14 +9,18 @@ from .power_spectral_density import (
     PowerSpectralDensitySummary,
 )
 from .spectral_power import SpectralPower
+from .symbolic_mutual_information import SymbolicMutualInformation
 from .time_decoding import TimeDecoding
+from .time_locked_contrast import TimeLockedContrast
 from .time_locked_topography import TimeLockedTopography
 from .utils import (
     aggregate_data,
     apply_roi_trial_aggregation,
     get_data_for_rois,
+    get_icm_roi_mapping,
     get_roi_mapping,
 )
+from .window_decoding import WindowDecoding
 
 __all__ = [
     "ContingentNegativeVariation",
@@ -26,11 +30,15 @@ __all__ = [
     "PowerSpectralDensityEstimator",
     "PowerSpectralDensitySummary",
     "SpectralPower",
+    "SymbolicMutualInformation",
     "TimeDecoding",
+    "TimeLockedContrast",
     "TimeLockedTopography",
+    "WindowDecoding",
     # Utility functions
     "aggregate_data",
     "apply_roi_trial_aggregation",
     "get_data_for_rois",
+    "get_icm_roi_mapping",
     "get_roi_mapping",
 ]

@@ -8,7 +8,7 @@ import numpy as np
 def get_roi_mapping() -> Dict[str, List[str]]:
     """Get mapping of ROI names to electrode names.
 
-    Returns standard 10-20 system ROI definitions.
+    Returns standard 10-20 system ROI definitions and ICM-specific ROIs.
 
     Returns
     -------
@@ -16,6 +16,7 @@ def get_roi_mapping() -> Dict[str, List[str]]:
         Mapping from ROI names to lists of electrode names.
     """
     roi_mapping = {
+        # Standard 10-20 system ROIs
         # Frontal
         "Fp": ["Fp1", "Fp2"],
         "F": ["F3", "F4", "F7", "F8"],
@@ -71,8 +72,429 @@ def get_roi_mapping() -> Dict[str, List[str]]:
     return roi_mapping
 
 
+def get_icm_roi_mapping(equipment: str = "standard") -> Dict[str, List[str]]:
+    """Get ICM-specific ROI mappings for different equipment configurations.
+
+    Parameters
+    ----------
+    equipment : str
+        Equipment configuration: 'standard', 'egi256', or 'egi128'.
+
+    Returns
+    -------
+    dict
+        Mapping from ICM ROI names to lists of electrode names.
+    """
+
+    if equipment == "egi256":
+        # EGI 256-channel system ROI definitions for ICM Local Global paradigm
+        icm_rois = {
+            # Scalp ROI - all EEG channels excluding bad/reference channels
+            "scalp": [
+                f"E{i}"
+                for i in range(1, 257)
+                if i
+                not in [
+                    17,
+                    128,
+                    126,
+                    127,
+                    132,
+                    133,
+                    134,
+                    135,
+                    136,
+                    137,
+                    138,
+                    139,
+                    140,
+                    141,
+                    142,
+                    143,
+                    144,
+                    145,
+                    146,
+                    147,
+                    148,
+                    149,
+                    150,
+                    151,
+                    152,
+                    153,
+                    154,
+                    155,
+                    156,
+                    157,
+                    158,
+                    159,
+                    160,
+                    161,
+                    162,
+                    163,
+                    164,
+                    165,
+                    166,
+                    167,
+                    168,
+                    169,
+                    170,
+                    171,
+                    172,
+                    173,
+                    174,
+                    175,
+                    176,
+                    177,
+                    178,
+                    179,
+                    180,
+                    181,
+                    182,
+                    183,
+                    184,
+                    185,
+                    186,
+                    187,
+                    188,
+                    189,
+                    190,
+                    191,
+                    192,
+                    193,
+                    194,
+                    195,
+                    196,
+                    197,
+                    198,
+                    199,
+                    200,
+                    201,
+                    202,
+                    203,
+                    204,
+                    205,
+                    206,
+                    207,
+                    208,
+                    209,
+                    210,
+                    211,
+                    212,
+                    213,
+                    214,
+                    215,
+                    216,
+                    217,
+                    218,
+                    219,
+                    220,
+                    221,
+                    222,
+                    223,
+                    224,
+                    225,
+                    226,
+                    227,
+                    228,
+                    229,
+                    230,
+                    231,
+                    232,
+                    233,
+                    234,
+                    235,
+                    236,
+                    237,
+                    238,
+                    239,
+                    240,
+                    241,
+                    242,
+                    243,
+                    244,
+                    245,
+                    246,
+                    247,
+                    248,
+                    249,
+                    250,
+                    251,
+                    252,
+                    253,
+                    254,
+                    255,
+                    256,
+                ]
+            ],
+            # CNV ROI - central and frontal-central electrodes for CNV analysis
+            "cnv": [
+                "E5",
+                "E6",
+                "E11",
+                "E12",
+                "E13",
+                "E16",
+                "E18",
+                "E19",
+                "E20",
+                "E23",
+                "E24",
+                "E25",
+                "E26",
+                "E27",
+                "E28",
+                "E29",
+                "E30",
+                "E31",
+                "E35",
+                "E36",
+                "E37",
+                "E40",
+                "E41",
+                "E42",
+                "E103",
+                "E104",
+                "E105",
+                "E106",
+                "E109",
+                "E110",
+                "E111",
+                "E112",
+                "E115",
+                "E116",
+                "E117",
+                "E118",
+            ],
+            # MMN ROI - fronto-central electrodes for mismatch negativity
+            "mmn": [
+                "E5",
+                "E6",
+                "E7",
+                "E11",
+                "E12",
+                "E13",
+                "E16",
+                "E18",
+                "E19",
+                "E20",
+                "E23",
+                "E24",
+                "E25",
+                "E105",
+                "E106",
+                "E109",
+                "E110",
+                "E111",
+                "E112",
+                "E115",
+                "E116",
+                "E117",
+                "E118",
+            ],
+            # P3a ROI - fronto-central electrodes for P3a component
+            "p3a": [
+                "E5",
+                "E6",
+                "E11",
+                "E12",
+                "E13",
+                "E16",
+                "E18",
+                "E19",
+                "E20",
+                "E23",
+                "E24",
+                "E105",
+                "E106",
+                "E109",
+                "E110",
+                "E111",
+                "E112",
+                "E115",
+                "E116",
+            ],
+            # P3b ROI - centro-parietal electrodes for P3b component
+            "p3b": [
+                "E7",
+                "E31",
+                "E37",
+                "E40",
+                "E41",
+                "E42",
+                "E47",
+                "E53",
+                "E54",
+                "E55",
+                "E60",
+                "E61",
+                "E62",
+                "E67",
+                "E72",
+                "E77",
+                "E78",
+                "E79",
+                "E80",
+                "E85",
+                "E86",
+                "E87",
+                "E106",
+            ],
+        }
+
+    elif equipment == "egi128":
+        # EGI 128-channel system ROI definitions
+        icm_rois = {
+            # Scalp ROI - all EEG channels for 128-channel system
+            "scalp": [
+                f"E{i}"
+                for i in range(1, 129)
+                if i not in [17, 125, 126, 127, 128]
+            ],
+            # CNV ROI - central and frontal-central electrodes
+            "cnv": [
+                "E3",
+                "E4",
+                "E5",
+                "E6",
+                "E9",
+                "E10",
+                "E11",
+                "E12",
+                "E13",
+                "E15",
+                "E16",
+                "E18",
+                "E19",
+                "E20",
+                "E22",
+                "E23",
+                "E24",
+                "E103",
+                "E104",
+                "E105",
+                "E106",
+                "E109",
+                "E110",
+                "E111",
+                "E112",
+            ],
+            # MMN ROI - fronto-central electrodes
+            "mmn": [
+                "E3",
+                "E4",
+                "E5",
+                "E6",
+                "E9",
+                "E10",
+                "E11",
+                "E12",
+                "E13",
+                "E15",
+                "E16",
+                "E103",
+                "E104",
+                "E105",
+                "E106",
+                "E109",
+                "E110",
+                "E111",
+                "E112",
+            ],
+            # P3a ROI - fronto-central electrodes
+            "p3a": [
+                "E3",
+                "E4",
+                "E5",
+                "E6",
+                "E9",
+                "E10",
+                "E11",
+                "E12",
+                "E13",
+                "E103",
+                "E104",
+                "E105",
+                "E106",
+            ],
+            # P3b ROI - centro-parietal electrodes
+            "p3b": [
+                "E7",
+                "E31",
+                "E37",
+                "E40",
+                "E41",
+                "E42",
+                "E47",
+                "E53",
+                "E54",
+                "E55",
+                "E60",
+                "E61",
+                "E62",
+                "E72",
+                "E77",
+                "E78",
+                "E79",
+                "E106",
+            ],
+        }
+
+    else:
+        # Standard 10-20 system ICM ROI approximations
+        icm_rois = {
+            # Scalp ROI - all standard electrodes
+            "scalp": [
+                "Fp1",
+                "Fp2",
+                "F7",
+                "F3",
+                "Fz",
+                "F4",
+                "F8",
+                "FC5",
+                "FC1",
+                "FC2",
+                "FC6",
+                "T7",
+                "C3",
+                "Cz",
+                "C4",
+                "T8",
+                "TP9",
+                "CP5",
+                "CP1",
+                "CP2",
+                "CP6",
+                "TP10",
+                "P7",
+                "P3",
+                "Pz",
+                "P4",
+                "P8",
+                "PO9",
+                "O1",
+                "Oz",
+                "O2",
+                "PO10",
+            ],
+            # CNV ROI - central and frontal-central region
+            "cnv": ["Fz", "FC1", "FC2", "Cz", "C3", "C4"],
+            # MMN ROI - fronto-central region for mismatch negativity
+            "mmn": ["Fz", "F3", "F4", "FC1", "FC2", "FC5", "FC6"],
+            # P3a ROI - fronto-central region
+            "p3a": ["Fz", "F3", "F4", "FC1", "FC2", "Cz"],
+            # P3b ROI - centro-parietal region
+            "p3b": ["Cz", "CP1", "CP2", "Pz", "P3", "P4"],
+        }
+
+    return icm_rois
+
+
 def get_data_for_rois(
-    data: np.ndarray, ch_names: List[str], rois: List[str]
+    data: np.ndarray,
+    ch_names: List[str],
+    rois: List[str],
+    equipment: str = "standard",
 ) -> Dict[str, np.ndarray]:
     """Extract data for specified ROIs.
 
@@ -84,13 +506,21 @@ def get_data_for_rois(
         Channel names corresponding to first dimension of data.
     rois : list of str
         ROI names to extract.
+    equipment : str
+        Equipment configuration for ICM-specific ROIs: 'standard', 'egi256', or 'egi128'.
 
     Returns
     -------
     dict
         Dictionary mapping ROI names to data arrays.
     """
-    roi_mapping = get_roi_mapping()
+    # Get both standard and ICM-specific ROI mappings
+    standard_roi_mapping = get_roi_mapping()
+    icm_roi_mapping = get_icm_roi_mapping(equipment)
+
+    # Combine mappings (ICM ROIs take precedence)
+    roi_mapping = {**standard_roi_mapping, **icm_roi_mapping}
+
     roi_data = {}
 
     for roi in rois:
@@ -101,7 +531,7 @@ def get_data_for_rois(
                 roi_data[roi] = data[roi_idx : roi_idx + 1]  # Keep 2D
             else:
                 raise ValueError(
-                    f"ROI '{roi}' not found in channel names or ROI mapping"
+                    f"ROI '{roi}' not found in channel names or ROI mapping for equipment '{equipment}'"
                 )
         else:
             # Get electrodes for this ROI
@@ -113,7 +543,9 @@ def get_data_for_rois(
                     roi_indices.append(ch_names.index(electrode))
 
             if not roi_indices:
-                raise ValueError(f"No electrodes found for ROI '{roi}'")
+                raise ValueError(
+                    f"No electrodes found for ROI '{roi}' in equipment '{equipment}'"
+                )
 
             roi_data[roi] = data[roi_indices]
 
