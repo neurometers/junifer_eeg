@@ -91,7 +91,7 @@ class PermutationEntropy(BaseMarker):
         Parameters
         ----------
         input : dict
-            Input data containing 'data' with MNE Raw object.
+            Input data containing 'data' with MNE Epochs object.
         extra_input : dict, optional
             Additional input data.
 
@@ -103,98 +103,75 @@ class PermutationEntropy(BaseMarker):
         from mne.utils import _time_mask
         from scipy.signal import butter, filtfilt
 
-        # Get the MNE Raw object
-        raw = input["data"]
-        sfreq = raw.info["sfreq"]
+        # Get the MNE Epochs object
+        epochs = input["data"]
 
-        # Create epochs from continuous data if needed
-        if self.trial_aggregation_method is not None:
-            epochs_data = self._create_epochs_from_continuous(raw)
-            # epochs_data shape: (n_epochs, n_channels, n_samples)
-        else:
-            # Single "epoch" from continuous data
-            data = raw.get_data()  # Shape: (n_channels, n_times)
-            if self.tmin is not None or self.tmax is not None:
-                time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                data = data[:, time_mask]
-            epochs_data = data[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_samples)
+        # Get epochs data: Shape (n_epochs, n_channels, n_times)
+        epochs_data = epochs.get_data()
+        ch_names = epochs.ch_names
+        sfreq = epochs.info["sfreq"]
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
-        # Compute PE for each channel and epoch
+        # Apply time window if specified
+        if self.tmin is not None or self.tmax is not None:
+            time_mask = _time_mask(epochs.times, self.tmin, self.tmax)
+            epochs_data = epochs_data[:, :, time_mask]
+
+        # Apply frequency filtering if specified
+        if self.filter_freq is not None:
+            # Design low-pass filter
+            nyquist = sfreq / 2.0
+            if self.filter_freq >= nyquist:
+                raise ValueError(
+                    f"Filter frequency ({self.filter_freq}) must be less than "
+                    f"Nyquist frequency ({nyquist})"
+                )
+
+            b, a = butter(4, self.filter_freq / nyquist, btype="low")
+
+            # Apply filter to each epoch and channel
+            for epoch_idx in range(n_epochs):
+                for ch_idx in range(n_channels):
+                    epochs_data[epoch_idx, ch_idx, :] = filtfilt(
+                        b, a, epochs_data[epoch_idx, ch_idx, :]
+                    )
+        else:
+            # Apply default filtering (following NICE approach)
+            filter_freq = np.double(sfreq) / self.kernel / self.tau
+            b, a = butter(6, 2.0 * filter_freq / np.double(sfreq), "lowpass")
+
+            # Apply filter to each epoch and channel
+            for epoch_idx in range(n_epochs):
+                for ch_idx in range(n_channels):
+                    epochs_data[epoch_idx, ch_idx, :] = filtfilt(
+                        b, a, epochs_data[epoch_idx, ch_idx, :]
+                    )
+
+        # Compute permutation entropy for each epoch and channel
         pe_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
 
         for epoch_idx in range(n_epochs):
-            epoch_data = epochs_data[
-                epoch_idx
-            ]  # Shape: (n_channels, n_samples)
-
-            # Apply filtering (same as original algorithm)
-            if self.filter_freq is not None:
-                filter_freq = self.filter_freq
-            else:
-                filter_freq = np.double(sfreq) / self.kernel / self.tau
-
-            b, a = butter(6, 2.0 * filter_freq / np.double(sfreq), "lowpass")
-
-            # Filter each channel
-            fdata = np.zeros_like(epoch_data)
-            for ch in range(n_channels):
-                fdata[ch] = filtfilt(b, a, epoch_data[ch])
-
-            # Symbolic transformation
-            symbols = self._define_symbols(self.kernel)
-
-            # Calculate signal_sym shape
-            signal_sym_length = n_samples - self.tau * (self.kernel - 1)
-            if signal_sym_length <= 0:
-                # Return NaN for too short signals
-                pe_values[epoch_idx, :] = np.nan
-                continue
-
-            signal_sym = np.zeros(
-                (n_channels, signal_sym_length), dtype=np.int32
-            )
-
-            # Create ordinal patterns
-            for k in range(signal_sym_length):
-                subsamples = range(k, k + self.kernel * self.tau, self.tau)
-                for ch in range(n_channels):
-                    subsample_vals = fdata[ch, subsamples]
-                    ind = np.argsort(subsample_vals)
-                    pattern_str = "".join(map(str, ind))
-                    signal_sym[ch, k] = symbols.index(pattern_str)
-
-            # Count ordinal patterns
-            n_symbols = len(symbols)
-
-            for ch in range(n_channels):
-                count = np.bincount(signal_sym[ch], minlength=n_symbols)
-                count = count.astype(np.float64) / signal_sym_length
-
-                # Compute permutation entropy
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    log_count = np.where(count > 0, np.log(count), 0)
-                    pe = -np.sum(count * log_count)
-
-                # Normalize by maximum possible entropy
-                pe_values[epoch_idx, ch] = pe / np.log(n_symbols)
+            for ch_idx in range(n_channels):
+                signal = epochs_data[epoch_idx, ch_idx, :]
+                pe_values[epoch_idx, ch_idx] = (
+                    self._compute_permutation_entropy(
+                        signal, self.kernel, self.tau
+                    )
+                )
 
         # Handle ROI selection
         if self.rois is not None:
             # Extract data for specified ROIs
             roi_data = get_data_for_rois(
                 pe_values.T,  # Transpose to (n_channels, n_epochs)
-                list(raw.ch_names),
+                list(ch_names),
                 self.rois,
             )
         else:
             # Use all channels as individual ROIs
             roi_data = {
-                ch: pe_values[:, i : i + 1].T
-                for i, ch in enumerate(raw.ch_names)
+                ch: pe_values[:, i : i + 1].T for i, ch in enumerate(ch_names)
             }
 
         # Apply aggregation
@@ -207,48 +184,39 @@ class PermutationEntropy(BaseMarker):
 
         return results
 
-    def _create_epochs_from_continuous(self, raw):
-        """Create epochs from continuous data."""
-        # Get data
-        data = raw.get_data()  # Shape: (n_channels, n_times)
+    def _compute_permutation_entropy(self, signal, kernel, tau):
+        """Compute permutation entropy for a single filtered signal."""
+        # Symbolic transformation
+        symbols = self._define_symbols(kernel)
 
-        # Apply time mask if specified
-        if self.tmin is not None or self.tmax is not None:
-            from mne.utils import _time_mask
+        # Calculate signal_sym shape
+        signal_sym_length = len(signal) - tau * (kernel - 1)
+        if signal_sym_length <= 0:
+            # Return NaN for too short signals
+            return np.nan
 
-            time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-            data = data[:, time_mask]
+        signal_sym = np.zeros(signal_sym_length, dtype=np.int32)
 
-        n_channels, n_samples = data.shape
-        sfreq = raw.info["sfreq"]
+        # Create ordinal patterns
+        for k in range(signal_sym_length):
+            subsamples = range(k, k + kernel * tau, tau)
+            subsample_vals = signal[subsamples]
+            ind = np.argsort(subsample_vals)
+            pattern_str = "".join(map(str, ind))
+            signal_sym[k] = symbols.index(pattern_str)
 
-        # Calculate epoch parameters
-        epoch_samples = int(self.epoch_length * sfreq)
-        overlap_samples = int(self.overlap * epoch_samples)
-        step_samples = epoch_samples - overlap_samples
+        # Count ordinal patterns
+        n_symbols = len(symbols)
+        count = np.bincount(signal_sym, minlength=n_symbols)
+        count = count.astype(np.float64) / signal_sym_length
 
-        # Calculate number of epochs
-        n_epochs = max(1, (n_samples - epoch_samples) // step_samples + 1)
+        # Compute permutation entropy
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_count = np.where(count > 0, np.log(count), 0)
+            pe = -np.sum(count * log_count)
 
-        # Create epochs
-        epochs_data = np.zeros((n_epochs, n_channels, epoch_samples))
-
-        for epoch_idx in range(n_epochs):
-            start_sample = epoch_idx * step_samples
-            end_sample = start_sample + epoch_samples
-
-            if end_sample <= n_samples:
-                epochs_data[epoch_idx] = data[:, start_sample:end_sample]
-            else:
-                # Pad with last available samples if needed
-                available_samples = n_samples - start_sample
-                epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
-                ]
-                # Pad with zeros or repeat last sample
-                epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]
-
-        return epochs_data
+        # Normalize by maximum possible entropy
+        return pe / np.log(n_symbols)
 
     def _define_symbols(self, kernel: int) -> list[str]:
         """Define symbols for permutation entropy.

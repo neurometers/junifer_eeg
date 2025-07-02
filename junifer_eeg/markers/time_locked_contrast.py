@@ -24,7 +24,7 @@ class TimeLockedContrast(BaseMarker):
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "time_locked_contrast": "vector",
+            "timelockedcontrast": "vector",
         },
     }
 
@@ -121,7 +121,7 @@ class TimeLockedContrast(BaseMarker):
                 contrast_roi_data,
                 roi_aggregation_methods=self.roi_aggregation_method,
                 trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="time_locked_contrast",
+                marker_name="timelockedcontrast",
             )
 
             return results
@@ -167,7 +167,7 @@ class TimeLockedContrast(BaseMarker):
             contrast_roi_data,
             roi_aggregation_methods=self.roi_aggregation_method,
             trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="time_locked_contrast",
+            marker_name="timelockedcontrast",
         )
 
         return results

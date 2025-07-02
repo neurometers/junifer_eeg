@@ -64,7 +64,7 @@ class SpectralPower(BaseMarker):
         Parameters
         ----------
         input : dict
-            Input data containing 'data' with MNE Raw object.
+            Input data containing 'data' with MNE Epochs object.
         extra_input : dict, optional
             Additional input data.
 
@@ -73,19 +73,13 @@ class SpectralPower(BaseMarker):
         dict
             Computed spectral power features with aggregation.
         """
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Get the MNE Epochs object
+        epochs = input["data"]
 
-        # Create epochs from continuous data if needed
-        if self.trial_aggregation_method is not None:
-            epochs_data = self._create_epochs_from_continuous(raw)
-            # epochs_data shape: (n_epochs, n_channels, n_samples)
-        else:
-            # Single "epoch" from continuous data
-            data = raw.get_data()  # Shape: (n_channels, n_times)
-            epochs_data = data[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_samples)
+        # Get epochs data: Shape (n_epochs, n_channels, n_times)
+        epochs_data = epochs.get_data()
+        ch_names = epochs.ch_names
+        info = epochs.info
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
@@ -110,8 +104,7 @@ class SpectralPower(BaseMarker):
                 epoch_idx
             ]  # Shape: (n_channels, n_samples)
 
-            info = raw.info.copy()
-            epoch_raw = mne.io.RawArray(epoch_data, info, verbose=False)
+            epoch_raw = mne.io.RawArray(epoch_data, info.copy(), verbose=False)
 
             # Compute PSD using MNE
             psd = epoch_raw.compute_psd(fmin=1, fmax=30, verbose=False)
@@ -139,14 +132,14 @@ class SpectralPower(BaseMarker):
                 # Extract data for specified ROIs
                 roi_data = get_data_for_rois(
                     band_data.T,  # Transpose to (n_channels, n_epochs)
-                    list(raw.ch_names),
+                    list(ch_names),
                     self.rois,
                 )
             else:
                 # Use all channels as individual ROIs
                 roi_data = {
                     ch: band_data[:, i : i + 1].T
-                    for i, ch in enumerate(raw.ch_names)
+                    for i, ch in enumerate(ch_names)
                 }
 
             # Apply aggregation for this band
@@ -174,39 +167,3 @@ class SpectralPower(BaseMarker):
                 "col_names": col_names,
             }
         }
-
-    def _create_epochs_from_continuous(self, raw):
-        """Create epochs from continuous data."""
-        # Get data
-        data = raw.get_data()  # Shape: (n_channels, n_times)
-
-        n_channels, n_samples = data.shape
-        sfreq = raw.info["sfreq"]
-
-        # Calculate epoch parameters
-        epoch_samples = int(self.epoch_length * sfreq)
-        overlap_samples = int(self.overlap * epoch_samples)
-        step_samples = epoch_samples - overlap_samples
-
-        # Calculate number of epochs
-        n_epochs = max(1, (n_samples - epoch_samples) // step_samples + 1)
-
-        # Create epochs
-        epochs_data = np.zeros((n_epochs, n_channels, epoch_samples))
-
-        for epoch_idx in range(n_epochs):
-            start_sample = epoch_idx * step_samples
-            end_sample = start_sample + epoch_samples
-
-            if end_sample <= n_samples:
-                epochs_data[epoch_idx] = data[:, start_sample:end_sample]
-            else:
-                # Pad with last available samples if needed
-                available_samples = n_samples - start_sample
-                epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
-                ]
-                # Pad with zeros or repeat last sample
-                epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]
-
-        return epochs_data

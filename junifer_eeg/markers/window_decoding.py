@@ -21,11 +21,11 @@ class WindowDecoding(BaseMarker):
     Based on the NICE WindowDecoding implementation.
     """
 
-    _DEPENDENCIES: ClassVar = {"mne", "numpy", "sklearn"}
+    _DEPENDENCIES: ClassVar = {"mne", "numpy", "scikit-learn"}
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "window_decoding": "vector",
+            "windowdecoding": "vector",
         },
     }
 
@@ -121,7 +121,7 @@ class WindowDecoding(BaseMarker):
                 roi_data,
                 roi_aggregation_methods=self.roi_aggregation_method,
                 trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="window_decoding",
+                marker_name="windowdecoding",
             )
             return results
 
@@ -204,7 +204,7 @@ class WindowDecoding(BaseMarker):
             roi_data,
             roi_aggregation_methods=self.roi_aggregation_method,
             trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="window_decoding",
+            marker_name="windowdecoding",
         )
 
         return results

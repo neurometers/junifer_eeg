@@ -8,6 +8,8 @@ import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers.base import BaseMarker
 
+from .utils import apply_roi_trial_aggregation, get_data_for_rois
+
 
 @register_marker
 class SymbolicMutualInformation(BaseMarker):
@@ -190,58 +192,84 @@ class SymbolicMutualInformation(BaseMarker):
 
         return result
 
+    def _compute_smi_matrix(
+        self, data_sym: np.ndarray, counts: np.ndarray
+    ) -> np.ndarray:
+        """Compute SMI matrix from symbolic data."""
+        nchannels, nsamples_after_symb, ntrials = data_sym.shape
+        n_unique_symbols = counts.shape[1]
+
+        result = np.zeros((nchannels, nchannels, ntrials), dtype=np.double)
+
+        epsilon = 1e-15
+        log_counts = np.log(counts + epsilon)
+
+        for trial_idx in range(ntrials):
+            for ch1_idx in range(nchannels):
+                for ch2_idx in range(ch1_idx + 1, nchannels):
+                    pxy = np.zeros(
+                        (n_unique_symbols, n_unique_symbols), dtype=np.double
+                    )
+                    for sample_idx in range(nsamples_after_symb):
+                        sym1 = data_sym[ch1_idx, sample_idx, trial_idx]
+                        sym2 = data_sym[ch2_idx, sample_idx, trial_idx]
+                        pxy[sym1, sym2] += 1
+
+                    if nsamples_after_symb > 0:
+                        pxy /= nsamples_after_symb
+
+                    current_result_val = 0.0
+
+                    # Compute MI terms manually
+                    for r_idx in range(n_unique_symbols):
+                        for c_idx in range(n_unique_symbols):
+                            if pxy[r_idx, c_idx] > epsilon:
+                                log_pxy_val = np.log(pxy[r_idx, c_idx])
+                                log_px_val = log_counts[
+                                    ch1_idx, r_idx, trial_idx
+                                ]
+                                log_py_val = log_counts[
+                                    ch2_idx, c_idx, trial_idx
+                                ]
+
+                                mi_term = pxy[r_idx, c_idx] * (
+                                    log_pxy_val - log_px_val - log_py_val
+                                )
+
+                                current_result_val += mi_term
+
+                    result[ch1_idx, ch2_idx, trial_idx] = current_result_val
+
+        # Normalize
+        if n_unique_symbols > 1:
+            norm_factor = np.log(n_unique_symbols)
+            if norm_factor > epsilon:
+                result /= norm_factor
+
+        return result
+
     def compute(
         self,
         input: Dict[str, Any],
         extra_input: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Compute symbolic mutual information between channels."""
-        from mne.utils import _time_mask
         from scipy.signal import butter, filtfilt
 
-        # Get the MNE Raw or Epochs object
-        raw_or_epochs = input["data"]
+        # Get the MNE Epochs object
+        epochs = input["data"]
 
-        # Handle both Raw and Epochs objects
-        if hasattr(raw_or_epochs, "get_data") and hasattr(
-            raw_or_epochs, "events"
-        ):
-            # It's Epochs
-            epochs = raw_or_epochs
-            # Crop to time window if specified
-            if self.tmin is not None or self.tmax is not None:
-                epochs = epochs.crop(tmin=self.tmin, tmax=self.tmax)
+        # Crop to time window if specified
+        if self.tmin is not None or self.tmax is not None:
+            epochs = epochs.crop(tmin=self.tmin, tmax=self.tmax)
 
-            # Get data: (n_epochs, n_channels, n_times)
-            data = epochs.get_data()
-            sfreq = epochs.info["sfreq"]
-            ch_names = epochs.ch_names
+        # Get data: (n_epochs, n_channels, n_times)
+        data = epochs.get_data()
+        sfreq = epochs.info["sfreq"]
+        ch_names = epochs.ch_names
 
-            # Reshape for processing: (n_channels, n_times, n_epochs)
-            fdata = data.transpose(1, 2, 0)
-
-        else:
-            # It's Raw - create epochs from continuous data
-            raw = raw_or_epochs
-            sfreq = raw.info["sfreq"]
-            ch_names = raw.ch_names
-
-            # Create epochs from continuous data if needed
-            if self.trial_aggregation_method is not None:
-                epochs_data = self._create_epochs_from_continuous(raw)
-                # epochs_data shape: (n_epochs, n_channels, n_samples)
-                fdata = epochs_data.transpose(
-                    1, 2, 0
-                )  # (n_channels, n_times, n_epochs)
-            else:
-                # Single "epoch" from continuous data
-                data = raw.get_data()  # Shape: (n_channels, n_times)
-                if self.tmin is not None or self.tmax is not None:
-                    time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                    data = data[:, time_mask]
-                fdata = data[
-                    :, :, np.newaxis
-                ]  # Shape: (n_channels, n_times, 1)
+        # Reshape for processing: (n_channels, n_times, n_epochs)
+        fdata = data.transpose(1, 2, 0)
 
         # Apply filtering (following NICE approach)
         filter_freq = np.double(sfreq) / self.kernel / self.tau
@@ -258,104 +286,41 @@ class SymbolicMutualInformation(BaseMarker):
             fdata_filtered, self.kernel, self.tau
         )
 
-        if sym.shape[1] == 0:
-            # Handle case where time window is too short
-            n_channels = len(ch_names)
-            smi_matrix = np.zeros((n_channels, n_channels))
+        # Compute Symbolic Mutual Information
+        smi_result = self._compute_smi_matrix(sym, count)
 
-            # Set diagonal to 1.0
-            np.fill_diagonal(smi_matrix, 1.0)
-
-            # Create column names for matrix storage
-            col_names = []
-            for i in range(n_channels):
-                for j in range(n_channels):
-                    col_names.append(f"SMI_{ch_names[i]}_{ch_names[j]}")
-
-            # Flatten matrix for storage
-            smi_flat = smi_matrix.flatten().reshape(1, -1)
-
-            return {
-                "symbolic_mutual_information": {
-                    "data": smi_flat,
-                    "col_names": col_names,
-                }
-            }
-
-        n_unique_symbols = count.shape[1]
-        wts = self._get_weights_matrix(n_unique_symbols)
-
-        # Compute wSMI/SMI
-        result = self._wsmi_computation(sym, count, wts)
-        # result is (n_channels, n_channels, n_epochs)
-
-        # Average across epochs (trials)
-        result_averaged = np.mean(result, axis=2)  # (n_channels, n_channels)
+        # Average across trials (epochs): (n_channels, n_channels, n_trials) -> (n_channels, n_channels)
+        smi_matrix = np.mean(smi_result, axis=2)
 
         # Fill diagonal with 1.0 (self-connectivity)
-        np.fill_diagonal(result_averaged, 1.0)
+        np.fill_diagonal(smi_matrix, 1.0)
 
-        # Mirror upper triangle to lower triangle
-        n_channels = result_averaged.shape[0]
+        # Mirror upper triangle to lower triangle (make symmetric)
+        n_channels = smi_matrix.shape[0]
         for i in range(n_channels):
             for j in range(i + 1, n_channels):
-                result_averaged[j, i] = result_averaged[i, j]
+                smi_matrix[j, i] = smi_matrix[i, j]
 
-        # Create column names for matrix storage
-        col_names = []
-        for i in range(n_channels):
-            for j in range(n_channels):
-                col_names.append(f"SMI_{ch_names[i]}_{ch_names[j]}")
+        # Handle ROI selection
+        if self.rois is not None:
+            # For matrix data, we flatten it
+            roi_data = get_data_for_rois(
+                smi_matrix.flatten()
+                .reshape(1, -1)
+                .T,  # Flatten to (n_features, 1)
+                [f"SMI_{ch1}_{ch2}" for ch1 in ch_names for ch2 in ch_names],
+                self.rois,
+            )
+        else:
+            # All channel pairs
+            roi_data = {"all_pairs": smi_matrix.flatten().reshape(1, -1).T}
 
-        # Flatten matrix for storage
-        smi_flat = result_averaged.flatten().reshape(1, -1)
+        # Apply aggregation
+        results = apply_roi_trial_aggregation(
+            roi_data,
+            roi_aggregation_methods=self.roi_aggregation_method,
+            trial_aggregation_methods=self.trial_aggregation_method,
+            marker_name="symbolicmutualinformation",
+        )
 
-        return {
-            "symbolic_mutual_information": {
-                "data": smi_flat,
-                "col_names": col_names,
-            }
-        }
-
-    def _create_epochs_from_continuous(self, raw):
-        """Create epochs from continuous data."""
-        # Get data
-        data = raw.get_data()  # Shape: (n_channels, n_times)
-
-        # Apply time mask if specified
-        if self.tmin is not None or self.tmax is not None:
-            from mne.utils import _time_mask
-
-            time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-            data = data[:, time_mask]
-
-        n_channels, n_samples = data.shape
-        sfreq = raw.info["sfreq"]
-
-        # Calculate epoch parameters
-        epoch_samples = int(self.epoch_length * sfreq)
-        overlap_samples = int(self.overlap * epoch_samples)
-        step_samples = epoch_samples - overlap_samples
-
-        # Calculate number of epochs
-        n_epochs = max(1, (n_samples - epoch_samples) // step_samples + 1)
-
-        # Create epochs
-        epochs_data = np.zeros((n_epochs, n_channels, epoch_samples))
-
-        for epoch_idx in range(n_epochs):
-            start_sample = epoch_idx * step_samples
-            end_sample = start_sample + epoch_samples
-
-            if end_sample <= n_samples:
-                epochs_data[epoch_idx] = data[:, start_sample:end_sample]
-            else:
-                # Pad with last available samples if needed
-                available_samples = n_samples - start_sample
-                epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
-                ]
-                # Pad with zeros or repeat last sample
-                epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]
-
-        return epochs_data
+        return results
