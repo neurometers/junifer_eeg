@@ -41,7 +41,9 @@ class EEGFilter(BasePreprocessor):
 
         if self.low_freq is not None or self.high_freq is not None:
             raw = raw.filter(
-                l_freq=self.low_freq, h_freq=self.high_freq, verbose=False
+                l_freq=self.low_freq,
+                h_freq=self.high_freq,
+                verbose=False,
             )
 
         input["data"] = raw

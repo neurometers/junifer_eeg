@@ -33,7 +33,7 @@ class TestJuniferEEGAgainstReference:
         datasets_file = reference_dir / "test_datasets.pkl"
         if not datasets_file.exists():
             pytest.skip(
-                "Reference datasets not found. Run generate_reference_data.py first."
+                "Reference datasets not found. Run generate_reference_data.py first.",
             )
 
         with open(datasets_file, "rb") as f:
@@ -47,7 +47,7 @@ class TestJuniferEEGAgainstReference:
         results_file = reference_dir / "nice_reference_results.pkl"
         if not results_file.exists():
             pytest.skip(
-                "Reference results not found. Run generate_reference_data.py first."
+                "Reference results not found. Run generate_reference_data.py first.",
             )
 
         with open(results_file, "rb") as f:
@@ -65,7 +65,9 @@ class TestJuniferEEGAgainstReference:
         # Create MNE Raw object
         ch_names = [f"EEG{i:03d}" for i in range(1, n_channels + 1)]
         info = mne.create_info(
-            ch_names=ch_names, sfreq=self.sfreq, ch_types=["eeg"] * n_channels
+            ch_names=ch_names,
+            sfreq=self.sfreq,
+            ch_types=["eeg"] * n_channels,
         )
         raw = mne.io.RawArray(continuous_data, info, verbose=False)
 
@@ -101,7 +103,7 @@ class TestJuniferEEGAgainstReference:
                 expected = ref_result["result"]
 
                 print(
-                    f"    Test {i + 1}: nbins={params['nbins']}, tmin={params['tmin']}, tmax={params['tmax']}"
+                    f"    Test {i + 1}: nbins={params['nbins']}, tmin={params['tmin']}, tmax={params['tmax']}",
                 )
 
                 # Create our marker with matching parameters
@@ -123,7 +125,8 @@ class TestJuniferEEGAgainstReference:
 
                 # NICE returns shape (n_epochs, n_channels), we average across epochs to compare with our continuous results
                 expected_averaged = np.mean(
-                    expected, axis=0
+                    expected,
+                    axis=0,
                 )  # Average across epochs
                 assert len(our_values) == len(expected_averaged), (
                     f"Shape mismatch: {len(our_values)} vs {len(expected_averaged)}"
@@ -138,13 +141,14 @@ class TestJuniferEEGAgainstReference:
                     "Complexity values should be in [0,1]"
                 )
                 assert np.all(expected_averaged >= 0) and np.all(
-                    expected_averaged <= 1
+                    expected_averaged <= 1,
                 ), "Reference values should be in [0,1]"
 
                 # Check correlation (should be high if algorithms are similar)
                 if len(our_values) > 1:
                     correlation = np.corrcoef(our_array, expected_averaged)[
-                        0, 1
+                        0,
+                        1,
                     ]
                     print(f"      Correlation: {correlation:.3f}")
                     if (
@@ -153,10 +157,10 @@ class TestJuniferEEGAgainstReference:
                         print(f"      Warning: Low correlation: {correlation}")
 
                 print(
-                    f"      Our range: [{our_array.min():.3f}, {our_array.max():.3f}]"
+                    f"      Our range: [{our_array.min():.3f}, {our_array.max():.3f}]",
                 )
                 print(
-                    f"      Ref range: [{expected_averaged.min():.3f}, {expected_averaged.max():.3f}]"
+                    f"      Ref range: [{expected_averaged.min():.3f}, {expected_averaged.max():.3f}]",
                 )
 
     def test_permutation_entropy_equivalence(self):
@@ -177,13 +181,13 @@ class TestJuniferEEGAgainstReference:
 
             # Test subset of parameters (NICE and our implementation may differ)
             for i, ref_result in enumerate(
-                ref_results[:3]
+                ref_results[:3],
             ):  # Limit to first 3 tests
                 params = ref_result["params"]
                 expected = ref_result["result"]
 
                 print(
-                    f"    Test {i + 1}: kernel={params['kernel']}, tau={params['tau']}"
+                    f"    Test {i + 1}: kernel={params['kernel']}, tau={params['tau']}",
                 )
 
                 marker = PermutationEntropy(
@@ -206,14 +210,14 @@ class TestJuniferEEGAgainstReference:
                     "PE values should be in [0,1]"
                 )
                 assert np.all(expected_averaged >= 0) and np.all(
-                    expected_averaged <= 1
+                    expected_averaged <= 1,
                 ), "Reference PE values should be in [0,1]"
 
                 print(
-                    f"      Our range: [{our_array.min():.3f}, {our_array.max():.3f}]"
+                    f"      Our range: [{our_array.min():.3f}, {our_array.max():.3f}]",
                 )
                 print(
-                    f"      Ref range: [{expected_averaged.min():.3f}, {expected_averaged.max():.3f}]"
+                    f"      Ref range: [{expected_averaged.min():.3f}, {expected_averaged.max():.3f}]",
                 )
 
                 # Check that complex signals have higher entropy
@@ -243,7 +247,7 @@ class TestJuniferEEGAgainstReference:
                 expected = ref_result["result"]  # Shape: (n_channels, 2)
 
                 print(
-                    f"    Test {i + 1}: tmin={params['tmin']}, tmax={params['tmax']}"
+                    f"    Test {i + 1}: tmin={params['tmin']}, tmax={params['tmax']}",
                 )
 
                 marker = ContingentNegativeVariation()
@@ -271,7 +275,7 @@ class TestJuniferEEGAgainstReference:
                 our_slopes_array = np.array(our_slopes)
 
                 print(
-                    f"      Our slopes range: [{our_slopes_array.min():.6f}, {our_slopes_array.max():.6f}]"
+                    f"      Our slopes range: [{our_slopes_array.min():.6f}, {our_slopes_array.max():.6f}]",
                 )
                 print(f"      Our slopes mean: {our_slopes_averaged:.6f}")
                 print(f"      Ref slopes mean: {ref_slopes_averaged:.6f}")
@@ -312,7 +316,7 @@ class TestJuniferEEGAgainstReference:
                 params = ref_result["params"]
 
                 print(
-                    f"    Test {i + 1}: fmin={params['fmin']}, fmax={params['fmax']}"
+                    f"    Test {i + 1}: fmin={params['fmin']}, fmax={params['fmax']}",
                 )
 
                 marker = PowerSpectralDensityEstimator(
@@ -338,7 +342,7 @@ class TestJuniferEEGAgainstReference:
                             f"PSD values should be non-negative for {key}"
                         )
                         print(
-                            f"        {key}: range [{values_array.min():.2e}, {values_array.max():.2e}]"
+                            f"        {key}: range [{values_array.min():.2e}, {values_array.max():.2e}]",
                         )
 
     def test_psd_summary_equivalence(self):
@@ -376,7 +380,7 @@ class TestJuniferEEGAgainstReference:
                         f"Summary values should be non-negative for {key}"
                     )
                     print(
-                        f"        {key}: range [{values_array.min():.2e}, {values_array.max():.2e}]"
+                        f"        {key}: range [{values_array.min():.2e}, {values_array.max():.2e}]",
                     )
 
 
@@ -390,7 +394,7 @@ def run_validation_tests():
     if not reference_dir.exists():
         print("❌ Reference data directory not found.")
         print(
-            "   Please run 'python validation/generate_reference_data.py' first."
+            "   Please run 'python validation/generate_reference_data.py' first.",
         )
         return False
 
@@ -400,7 +404,7 @@ def run_validation_tests():
     if not datasets_file.exists() or not results_file.exists():
         print("❌ Reference data files not found.")
         print(
-            "   Please run 'python validation/generate_reference_data.py' first."
+            "   Please run 'python validation/generate_reference_data.py' first.",
         )
         return False
 
@@ -417,7 +421,7 @@ def run_validation_tests():
 
         print("\n✅ All validation tests passed!")
         print(
-            "📊 junifer_eeg markers are computationally consistent with NICE package."
+            "📊 junifer_eeg markers are computationally consistent with NICE package.",
         )
         return True
 

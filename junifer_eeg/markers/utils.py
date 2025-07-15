@@ -442,49 +442,106 @@ def get_icm_roi_mapping(equipment: str = "standard") -> Dict[str, List[str]]:
     else:
         # Standard 10-20 system ICM ROI approximations
         icm_rois = {
-            # Scalp ROI - all standard electrodes
+            # Scalp ROI - all standard electrodes (updated to match actual 64-channel data)
             "scalp": [
                 "Fp1",
+                "Fpz",
                 "Fp2",
+                "AF7",
+                "AF3",
+                "AFz",
+                "AF4",
+                "AF8",
                 "F7",
+                "F5",
                 "F3",
+                "F1",
                 "Fz",
+                "F2",
                 "F4",
+                "F6",
                 "F8",
+                "FT7",
                 "FC5",
+                "FC3",
                 "FC1",
+                "FCz",
                 "FC2",
+                "FC4",
                 "FC6",
+                "FT8",
                 "T7",
+                "C5",
                 "C3",
+                "C1",
                 "Cz",
+                "C2",
                 "C4",
+                "C6",
                 "T8",
-                "TP9",
+                "TP7",
                 "CP5",
+                "CP3",
                 "CP1",
+                "CPz",
                 "CP2",
+                "CP4",
                 "CP6",
-                "TP10",
+                "TP8",
                 "P7",
+                "P5",
                 "P3",
+                "P1",
                 "Pz",
+                "P2",
                 "P4",
+                "P6",
                 "P8",
-                "PO9",
+                "P9",
+                "P10",
+                "PO7",
+                "PO3",
+                "POz",
+                "PO4",
+                "PO8",
                 "O1",
+                "Iz",
                 "Oz",
                 "O2",
-                "PO10",
             ],
-            # CNV ROI - central and frontal-central region
-            "cnv": ["Fz", "FC1", "FC2", "Cz", "C3", "C4"],
-            # MMN ROI - fronto-central region for mismatch negativity
-            "mmn": ["Fz", "F3", "F4", "FC1", "FC2", "FC5", "FC6"],
-            # P3a ROI - fronto-central region
-            "p3a": ["Fz", "F3", "F4", "FC1", "FC2", "Cz"],
-            # P3b ROI - centro-parietal region
-            "p3b": ["Cz", "CP1", "CP2", "Pz", "P3", "P4"],
+            # CNV ROI - central and frontal-central region (updated for 64-channel)
+            "cnv": ["Fz", "FC1", "FCz", "FC2", "Cz", "C1", "C3", "C2", "C4"],
+            # MMN ROI - fronto-central region for mismatch negativity (updated for 64-channel)
+            "mmn": [
+                "Fz",
+                "F1",
+                "F3",
+                "F2",
+                "F4",
+                "FC1",
+                "FC3",
+                "FCz",
+                "FC2",
+                "FC4",
+                "FC5",
+                "FC6",
+            ],
+            # P3a ROI - fronto-central region (updated for 64-channel)
+            "p3a": ["Fz", "F1", "F3", "F2", "F4", "FC1", "FCz", "FC2", "Cz"],
+            # P3b ROI - centro-parietal region (updated for 64-channel)
+            "p3b": [
+                "Cz",
+                "CP1",
+                "CP3",
+                "CPz",
+                "CP2",
+                "CP4",
+                "Pz",
+                "P1",
+                "P3",
+                "P2",
+                "P4",
+            ],
         }
 
     return icm_rois
@@ -531,7 +588,7 @@ def get_data_for_rois(
                 roi_data[roi] = data[roi_idx : roi_idx + 1]  # Keep 2D
             else:
                 raise ValueError(
-                    f"ROI '{roi}' not found in channel names or ROI mapping for equipment '{equipment}'"
+                    f"ROI '{roi}' not found in channel names or ROI mapping for equipment '{equipment}'",
                 )
         else:
             # Get electrodes for this ROI
@@ -544,7 +601,7 @@ def get_data_for_rois(
 
             if not roi_indices:
                 raise ValueError(
-                    f"No electrodes found for ROI '{roi}' in equipment '{equipment}'"
+                    f"No electrodes found for ROI '{roi}' in equipment '{equipment}'",
                 )
 
             roi_data[roi] = data[roi_indices]
@@ -553,7 +610,9 @@ def get_data_for_rois(
 
 
 def aggregate_data(
-    data: np.ndarray, method: str, axis: Optional[int] = None
+    data: np.ndarray,
+    method: str,
+    axis: Optional[int] = None,
 ) -> np.ndarray:
     """Aggregate data using specified method.
 
@@ -573,16 +632,15 @@ def aggregate_data(
     """
     if method == "mean":
         return np.mean(data, axis=axis)
-    elif method == "std":
+    if method == "std":
         return np.std(data, axis=axis)
-    elif method == "median":
+    if method == "median":
         return np.median(data, axis=axis)
-    elif method == "min":
+    if method == "min":
         return np.min(data, axis=axis)
-    elif method == "max":
+    if method == "max":
         return np.max(data, axis=axis)
-    else:
-        raise ValueError(f"Unknown aggregation method: {method}")
+    raise ValueError(f"Unknown aggregation method: {method}")
 
 
 def apply_roi_trial_aggregation(
@@ -703,7 +761,9 @@ def apply_roi_trial_aggregation(
                 else:
                     # Multiple trials
                     trial_aggregated = aggregate_data(
-                        roi_data, trial_agg, axis=1
+                        roi_data,
+                        trial_agg,
+                        axis=1,
                     )
                     roi_value = aggregate_data(trial_aggregated, roi_agg)
 

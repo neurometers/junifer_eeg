@@ -13,7 +13,10 @@ class TestSymbolicMutualInformation:
     def test_symbolic_mutual_information_init(self):
         """Test SymbolicMutualInformation initialization."""
         marker = SymbolicMutualInformation(
-            tmin=0.0, tmax=1.0, weighted=True, kernel=3
+            tmin=0.0,
+            tmax=1.0,
+            weighted=True,
+            kernel=3,
         )
         assert marker.tmin == 0.0
         assert marker.tmax == 1.0
@@ -70,13 +73,13 @@ class TestSymbolicMutualInformation:
         input_data = {"data": sample_epochs}
         result = marker.compute(input_data)
 
-        assert "symbolic_mutual_information" in result
-        assert "data" in result["symbolic_mutual_information"]
-        assert "col_names" in result["symbolic_mutual_information"]
+        assert "symbolicmutualinformation" in result
+        assert "data" in result["symbolicmutualinformation"]
+        assert "col_names" in result["symbolicmutualinformation"]
 
         # Check dimensions
-        data = result["symbolic_mutual_information"]["data"]
-        col_names = result["symbolic_mutual_information"]["col_names"]
+        data = result["symbolicmutualinformation"]["data"]
+        col_names = result["symbolicmutualinformation"]["col_names"]
         n_channels = len(sample_epochs.ch_names)
 
         assert data.shape == (
@@ -92,7 +95,7 @@ class TestSymbolicMutualInformation:
         input_data = {"data": sample_epochs}
         result = marker.compute(input_data)
 
-        data = result["symbolic_mutual_information"]["data"]
+        data = result["symbolicmutualinformation"]["data"]
         n_channels = len(sample_epochs.ch_names)
 
         # Reshape to matrix
@@ -110,8 +113,8 @@ class TestSymbolicMutualInformation:
         input_data = {"data": sample_epochs}
         result = marker.compute(input_data)
 
-        assert "symbolic_mutual_information" in result
-        data = result["symbolic_mutual_information"]["data"]
+        assert "symbolicmutualinformation" in result
+        data = result["symbolicmutualinformation"]["data"]
         assert data.shape[0] == 1  # One trial
         assert data.shape[1] > 0  # Should have connectivity values
 
@@ -124,10 +127,11 @@ class TestSymbolicMutualInformation:
         result = marker.compute(input_data)
 
         # Should complete without error
-        assert "symbolic_mutual_information" in result
+        assert "symbolicmutualinformation" in result
 
     def test_symbolic_mutual_information_identical_signals(
-        self, sample_epochs
+        self,
+        sample_epochs,
     ):
         """Test SMI for channels with similar patterns."""
         marker = SymbolicMutualInformation()
@@ -136,7 +140,7 @@ class TestSymbolicMutualInformation:
         input_data = {"data": sample_epochs}
         result = marker.compute(input_data)
 
-        data = result["symbolic_mutual_information"]["data"]
+        data = result["symbolicmutualinformation"]["data"]
         n_channels = len(sample_epochs.ch_names)
 
         # Reshape to matrix
@@ -155,14 +159,18 @@ class TestSymbolicMutualInformation:
     def test_symbolic_mutual_information_parameters(self, sample_epochs):
         """Test different parameters."""
         marker = SymbolicMutualInformation(
-            tmin=0.1, tmax=0.6, kernel=4, tau=2, weighted=False
+            tmin=0.1,
+            tmax=0.6,
+            kernel=4,
+            tau=2,
+            weighted=False,
         )
 
         input_data = {"data": sample_epochs}
         result = marker.compute(input_data)
 
-        assert "symbolic_mutual_information" in result
-        data = result["symbolic_mutual_information"]["data"]
+        assert "symbolicmutualinformation" in result
+        data = result["symbolicmutualinformation"]["data"]
         n_channels = len(sample_epochs.ch_names)
         assert data.shape == (1, n_channels * n_channels)
 
@@ -198,8 +206,8 @@ class TestSymbolicMutualInformation:
         result = marker.compute(input_data)
 
         # Should complete successfully
-        assert "symbolic_mutual_information" in result
-        data = result["symbolic_mutual_information"]["data"]
+        assert "symbolicmutualinformation" in result
+        data = result["symbolicmutualinformation"]["data"]
         assert data.shape == (1, n_channels * n_channels)
 
         # Values should be finite

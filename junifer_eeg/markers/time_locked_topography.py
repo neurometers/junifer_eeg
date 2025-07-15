@@ -1,10 +1,13 @@
 """Time-locked topography marker for junifer_eeg."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List, Optional
 
+import mne
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
+
+from .utils import apply_roi_trial_aggregation, get_data_for_rois
 
 
 @register_marker
@@ -14,12 +17,17 @@ class TimeLockedTopography(BaseMarker):
     This marker extracts time-locked topographies (ERPs) by creating
     epochs from continuous data and averaging across specified time windows.
 
+    Follows next_icm aggregation pattern:
+    1. Average across time points (tmin to tmax)
+    2. Aggregate across electrodes (using roi_aggregation_method)
+    3. Aggregate across trials (using trial_aggregation_method)
+
     Note: This is adapted from NICE for continuous data. The original NICE
     implementation worked with pre-epoched data.
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy"}
-    _MARKER_INOUT_MAPPINGS: ClassVar = {"EEG": {"time_locked_topo": "matrix"}}
+    _MARKER_INOUT_MAPPINGS: ClassVar = {"EEG": {"timelockedtopo": "vector"}}
 
     def __init__(
         self,
@@ -28,6 +36,10 @@ class TimeLockedTopography(BaseMarker):
         epoch_length: float = 2.0,
         overlap: float = 0.5,
         baseline: tuple[float, float] | None = None,
+        rois: Optional[List[str]] = None,
+        roi_aggregation_method: Optional[List[str]] = None,
+        trial_aggregation_method: Optional[List[str]] = None,
+        equipment: str = "standard",
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -45,6 +57,14 @@ class TimeLockedTopography(BaseMarker):
             Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
         baseline : tuple of float, optional
             Baseline correction period (start, end) in seconds.
+        rois : list of str, optional
+            List of ROI names for aggregation.
+        roi_aggregation_method : list of str, optional
+            Methods to aggregate across ROI electrodes: ['mean', 'std'].
+        trial_aggregation_method : list of str, optional
+            Methods to aggregate across trials/epochs: ['mean', 'std'].
+        equipment : str, optional
+            Equipment type for electrode mapping. Default: 'standard'
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -55,10 +75,16 @@ class TimeLockedTopography(BaseMarker):
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.baseline = baseline
+        self.rois = rois
+        self.roi_aggregation_method = roi_aggregation_method
+        self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute time-locked topography.
 
@@ -74,50 +100,57 @@ class TimeLockedTopography(BaseMarker):
         dict
             Computed time-locked topography features.
         """
-        import mne
+        # Get the MNE data object (can be Raw or Epochs)
+        data_obj = input["data"]
 
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Check if we have Epochs or Raw data
+        if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
+            # This is already Epochs data - use it directly
+            epochs = data_obj
+        else:
+            # This is Raw data - create epochs from continuous data
+            raw = data_obj
+            duration = self.epoch_length
+            overlap_samples = int(self.overlap * duration * raw.info["sfreq"])
 
-        # Create epochs from continuous data
-        # This creates non-overlapping or overlapping epochs from continuous data
-        duration = self.epoch_length
-        overlap_samples = int(self.overlap * duration * raw.info["sfreq"])
+            # Create events at regular intervals
+            sfreq = raw.info["sfreq"]
+            duration_samples = int(duration * sfreq)
+            step_samples = duration_samples - overlap_samples
 
-        # Create events at regular intervals
-        sfreq = raw.info["sfreq"]
-        duration_samples = int(duration * sfreq)
-        step_samples = duration_samples - overlap_samples
+            # Calculate the number of epochs we can create
+            n_samples = raw.n_times
+            n_epochs = max(
+                1, (n_samples - duration_samples) // step_samples + 1
+            )
 
-        # Calculate the number of epochs we can create
-        n_samples = raw.n_times
-        n_epochs = max(1, (n_samples - duration_samples) // step_samples + 1)
+            # Create event array
+            events = np.zeros((n_epochs, 3), dtype=int)
+            for i in range(n_epochs):
+                events[i, 0] = (
+                    i * step_samples + duration_samples // 2
+                )  # Event at epoch center
+                events[i, 2] = 1  # Event ID
 
-        # Create event array
-        events = np.zeros((n_epochs, 3), dtype=int)
-        for i in range(n_epochs):
-            events[i, 0] = (
-                i * step_samples + duration_samples // 2
-            )  # Event at epoch center
-            events[i, 2] = 1  # Event ID
+            # Make sure events don't exceed data length
+            valid_events = events[
+                events[:, 0] < n_samples - duration_samples // 2
+            ]
 
-        # Make sure events don't exceed data length
-        valid_events = events[events[:, 0] < n_samples - duration_samples // 2]
+            if len(valid_events) == 0:
+                raise ValueError("Data too short to create any epochs")
 
-        if len(valid_events) == 0:
-            raise ValueError("Data too short to create any epochs")
-
-        # Create epochs
-        epochs = mne.Epochs(
-            raw,
-            valid_events,
-            event_id={"epoch": 1},
-            tmin=-duration / 2,
-            tmax=duration / 2,
-            baseline=None,  # We'll apply baseline later if needed
-            preload=True,
-            verbose=False,
-        )
+            # Create epochs
+            epochs = mne.Epochs(
+                raw,
+                valid_events,
+                event_id={"epoch": 1},
+                tmin=-duration / 2,
+                tmax=duration / 2,
+                baseline=None,  # We'll apply baseline later if needed
+                preload=True,
+                verbose=False,
+            )
 
         # Apply baseline correction if specified
         if self.baseline is not None:
@@ -131,18 +164,34 @@ class TimeLockedTopography(BaseMarker):
             epochs_cropped.get_data()
         )  # Shape: (n_epochs, n_channels, n_times)
 
-        # Average across epochs to get ERP
-        erp_data = np.mean(data, axis=0)  # Shape: (n_channels, n_times)
+        # Follow next_icm aggregation pattern:
+        # 1. Average across time first (following next_icm TimeLockedTopography)
+        time_averaged = np.mean(data, axis=2)  # Shape: (n_epochs, n_channels)
 
-        # Create time labels
-        times = epochs_cropped.times
-        time_labels = [f"t_{t:.3f}s" for t in times]
+        # 2. Transpose to (n_channels, n_epochs) for aggregation framework
+        time_averaged = time_averaged.T  # Shape: (n_channels, n_epochs)
 
-        # Return data in junifer format
-        return {
-            "time_locked_topo": {
-                "data": erp_data,  # Shape: (n_channels, n_times)
-                "col_names": time_labels,
-                "row_names": list(raw.ch_names),
+        # 3. Apply ROI selection and aggregation
+        if self.rois is not None:
+            roi_data = get_data_for_rois(
+                time_averaged,  # (n_channels, n_epochs)
+                list(epochs.ch_names),
+                self.rois,
+                equipment=self.equipment,
+            )
+        else:
+            # Use all channels as individual ROIs
+            roi_data = {
+                ch: time_averaged[i : i + 1, :]  # (1, n_epochs)
+                for i, ch in enumerate(epochs.ch_names)
             }
-        }
+
+        # 4. Apply aggregation to get final clinical values
+        results = apply_roi_trial_aggregation(
+            roi_data,
+            roi_aggregation_methods=self.roi_aggregation_method,
+            trial_aggregation_methods=self.trial_aggregation_method,
+            marker_name="time_locked_topo",
+        )
+
+        return results

@@ -158,16 +158,20 @@ class TestICMLGFullPipeline:
 
         # Test with default parameters
         smi_marker = SymbolicMutualInformation(
-            tmin=0.0, tmax=0.5, kernel=3, tau=1, weighted=True
+            tmin=0.0,
+            tmax=0.5,
+            kernel=3,
+            tau=1,
+            weighted=True,
         )
 
         result = smi_marker.compute({"data": epochs})
-        assert "symbolic_mutual_information" in result
-        assert "data" in result["symbolic_mutual_information"]
-        assert "col_names" in result["symbolic_mutual_information"]
+        assert "symbolicmutualinformation" in result
+        assert "data" in result["symbolicmutualinformation"]
+        assert "col_names" in result["symbolicmutualinformation"]
 
-        data = result["symbolic_mutual_information"]["data"]
-        col_names = result["symbolic_mutual_information"]["col_names"]
+        data = result["symbolicmutualinformation"]["data"]
+        col_names = result["symbolicmutualinformation"]["col_names"]
         n_channels = len(epochs.ch_names)
 
         # Check data properties
@@ -194,7 +198,9 @@ class TestICMLGFullPipeline:
 
         # Test SpectralPower
         spectral_marker = SpectralPower(
-            epoch_length=1.0, overlap=0.0, trial_aggregation_method=["mean"]
+            epoch_length=1.0,
+            overlap=0.0,
+            trial_aggregation_method=["mean"],
         )
 
         result = spectral_marker.compute({"data": raw})

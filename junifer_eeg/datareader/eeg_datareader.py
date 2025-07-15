@@ -24,9 +24,8 @@ def _read_fif(file_path: Path, **kwargs) -> Any:
     if "_epo.fif" in str(file_path):
         # It's an epochs file
         return mne.read_epochs(file_path, preload=True, verbose=False)
-    else:
-        # It's a raw file
-        return mne.io.read_raw_fif(file_path, preload=True, verbose=False)
+    # It's a raw file
+    return mne.io.read_raw_fif(file_path, preload=True, verbose=False)
 
 
 # Add EEG file extensions
@@ -35,7 +34,7 @@ default_module._extensions.update(
         ".edf": "EDF",
         ".bdf": "EDF",
         ".fif": "FIF",
-    }
+    },
 )
 
 # Add EEG reader functions

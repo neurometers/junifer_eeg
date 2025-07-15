@@ -44,7 +44,9 @@ def test_eeg_filter_preprocess():
 
     # Check that MNE filter was called
     mock_raw.filter.assert_called_once_with(
-        l_freq=1.0, h_freq=40.0, verbose=False
+        l_freq=1.0,
+        h_freq=40.0,
+        verbose=False,
     )
 
     # Check output

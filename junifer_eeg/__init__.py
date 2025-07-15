@@ -15,3 +15,40 @@ from . import (
     markers,
     preprocessors,
 )
+
+# Import main classes for convenience
+from .datareader import EEGDataReader, ICMLGDataReader
+from .markers import (
+    ICMLGContrast,
+    ICMLGGlobalLocalIndex,
+    ICMLGMismatchNegativity,
+    SpectralPower,
+    TimeLockedContrast,
+    TimeLockedTopography,
+    WindowDecoding,
+)
+from .preprocessors import (
+    EEGFilter,
+    ICMAdaptiveArtifactRejection,
+    ICMEquipmentFilter,
+    ICMLGEpoching,
+)
+
+__all__ = [
+    "EEGDataReader",
+    "EEGFilter",
+    "ICMAdaptiveArtifactRejection",
+    "ICMEquipmentFilter",
+    "ICMLGContrast",
+    "ICMLGDataReader",
+    "ICMLGEpoching",
+    "ICMLGGlobalLocalIndex",
+    "ICMLGMismatchNegativity",
+    "SpectralPower",
+    "TimeLockedContrast",
+    "TimeLockedTopography",
+    "WindowDecoding",
+    "datareader",
+    "markers",
+    "preprocessors",
+]

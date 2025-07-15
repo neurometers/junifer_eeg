@@ -24,7 +24,7 @@ class PermutationEntropy(BaseMarker):
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy", "scipy"}
     _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"permutationentropy": "vector"}
+        "EEG": {"permutationentropy": "vector"},
     }
 
     def __init__(
@@ -84,7 +84,9 @@ class PermutationEntropy(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute permutation entropy.
 
@@ -100,23 +102,32 @@ class PermutationEntropy(BaseMarker):
         dict
             Computed permutation entropy features.
         """
-        from mne.utils import _time_mask
         from scipy.signal import butter, filtfilt
 
-        # Get the MNE Epochs object
-        epochs = input["data"]
+        # Get the MNE data object (can be Raw or Epochs)
+        data_obj = input["data"]
 
-        # Get epochs data: Shape (n_epochs, n_channels, n_times)
-        epochs_data = epochs.get_data()
-        ch_names = epochs.ch_names
-        sfreq = epochs.info["sfreq"]
+        # Handle both Raw and Epochs objects
+        if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
+            # This is an Epochs object
+            epochs_data = (
+                data_obj.get_data()
+            )  # Shape: (n_epochs, n_channels, n_times)
+
+            # Apply time cropping if specified
+            if self.tmin is not None or self.tmax is not None:
+                data_obj = data_obj.copy().crop(tmin=self.tmin, tmax=self.tmax)
+                epochs_data = data_obj.get_data()
+        else:
+            # This is a Raw object, get data directly and reshape to 3D
+            raw_data = data_obj.get_data()  # Shape: (n_channels, n_times)
+            # Reshape to (1, n_channels, n_times) to treat as single epoch
+            epochs_data = raw_data[np.newaxis, :, :]
+
+        ch_names = data_obj.ch_names
+        sfreq = data_obj.info["sfreq"]
 
         n_epochs, n_channels, n_samples = epochs_data.shape
-
-        # Apply time window if specified
-        if self.tmin is not None or self.tmax is not None:
-            time_mask = _time_mask(epochs.times, self.tmin, self.tmax)
-            epochs_data = epochs_data[:, :, time_mask]
 
         # Apply frequency filtering if specified
         if self.filter_freq is not None:
@@ -125,7 +136,7 @@ class PermutationEntropy(BaseMarker):
             if self.filter_freq >= nyquist:
                 raise ValueError(
                     f"Filter frequency ({self.filter_freq}) must be less than "
-                    f"Nyquist frequency ({nyquist})"
+                    f"Nyquist frequency ({nyquist})",
                 )
 
             b, a = butter(4, self.filter_freq / nyquist, btype="low")
@@ -134,7 +145,9 @@ class PermutationEntropy(BaseMarker):
             for epoch_idx in range(n_epochs):
                 for ch_idx in range(n_channels):
                     epochs_data[epoch_idx, ch_idx, :] = filtfilt(
-                        b, a, epochs_data[epoch_idx, ch_idx, :]
+                        b,
+                        a,
+                        epochs_data[epoch_idx, ch_idx, :],
                     )
         else:
             # Apply default filtering (following NICE approach)
@@ -145,7 +158,9 @@ class PermutationEntropy(BaseMarker):
             for epoch_idx in range(n_epochs):
                 for ch_idx in range(n_channels):
                     epochs_data[epoch_idx, ch_idx, :] = filtfilt(
-                        b, a, epochs_data[epoch_idx, ch_idx, :]
+                        b,
+                        a,
+                        epochs_data[epoch_idx, ch_idx, :],
                     )
 
         # Compute permutation entropy for each epoch and channel
@@ -156,7 +171,9 @@ class PermutationEntropy(BaseMarker):
                 signal = epochs_data[epoch_idx, ch_idx, :]
                 pe_values[epoch_idx, ch_idx] = (
                     self._compute_permutation_entropy(
-                        signal, self.kernel, self.tau
+                        signal,
+                        self.kernel,
+                        self.tau,
                     )
                 )
 

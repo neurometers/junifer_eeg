@@ -126,8 +126,8 @@ class WindowDecoding(BaseMarker):
             return results
 
         # Crop to time window
-        epochs_a = epochs_a.crop(tmin=self.tmin, tmax=self.tmax)
-        epochs_b = epochs_b.crop(tmin=self.tmin, tmax=self.tmax)
+        epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
+        epochs_b = epochs_b.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
         # Reset baseline to None since we cropped the epochs
         epochs_a.baseline = None
@@ -141,7 +141,7 @@ class WindowDecoding(BaseMarker):
             [
                 np.zeros(len(epochs_a)),  # Label 0 for condition A
                 np.ones(len(epochs_b)),  # Label 1 for condition B
-            ]
+            ],
         )
 
         # Get data: (n_epochs, n_channels, n_times)
@@ -162,7 +162,7 @@ class WindowDecoding(BaseMarker):
                 random_state=self.random_state,
             )
             clf = Pipeline(
-                [("scaler", scaler), ("anova", transform), ("svc", svc)]
+                [("scaler", scaler), ("anova", transform), ("svc", svc)],
             )
         else:
             # Use LDA for accuracy
@@ -179,7 +179,11 @@ class WindowDecoding(BaseMarker):
 
         # Perform cross-validation
         scores = cross_val_score(
-            clf, X_flat, labels, cv=cv, scoring=self.scoring
+            clf,
+            X_flat,
+            labels,
+            cv=cv,
+            scoring=self.scoring,
         )
 
         # Mean score across folds

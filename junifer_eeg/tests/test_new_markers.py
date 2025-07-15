@@ -28,7 +28,9 @@ def create_test_raw():
 
     # Create MNE Raw object
     info = mne.create_info(
-        ch_names=["Cz", "Fz"], sfreq=sfreq, ch_types=["eeg"] * 2
+        ch_names=["Cz", "Fz"],
+        sfreq=sfreq,
+        ch_types=["eeg"] * 2,
     )
     raw_data = np.tile(data, (2, 1))  # 2 channels
     raw = mne.io.RawArray(raw_data, info, verbose=False)
@@ -73,7 +75,11 @@ class TestPermutationEntropy:
     def test_initialization(self):
         """Test marker initialization."""
         marker = PermutationEntropy(
-            tmin=0.5, tmax=1.5, kernel=4, tau=10, on="EEG"
+            tmin=0.5,
+            tmax=1.5,
+            kernel=4,
+            tau=10,
+            on="EEG",
         )
         assert marker.tmin == 0.5
         assert marker.tmax == 1.5
@@ -146,7 +152,11 @@ class TestPowerSpectralDensityEstimator:
     def test_initialization(self):
         """Test marker initialization."""
         marker = PowerSpectralDensityEstimator(
-            tmin=0.5, tmax=1.5, fmin=1, fmax=30, on="EEG"
+            tmin=0.5,
+            tmax=1.5,
+            fmin=1,
+            fmax=30,
+            on="EEG",
         )
         assert marker.tmin == 0.5
         assert marker.tmax == 1.5
@@ -170,7 +180,9 @@ class TestPowerSpectralDensityEstimator:
         psd_norm = result["psd_data_norm"]["data"]
 
         assert psd_data.shape[0] == 2  # 2 channels
-        assert psd_freqs.shape[0] == 1  # 1 observation
+        assert psd_data.shape[1] == 59  # 59 frequency bins
+        assert psd_freqs.shape[0] == 1  # 1 observation (aggregated)
+        assert psd_freqs.shape[1] == 59  # 59 frequency bins
         assert psd_data.shape == psd_norm.shape
         assert psd_data.shape[1] == psd_freqs.shape[1]  # Same frequency bins
         assert np.all(np.isfinite(psd_data))
@@ -183,7 +195,10 @@ class TestPowerSpectralDensitySummary:
     def test_initialization(self):
         """Test marker initialization."""
         marker = PowerSpectralDensitySummary(
-            percentile=75, fmin=1, fmax=30, on="EEG"
+            percentile=75,
+            fmin=1,
+            fmax=30,
+            on="EEG",
         )
         assert marker.percentile == 75
         assert marker.fmin == 1
@@ -193,7 +208,10 @@ class TestPowerSpectralDensitySummary:
         """Test marker computation."""
         raw = create_test_raw()
         marker = PowerSpectralDensitySummary(
-            percentile=50, fmin=1, fmax=30, on="EEG"
+            percentile=50,
+            fmin=1,
+            fmax=30,
+            on="EEG",
         )
 
         input_data = {"data": raw}

@@ -81,7 +81,9 @@ class TestTimeLockedContrast:
     def test_time_locked_contrast_compute(self, sample_epochs):
         """Test TimeLockedContrast computation."""
         marker = TimeLockedContrast(
-            condition_a="LSGS", condition_b="LDGD", comment="test"
+            condition_a="LSGS",
+            condition_b="LDGD",
+            comment="test",
         )
 
         input_data = {"data": sample_epochs}

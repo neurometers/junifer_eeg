@@ -57,7 +57,9 @@ class SpectralPower(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute spectral power features with flexible aggregation.
 
@@ -73,13 +75,25 @@ class SpectralPower(BaseMarker):
         dict
             Computed spectral power features with aggregation.
         """
-        # Get the MNE Epochs object
-        epochs = input["data"]
+        # Get the MNE data object (can be Raw or Epochs)
+        data_obj = input["data"]
 
-        # Get epochs data: Shape (n_epochs, n_channels, n_times)
-        epochs_data = epochs.get_data()
-        ch_names = epochs.ch_names
-        info = epochs.info
+        # Handle both Raw and Epochs objects
+        if hasattr(data_obj, "events"):
+            # This is an Epochs object
+            epochs_data = (
+                data_obj.get_data()
+            )  # Shape (n_epochs, n_channels, n_times)
+            ch_names = data_obj.ch_names
+            info = data_obj.info
+        else:
+            # This is a Raw object, reshape to look like single epoch
+            raw_data = data_obj.get_data()  # Shape (n_channels, n_times)
+            epochs_data = raw_data[
+                np.newaxis, :, :
+            ]  # Shape (1, n_channels, n_times)
+            ch_names = data_obj.ch_names
+            info = data_obj.info
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
@@ -93,7 +107,7 @@ class SpectralPower(BaseMarker):
 
         # Compute spectral power for each epoch and channel
         all_band_powers = {}
-        for band_name in bands.keys():
+        for band_name in bands:
             all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
 
         for epoch_idx in range(n_epochs):
@@ -119,7 +133,7 @@ class SpectralPower(BaseMarker):
                     # Compute mean power in band
                     band_power = psds[ch_idx, freq_mask].mean()
                     all_band_powers[band_name][epoch_idx, ch_idx] = float(
-                        band_power
+                        band_power,
                     )
 
         # Combine all bands into single feature set
@@ -165,5 +179,5 @@ class SpectralPower(BaseMarker):
             "spectralpower": {
                 "data": np.array(all_values).reshape(1, -1),
                 "col_names": col_names,
-            }
+            },
         }

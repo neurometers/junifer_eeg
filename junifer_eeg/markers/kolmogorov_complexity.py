@@ -23,7 +23,7 @@ class KolmogorovComplexity(BaseMarker):
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy"}
     _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"kolmogorovcomplexity": "vector"}
+        "EEG": {"kolmogorovcomplexity": "vector"},
     }
 
     def __init__(
@@ -75,7 +75,9 @@ class KolmogorovComplexity(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute Kolmogorov complexity with flexible aggregation.
 
@@ -94,22 +96,39 @@ class KolmogorovComplexity(BaseMarker):
 
         from mne.utils import _time_mask
 
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Get the MNE object (can be Raw or Epochs)
+        data_obj = input["data"]
 
-        # Create epochs from continuous data if needed
-        if self.trial_aggregation_method is not None:
-            epochs_data = self._create_epochs_from_continuous(raw)
-            # epochs_data shape: (n_epochs, n_channels, n_samples)
-        else:
-            # Single "epoch" from continuous data
-            data = raw.get_data()  # Shape: (n_channels, n_times)
+        # Handle both Raw and Epochs objects
+        if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
+            # This is an Epochs object
+            epochs_data = (
+                data_obj.get_data()
+            )  # Shape: (n_epochs, n_channels, n_times)
+
+            # Apply time cropping if specified
             if self.tmin is not None or self.tmax is not None:
-                time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                data = data[:, time_mask]
-            epochs_data = data[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_samples)
+                data_obj = data_obj.copy().crop(tmin=self.tmin, tmax=self.tmax)
+                epochs_data = data_obj.get_data()
+        else:
+            # This is a Raw object
+            # Create epochs from continuous data if needed
+            if self.trial_aggregation_method is not None:
+                epochs_data = self._create_epochs_from_continuous(data_obj)
+                # epochs_data shape: (n_epochs, n_channels, n_samples)
+            else:
+                # Single "epoch" from continuous data
+                data = data_obj.get_data()  # Shape: (n_channels, n_times)
+                if self.tmin is not None or self.tmax is not None:
+                    time_mask = _time_mask(
+                        data_obj.times, self.tmin, self.tmax
+                    )
+                    data = data[:, time_mask]
+                epochs_data = data[
+                    np.newaxis,
+                    :,
+                    :,
+                ]  # Shape: (1, n_channels, n_samples)
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
@@ -128,14 +147,14 @@ class KolmogorovComplexity(BaseMarker):
             # Extract data for specified ROIs
             roi_data = get_data_for_rois(
                 k_values.T,  # Transpose to (n_channels, n_epochs)
-                list(raw.ch_names),
+                list(data_obj.ch_names),
                 self.rois,
             )
         else:
             # Use all channels as individual ROIs
             roi_data = {
                 ch: k_values[:, i : i + 1].T
-                for i, ch in enumerate(raw.ch_names)
+                for i, ch in enumerate(data_obj.ch_names)
             }
 
         # Apply aggregation
@@ -184,7 +203,8 @@ class KolmogorovComplexity(BaseMarker):
                 # Pad with last available samples if needed
                 available_samples = n_samples - start_sample
                 epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
+                    :,
+                    start_sample:,
                 ]
                 # Pad with zeros or repeat last sample
                 epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]
@@ -210,9 +230,7 @@ class KolmogorovComplexity(BaseMarker):
 
         for i in range(items):
             tbin = int((signal[i] - lower) / bsize) if bsize > 0 else 0
-            osignal[i] = (
-                0 if tbin < 0 else maxbin if tbin > maxbin else tbin
-            ) + ord("A")
+            osignal[i] = (0 if tbin < 0 else min(tbin, maxbin)) + ord("A")
 
         # Use zlib for compression
         string = osignal.tobytes()

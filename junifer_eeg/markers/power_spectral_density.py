@@ -23,7 +23,7 @@ class PowerSpectralDensityEstimator(BaseMarker):
             "psd_data": "matrix",
             "psd_freqs": "vector",
             "psd_data_norm": "matrix",
-        }
+        },
     }
 
     def __init__(
@@ -75,14 +75,16 @@ class PowerSpectralDensityEstimator(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute Power Spectral Density.
 
         Parameters
         ----------
         input : dict
-            Input data containing 'data' with MNE Raw object.
+            Input data containing 'data' with MNE Raw or Epochs object.
         extra_input : dict, optional
             Additional input data.
 
@@ -91,41 +93,102 @@ class PowerSpectralDensityEstimator(BaseMarker):
         dict
             Computed PSD data, frequencies, and normalized PSD.
         """
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Get the MNE data object
+        data_obj = input["data"]
 
-        # Crop to time window if specified
-        if self.tmin is not None or self.tmax is not None:
-            raw_cropped = raw.copy().crop(tmin=self.tmin, tmax=self.tmax)
-        else:
-            raw_cropped = raw
+        # Handle both Raw and Epochs data
+        if hasattr(data_obj, "events"):  # This is Epochs
+            epochs = data_obj
 
-        # Set frequency limits
-        fmax = self.fmax if self.fmax is not None else raw.info["sfreq"] / 2
+            # Crop to time window if specified
+            if self.tmin is not None or self.tmax is not None:
+                epochs_cropped = epochs.copy().crop(
+                    tmin=self.tmin, tmax=self.tmax
+                )
+            else:
+                epochs_cropped = epochs
 
-        # Prepare MNE parameters
-        mne_params = {}
-        if self.n_per_seg is not None:
-            mne_params["n_per_seg"] = self.n_per_seg
-        if self.n_overlap is not None:
-            mne_params["n_overlap"] = self.n_overlap
-        if self.n_fft is not None:
-            mne_params["n_fft"] = self.n_fft
+            # Set frequency limits
+            fmax = (
+                self.fmax
+                if self.fmax is not None
+                else epochs.info["sfreq"] / 2
+            )
 
-        if self.psd_method == "welch":
-            # Compute PSD using MNE
-            spectrum = raw_cropped.compute_psd(
-                method="welch", fmin=self.fmin, fmax=fmax, **mne_params
+            # Prepare MNE parameters
+            mne_params = {}
+            if self.n_per_seg is not None:
+                mne_params["n_per_seg"] = self.n_per_seg
+            if self.n_overlap is not None:
+                mne_params["n_overlap"] = self.n_overlap
+            if self.n_fft is not None:
+                mne_params["n_fft"] = self.n_fft
+
+            # Compute PSD using MNE on epochs
+            spectrum = epochs_cropped.compute_psd(
+                method="welch",
+                fmin=self.fmin,
+                fmax=fmax,
+                **mne_params,
             )
 
             # Extract data and frequencies
-            psd_data = spectrum.get_data()  # Shape: (n_channels, n_freqs)
+            psd_data = (
+                spectrum.get_data()
+            )  # Shape: (n_epochs, n_channels, n_freqs)
             freqs = spectrum.freqs
 
-        else:
-            raise ValueError(
-                f"PSD method '{self.psd_method}' not supported. Use 'welch'."
+            # Average across epochs to get (n_channels, n_freqs)
+            psd_data = np.mean(
+                psd_data, axis=0
+            )  # Shape: (n_channels, n_freqs)
+
+            # Use epochs channel names
+            ch_names = epochs.ch_names
+
+        else:  # Raw data
+            raw = data_obj
+
+            # Crop to time window if specified
+            if self.tmin is not None or self.tmax is not None:
+                raw_cropped = raw.copy().crop(tmin=self.tmin, tmax=self.tmax)
+            else:
+                raw_cropped = raw
+
+            # Set frequency limits
+            fmax = (
+                self.fmax if self.fmax is not None else raw.info["sfreq"] / 2
             )
+
+            # Prepare MNE parameters
+            mne_params = {}
+            if self.n_per_seg is not None:
+                mne_params["n_per_seg"] = self.n_per_seg
+            if self.n_overlap is not None:
+                mne_params["n_overlap"] = self.n_overlap
+            if self.n_fft is not None:
+                mne_params["n_fft"] = self.n_fft
+
+            if self.psd_method == "welch":
+                # Compute PSD using MNE
+                spectrum = raw_cropped.compute_psd(
+                    method="welch",
+                    fmin=self.fmin,
+                    fmax=fmax,
+                    **mne_params,
+                )
+
+                # Extract data and frequencies
+                psd_data = spectrum.get_data()  # Shape: (n_channels, n_freqs)
+                freqs = spectrum.freqs
+
+            else:
+                raise ValueError(
+                    f"PSD method '{self.psd_method}' not supported. Use 'welch'.",
+                )
+
+            # Use raw channel names
+            ch_names = raw.ch_names
 
         # Compute normalized version
         psd_data_norm = psd_data / psd_data.sum(axis=-1, keepdims=True)
@@ -138,7 +201,7 @@ class PowerSpectralDensityEstimator(BaseMarker):
             "psd_data": {
                 "data": psd_data,  # Shape: (n_channels, n_freqs)
                 "col_names": freq_names,
-                "row_names": list(raw.ch_names),
+                "row_names": ch_names,
             },
             "psd_freqs": {
                 "data": freqs.reshape(1, -1),  # Shape: (1, n_freqs)
@@ -147,7 +210,7 @@ class PowerSpectralDensityEstimator(BaseMarker):
             "psd_data_norm": {
                 "data": psd_data_norm,  # Shape: (n_channels, n_freqs)
                 "col_names": freq_names,
-                "row_names": list(raw.ch_names),
+                "row_names": ch_names,
             },
         }
 
@@ -236,14 +299,16 @@ class PowerSpectralDensitySummary(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute Power Spectral Density Summary.
 
         Parameters
         ----------
         input : dict
-            Input data containing 'data' with MNE Raw object.
+            Input data containing 'data' with MNE Raw or Epochs object.
         extra_input : dict, optional
             Additional input data.
 
@@ -252,24 +317,50 @@ class PowerSpectralDensitySummary(BaseMarker):
         dict
             Computed PSD summary statistics.
         """
+        import mne.io
         from mne.utils import _time_mask
 
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Get the MNE data object
+        data_obj = input["data"]
 
-        # Create epochs from continuous data if needed
-        if self.trial_aggregation_method is not None:
-            epochs_data = self._create_epochs_from_continuous(raw)
-            # epochs_data shape: (n_epochs, n_channels, n_samples)
-        else:
-            # Single "epoch" from continuous data
-            data = raw.get_data()  # Shape: (n_channels, n_times)
+        # Handle both Raw and Epochs data
+        if hasattr(data_obj, "events"):  # This is Epochs
+            epochs = data_obj
+
+            # Crop to time window if specified
             if self.tmin is not None or self.tmax is not None:
-                time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                data = data[:, time_mask]
-            epochs_data = data[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_samples)
+                epochs_cropped = epochs.copy().crop(
+                    tmin=self.tmin, tmax=self.tmax
+                )
+            else:
+                epochs_cropped = epochs
+
+            # Get epochs data directly
+            epochs_data = (
+                epochs_cropped.get_data()
+            )  # Shape: (n_epochs, n_channels, n_samples)
+            ch_names = epochs.ch_names
+
+        else:  # Raw data
+            raw = data_obj
+
+            # Create epochs from continuous data if needed
+            if self.trial_aggregation_method is not None:
+                epochs_data = self._create_epochs_from_continuous(raw)
+                # epochs_data shape: (n_epochs, n_channels, n_samples)
+            else:
+                # Single "epoch" from continuous data
+                data = raw.get_data()  # Shape: (n_channels, n_times)
+                if self.tmin is not None or self.tmax is not None:
+                    time_mask = _time_mask(raw.times, self.tmin, self.tmax)
+                    data = data[:, time_mask]
+                epochs_data = data[
+                    np.newaxis,
+                    :,
+                    :,
+                ]  # Shape: (1, n_channels, n_samples)
+
+            ch_names = raw.ch_names
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
@@ -282,8 +373,12 @@ class PowerSpectralDensitySummary(BaseMarker):
             ]  # Shape: (n_channels, n_samples)
 
             # Create a temporary Raw object for this epoch
-            temp_info = raw.info.copy()
-            temp_raw = raw.__class__(epoch_data, temp_info, verbose=False)
+            if hasattr(data_obj, "events"):  # Epochs
+                temp_info = epochs.info.copy()
+            else:  # Raw
+                temp_info = raw.info.copy()
+
+            temp_raw = mne.io.RawArray(epoch_data, temp_info, verbose=False)
 
             # Use the PowerSpectralDensityEstimator to get PSD data for this epoch
             estimator = PowerSpectralDensityEstimator(
@@ -303,23 +398,38 @@ class PowerSpectralDensitySummary(BaseMarker):
             ]  # Shape: (n_channels, n_freqs)
 
             # Compute percentile across frequencies for each channel
-            psd_summary_values[epoch_idx, :] = np.percentile(
-                psd_data, self.percentile, axis=1
-            )
+            if psd_data.ndim == 2 and psd_data.shape[1] > 1:
+                # Multiple frequency bins - compute percentile across frequencies
+                psd_summary_values[epoch_idx, :] = np.percentile(
+                    psd_data,
+                    self.percentile,
+                    axis=1,
+                )
+            else:
+                # Single frequency bin or 1D array - use the values directly
+                if psd_data.ndim == 2:
+                    psd_summary_values[epoch_idx, :] = psd_data[:, 0]
+                else:
+                    # Ensure the array has the right shape
+                    if psd_data.shape[0] == n_channels:
+                        psd_summary_values[epoch_idx, :] = psd_data
+                    else:
+                        # If shape doesn't match, use the first value for all channels
+                        psd_summary_values[epoch_idx, :] = psd_data[0]
 
         # Handle ROI selection
         if self.rois is not None:
             # Extract data for specified ROIs
             roi_data = get_data_for_rois(
                 psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
-                list(raw.ch_names),
+                ch_names,
                 self.rois,
             )
         else:
             # Use all channels as individual ROIs
             roi_data = {
                 ch: psd_summary_values[:, i : i + 1].T
-                for i, ch in enumerate(raw.ch_names)
+                for i, ch in enumerate(ch_names)
             }
 
         # Apply aggregation
@@ -368,7 +478,8 @@ class PowerSpectralDensitySummary(BaseMarker):
                 # Pad with last available samples if needed
                 available_samples = n_samples - start_sample
                 epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
+                    :,
+                    start_sample:,
                 ]
                 # Pad with zeros or repeat last sample
                 epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]

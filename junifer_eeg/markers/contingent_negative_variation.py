@@ -22,7 +22,7 @@ class ContingentNegativeVariation(BaseMarker):
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy", "scipy"}
     _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"cnvslope": "vector", "cnvintercept": "vector"}
+        "EEG": {"cnvslope": "vector", "cnvintercept": "vector"},
     }
 
     def __init__(
@@ -70,7 +70,9 @@ class ContingentNegativeVariation(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute Contingent Negative Variation.
 
@@ -91,22 +93,55 @@ class ContingentNegativeVariation(BaseMarker):
         from mne.utils import _time_mask
         from scipy import linalg
 
-        # Get the MNE Raw object
-        raw = input["data"]
+        # Get the MNE data object (can be Raw or Epochs)
+        data_obj = input["data"]
 
-        # Create epochs from continuous data if needed
-        if self.trial_aggregation_method is not None:
-            epochs_data = self._create_epochs_from_continuous(raw)
-            # epochs_data shape: (n_epochs, n_channels, n_samples)
-        else:
-            # Single "epoch" from continuous data
-            data = raw.get_data()  # Shape: (n_channels, n_times)
+        # Check if we have Epochs or Raw data
+        if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
+            # This is Epochs data
+            epochs_data = (
+                data_obj.get_data()
+            )  # Shape: (n_epochs, n_channels, n_times)
+
+            # Apply time cropping if specified
             if self.tmin is not None or self.tmax is not None:
-                time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                data = data[:, time_mask]
-            epochs_data = data[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_samples)
+                from mne.utils import _time_mask
+
+                time_mask = _time_mask(data_obj.times, self.tmin, self.tmax)
+                epochs_data = epochs_data[:, :, time_mask]
+
+        else:
+            # This is Raw data - create epochs from continuous data if needed
+            raw = data_obj
+            if self.trial_aggregation_method is not None:
+                epochs_data = self._create_epochs_from_continuous(raw)
+                # epochs_data shape: (n_epochs, n_channels, n_samples)
+            else:
+                # Single "epoch" from continuous data
+                data = raw.get_data()  # Shape: (n_channels, n_times)
+
+                # Check if data length matches times length to avoid indexing errors
+                current_times = raw.times
+                if len(current_times) != data.shape[1]:
+                    # Data has been preprocessed and time dimension reduced
+                    # Create new times array matching the data
+                    sfreq = raw.info["sfreq"]
+                    n_samples = data.shape[1]
+                    current_times = np.arange(n_samples) / sfreq + raw.times[0]
+
+                if self.tmin is not None or self.tmax is not None:
+                    time_mask = _time_mask(current_times, self.tmin, self.tmax)
+                    data = data[:, time_mask]
+                    current_times = current_times[time_mask]
+                epochs_data = data[
+                    np.newaxis,
+                    :,
+                    :,
+                ]  # Shape: (1, n_channels, n_samples)
+
+        # Ensure epochs_data has correct 3D shape
+        if epochs_data.ndim == 2:
+            epochs_data = epochs_data[np.newaxis, :, :]
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
@@ -119,7 +154,34 @@ class ContingentNegativeVariation(BaseMarker):
                 epoch_idx
             ]  # Shape: (n_channels, n_samples)
             n_times = epoch_data.shape[1]
-            times = np.arange(n_times) / raw.info["sfreq"]
+
+            # Use appropriate time array based on data type
+            if hasattr(data_obj, "times"):
+                # For Epochs data, times are already available
+                if self.tmin is not None or self.tmax is not None:
+                    # If we cropped the data, create times for the cropped data
+                    if hasattr(data_obj, "events"):  # Epochs
+                        original_times = data_obj.times
+                        time_mask = _time_mask(
+                            original_times, self.tmin, self.tmax
+                        )
+                        times = original_times[time_mask]
+                    else:  # Raw
+                        times = (
+                            current_times
+                            if "current_times" in locals()
+                            else np.arange(n_times) / data_obj.info["sfreq"]
+                        )
+                else:
+                    times = data_obj.times[:n_times]  # Use original times
+            else:
+                # Fallback: create time array
+                sfreq = (
+                    data_obj.info["sfreq"]
+                    if hasattr(data_obj, "info")
+                    else 250.0
+                )
+                times = np.arange(n_times) / sfreq
 
             # Set time range for this epoch
             tmax = self.tmax if self.tmax is not None else times[-1]
@@ -136,18 +198,22 @@ class ContingentNegativeVariation(BaseMarker):
 
             # Design matrix: intercept + increasing time
             design_matrix = np.c_[
-                np.ones(len(fit_range)), times[fit_range] - tmin
+                np.ones(len(fit_range)),
+                times[fit_range] - tmin,
             ]
 
             # Get scaling factors using MNE's defaults
             scales = np.ones(n_channels)
             try:
-                for this_type, this_picks in _picks_by_type(raw.info):
-                    if len(this_picks) > 0:
-                        scale_factor = _handle_default("scalings").get(
-                            this_type, 1.0
-                        )
-                        scales[this_picks] = scale_factor
+                info_obj = data_obj.info if hasattr(data_obj, "info") else None
+                if info_obj:
+                    for this_type, this_picks in _picks_by_type(info_obj):
+                        if len(this_picks) > 0:
+                            scale_factor = _handle_default("scalings").get(
+                                this_type,
+                                1.0,
+                            )
+                            scales[this_picks] = scale_factor
             except (KeyError, AttributeError):
                 # If scaling fails, use unity scaling
                 pass
@@ -170,26 +236,32 @@ class ContingentNegativeVariation(BaseMarker):
                     slope_values[epoch_idx, ch] = np.nan
 
         # Handle ROI selection for slopes
+        ch_names = (
+            list(data_obj.ch_names)
+            if hasattr(data_obj, "ch_names")
+            else [f"ch_{i}" for i in range(n_channels)]
+        )
+
         if self.rois is not None:
             slope_roi_data = get_data_for_rois(
                 slope_values.T,  # Transpose to (n_channels, n_epochs)
-                list(raw.ch_names),
+                ch_names,
                 self.rois,
             )
             intercept_roi_data = get_data_for_rois(
                 intercept_values.T,  # Transpose to (n_channels, n_epochs)
-                list(raw.ch_names),
+                ch_names,
                 self.rois,
             )
         else:
             # Use all channels as individual ROIs
             slope_roi_data = {
                 ch: slope_values[:, i : i + 1].T
-                for i, ch in enumerate(raw.ch_names)
+                for i, ch in enumerate(ch_names)
             }
             intercept_roi_data = {
                 ch: intercept_values[:, i : i + 1].T
-                for i, ch in enumerate(raw.ch_names)
+                for i, ch in enumerate(ch_names)
             }
 
         # Apply aggregation for slopes
@@ -224,7 +296,16 @@ class ContingentNegativeVariation(BaseMarker):
         if self.tmin is not None or self.tmax is not None:
             from mne.utils import _time_mask
 
-            time_mask = _time_mask(raw.times, self.tmin, self.tmax)
+            # Check if data length matches times length to avoid indexing errors
+            current_times = raw.times
+            if len(current_times) != data.shape[1]:
+                # Data has been preprocessed and time dimension reduced
+                # Create new times array matching the data
+                sfreq = raw.info["sfreq"]
+                n_samples = data.shape[1]
+                current_times = np.arange(n_samples) / sfreq + raw.times[0]
+
+            time_mask = _time_mask(current_times, self.tmin, self.tmax)
             data = data[:, time_mask]
 
         n_channels, n_samples = data.shape
@@ -251,7 +332,8 @@ class ContingentNegativeVariation(BaseMarker):
                 # Pad with last available samples if needed
                 available_samples = n_samples - start_sample
                 epochs_data[epoch_idx, :, :available_samples] = data[
-                    :, start_sample:
+                    :,
+                    start_sample:,
                 ]
                 # Pad with zeros or repeat last sample
                 epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]

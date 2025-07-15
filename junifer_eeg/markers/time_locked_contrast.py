@@ -128,8 +128,8 @@ class TimeLockedContrast(BaseMarker):
 
         # Crop to time window if specified
         if self.tmin is not None or self.tmax is not None:
-            epochs_a = epochs_a.crop(tmin=self.tmin, tmax=self.tmax)
-            epochs_b = epochs_b.crop(tmin=self.tmin, tmax=self.tmax)
+            epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
+            epochs_b = epochs_b.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
         # Get data and compute averages following NICE approach
         data_a = epochs_a.get_data()  # (n_epochs, n_channels, n_times)

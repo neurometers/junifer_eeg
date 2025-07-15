@@ -27,7 +27,9 @@ def create_test_raw():
 
     # Create MNE Raw object
     info = mne.create_info(
-        ch_names=["Cz", "Fz"], sfreq=sfreq, ch_types=["eeg"] * 2
+        ch_names=["Cz", "Fz"],
+        sfreq=sfreq,
+        ch_types=["eeg"] * 2,
     )
     raw_data = np.tile(data, (2, 1))  # 2 channels
     raw = mne.io.RawArray(raw_data, info, verbose=False)
@@ -41,7 +43,11 @@ class TestTimeLockedTopography:
     def test_initialization(self):
         """Test marker initialization."""
         marker = TimeLockedTopography(
-            tmin=-0.1, tmax=0.5, epoch_length=1.0, overlap=0.2, on="EEG"
+            tmin=-0.1,
+            tmax=0.5,
+            epoch_length=1.0,
+            overlap=0.2,
+            on="EEG",
         )
         assert marker.tmin == -0.1
         assert marker.tmax == 0.5
@@ -52,22 +58,23 @@ class TestTimeLockedTopography:
         """Test marker computation."""
         raw = create_test_raw()
         marker = TimeLockedTopography(
-            tmin=-0.1, tmax=0.2, epoch_length=1.0, overlap=0.0, on="EEG"
+            tmin=-0.1,
+            tmax=0.2,
+            epoch_length=1.0,
+            overlap=0.0,
+            on="EEG",
         )
 
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "time_locked_topo" in result
-        data = result["time_locked_topo"]["data"]
-        col_names = result["time_locked_topo"]["col_names"]
-        row_names = result["time_locked_topo"]["row_names"]
+        assert "timelockedtopo" in result
+        data = result["timelockedtopo"]["data"]
+        col_names = result["timelockedtopo"]["col_names"]
 
-        assert data.shape[0] == 2  # 2 channels
-        assert data.shape[1] > 0  # Should have time points
+        assert data.shape[0] == 1  # Single aggregated value per channel
+        assert data.shape[1] == 2  # 2 channels
         assert len(col_names) == data.shape[1]
-        assert len(row_names) == data.shape[0]
-        assert all("t_" in name for name in col_names)
         assert np.all(np.isfinite(data))
 
     def test_compute_with_baseline(self):
@@ -84,8 +91,8 @@ class TestTimeLockedTopography:
         input_data = {"data": raw}
         result = marker.compute(input_data)
 
-        assert "time_locked_topo" in result
-        data = result["time_locked_topo"]["data"]
+        assert "timelockedtopo" in result
+        data = result["timelockedtopo"]["data"]
         assert np.all(np.isfinite(data))
 
 
@@ -134,7 +141,7 @@ class TestTimeDecoding:
         assert all("decode_t_" in name for name in col_names)
         assert np.all(np.isfinite(data))
         assert np.all(
-            (data >= 0) & (data <= 1)
+            (data >= 0) & (data <= 1),
         )  # ROC-AUC scores should be [0,1]
 
     def test_compute_spectral_power_condition(self):
@@ -216,7 +223,7 @@ class TestGeneralizationDecoding:
         assert all("t_" in name for name in col_names)
         assert np.all(np.isfinite(data))
         assert np.all(
-            (data >= 0) & (data <= 1)
+            (data >= 0) & (data <= 1),
         )  # ROC-AUC scores should be [0,1]
 
     def test_compute_alpha_beta_condition(self):

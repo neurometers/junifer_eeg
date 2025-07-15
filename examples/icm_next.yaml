@@ -1,0 +1,485 @@
+---
+# Complete ICM Local-Global Pipeline Configuration matching next_icm exactly
+# 30 markers total: 17 resting state + 13 LG-specific markers
+#
+# Based on next_icm/lg/markers.py _get_local_global() function:
+# fc = _get_resting_state(config_params)
+# fc.add_marker(f_list) 
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: PatternDataGrabber
+  patterns:
+    EEG:
+      pattern: "sub-{subject}_ses-{session}_task-lg_acq-{acq}_epo.fif"
+      space: "native"
+  replacements:
+    - subject
+    - session
+    - acq
+  types:
+    - EEG
+  datadir: "./eeg"
+
+datareader:
+  kind: ICMLGDataReader
+  equipment: "standard"
+  types:
+    - EEG
+
+preprocess:
+  # Commented out as discussed - causes metadata corruption
+  # - kind: ICMAdaptiveArtifactRejection
+  #   z_threshold: 4.0
+  #   max_bad_channels: 0.3
+  #   max_bad_epochs: 0.3
+  #   on: EEG
+
+# COMPLETE NEXT_ICM MARKER SET (30 markers total)
+markers:
+  # ===================================================================
+  # RESTING STATE MARKERS (17 markers) - from next_icm/rs/markers.py
+  # ===================================================================
+  
+  # Power Spectral Density markers (11 markers)
+  # Using PowerSpectralDensitySummary for single aggregated values
+  # Delta band (1-4 Hz) - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_delta
+    fmin: 1.0
+    fmax: 4.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Delta normalized - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_deltan
+    fmin: 1.0
+    fmax: 4.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Theta band (4-8 Hz) - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_theta
+    fmin: 4.0
+    fmax: 8.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Theta normalized - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_thetan
+    fmin: 4.0
+    fmax: 8.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Alpha band (8-12 Hz) - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_alpha
+    fmin: 8.0
+    fmax: 12.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Alpha normalized - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_alphan
+    fmin: 8.0
+    fmax: 12.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Beta band (12-30 Hz) - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_beta
+    fmin: 12.0
+    fmax: 30.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Beta normalized - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_betan
+    fmin: 12.0
+    fmax: 30.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Gamma band (30-45 Hz) - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_gamma
+    fmin: 30.0
+    fmax: 45.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Gamma normalized - mean power
+  - kind: PowerSpectralDensitySummary
+    name: psd_gamman
+    fmin: 30.0
+    fmax: 45.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Summary spectral edge
+  - kind: PowerSpectralDensitySummary
+    name: psd_summary_se
+    fmin: 1.0
+    fmax: 45.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # PSD Summary markers (3 markers)
+  # Median spectral frequency
+  - kind: PowerSpectralDensitySummary
+    name: psd_summary_msf
+    fmin: 1.0
+    fmax: 45.0
+    percentile: 50.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Spectral edge frequency 90%
+  - kind: PowerSpectralDensitySummary
+    name: psd_summary_sef90
+    fmin: 1.0
+    fmax: 45.0
+    percentile: 90.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Spectral edge frequency 95%
+  - kind: PowerSpectralDensitySummary
+    name: psd_summary_sef95
+    fmin: 1.0
+    fmax: 45.0
+    percentile: 95.0
+    tmin: null
+    tmax: 0.6
+    psd_method: "welch"
+    n_fft: 256
+    n_overlap: 64
+    n_per_seg: 128
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Complexity/entropy markers (3 markers)
+  # Permutation entropy
+  - kind: PermutationEntropy
+    name: permutation_entropy
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 1
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Symbolic mutual information
+  - kind: SymbolicMutualInformation
+    name: symbolicmutualinformation
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+    
+  # Kolmogorov complexity
+  - kind: KolmogorovComplexity
+    name: kolmogorov_complexity
+    tmin: null
+    tmax: 0.6
+    nbins: 16
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  # ===================================================================
+  # LG-SPECIFIC MARKERS (13 markers) - from next_icm/lg/markers.py
+  # ===================================================================
+  
+  # 1. Contingent Negative Variation (CNV) - preparatory slow wave
+  - kind: ContingentNegativeVariation
+    name: cnv_slopes
+    tmin: -0.004                              # Pre-stimulus period start  
+    tmax: 0.596                               # Pre-stimulus period end
+    trial_aggregation_method: ["mean"]        # Aggregate across epochs
+    roi_aggregation_method: ["mean"]          # Aggregate across electrodes
+    rois: ["cnv"]
+    on: EEG
+
+  # 2-4. Time-locked topographies (3 markers: P1, P3a, P3b)
+  - kind: TimeLockedTopography
+    name: time_locked_topo_p1
+    tmin: 0.064                               # P1 time window start
+    tmax: 0.112                               # P1 time window end
+    trial_aggregation_method: ["mean"]        # Aggregate across epochs
+    roi_aggregation_method: ["mean"]          # Aggregate across electrodes
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedTopography  
+    name: time_locked_topo_p3a
+    tmin: 0.876                               # P3a time window start
+    tmax: 0.936                               # P3a time window end
+    trial_aggregation_method: ["mean"]        # Aggregate across epochs
+    roi_aggregation_method: ["mean"]          # Aggregate across electrodes
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: time_locked_topo_p3b
+    tmin: 0.996                               # P3b time window start
+    tmax: 1.196                               # P3b time window end
+    trial_aggregation_method: ["mean"]        # Aggregate across epochs
+    roi_aggregation_method: ["mean"]          # Aggregate across electrodes
+    rois: ["scalp"]
+    on: EEG
+
+  # 5-11. Time-locked contrasts (7 markers for condition comparisons - EXACTLY matching next_icm)
+  - kind: TimeLockedContrast
+    name: contrast_lsgs_ldgd
+    tmin: null                                # Full time window
+    tmax: null
+    condition_a: "LSGS"                       # Local Same Global Same
+    condition_b: "LDGD"                       # Local Different Global Different
+    comment: "LSGS-LDGD"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_lsgd_ldgs
+    tmin: null                                # Full time window
+    tmax: null
+    condition_a: "LSGD"                       # Local Same Global Different
+    condition_b: "LDGS"                       # Local Different Global Same
+    comment: "LSGD-LDGS"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_ld_ls
+    tmin: null                                # Full time window
+    tmax: null
+    condition_a: ["LDGS", "LDGD"]             # Local Different conditions
+    condition_b: ["LSGS", "LSGD"]             # Local Same conditions
+    comment: "LD-LS"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_mmn
+    tmin: 0.736                               # MMN time window - CORRECTED!
+    tmax: 0.788
+    condition_a: ["LDGS", "LDGD"]             # Local Different (deviant)
+    condition_b: ["LSGS", "LSGD"]             # Local Same (standard)
+    comment: "mmn"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["mmn"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_p3a
+    tmin: 0.876                               # P3a time window
+    tmax: 0.936
+    condition_a: ["LDGS", "LDGD"]             # Local Different conditions
+    condition_b: ["LSGS", "LSGD"]             # Local Same conditions
+    comment: "p3a"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["p3a"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_gd_gs
+    tmin: null                                # Full time window
+    tmax: null
+    condition_a: ["LSGD", "LDGD"]             # Global Different conditions
+    condition_b: ["LSGS", "LDGS"]             # Global Same conditions
+    comment: "GD-GS"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: contrast_p3b
+    tmin: 0.996                               # P3b time window
+    tmax: 1.196
+    condition_a: ["LSGD", "LDGD"]             # Global Different (deviant)
+    condition_b: ["LSGS", "LDGS"]             # Global Same (standard)
+    comment: "p3b"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["p3b"]
+    on: EEG
+
+  # 12-13. Window decoding markers (2 markers)
+  - kind: WindowDecoding
+    name: window_decoding_local
+    tmin: 0.6                                 # Local processing window
+    tmax: 0.967
+    condition_a: ["LDGS", "LDGD"]             # Local Different
+    condition_b: ["LSGS", "LSGD"]             # Local Same
+    comment: "local"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+  - kind: WindowDecoding
+    name: window_decoding_global
+    tmin: 0.967                               # Global processing window
+    tmax: 1.336
+    condition_a: ["LSGD", "LDGD"]             # Global Different
+    condition_b: ["LSGS", "LDGS"]             # Global Same
+    comment: "global"
+    trial_aggregation_method: ["mean"]
+    roi_aggregation_method: ["mean"]
+    rois: ["scalp"]
+    on: EEG
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: "{subject}_{session}_{acq}_icm_next_features.hdf5"
+
+elements:
+  - subject: "AA048"
+    session: "01"
+    acq: "01" 

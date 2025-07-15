@@ -100,7 +100,7 @@ def create_realistic_eeg_data():
         for freq in np.linspace(8, 13, 3):
             alpha_amplitude = alpha_strength * np.random.uniform(0.5, 1.5)
             signal += alpha_amplitude * np.sin(
-                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi)
+                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi),
             )
 
         # 2. Beta rhythm (13-30 Hz) - stronger in frontal/central channels
@@ -108,34 +108,35 @@ def create_realistic_eeg_data():
         for freq in np.linspace(15, 25, 2):
             beta_amplitude = beta_strength * np.random.uniform(0.3, 0.8)
             signal += beta_amplitude * np.sin(
-                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi)
+                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi),
             )
 
         # 3. Theta rhythm (4-8 Hz) - moderate across all channels
         for freq in np.linspace(4, 8, 2):
             theta_amplitude = np.random.uniform(0.5, 1.0)
             signal += theta_amplitude * np.sin(
-                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi)
+                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi),
             )
 
         # 4. Delta rhythm (1-4 Hz) - low frequency background
         for freq in np.linspace(1, 4, 2):
             delta_amplitude = np.random.uniform(1.0, 2.0)
             signal += delta_amplitude * np.sin(
-                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi)
+                2 * np.pi * freq * times + np.random.uniform(0, 2 * np.pi),
             )
 
         # 5. Add some realistic artifacts and noise
         # Slow drift
         drift = 0.5 * np.sin(
-            2 * np.pi * 0.02 * times + np.random.uniform(0, 2 * np.pi)
+            2 * np.pi * 0.02 * times + np.random.uniform(0, 2 * np.pi),
         )
         signal += drift
 
         # Eye blinks (stronger in frontal channels)
         if any(x in ch_name for x in ["Fp", "AF", "F"]):
             blink_times = np.random.poisson(
-                0.3, n_samples
+                0.3,
+                n_samples,
             )  # ~0.3 blinks per second
             blink_kernel = np.exp(-(np.linspace(-3, 3, int(0.3 * sfreq)) ** 2))
             blinks = np.convolve(blink_times, blink_kernel, mode="same")[
@@ -161,7 +162,9 @@ def create_realistic_eeg_data():
         # Simulate P300-like responses
         if np.random.random() < 0.1:  # 10% chance per channel
             event_times = np.random.choice(
-                n_samples, size=int(duration / 10), replace=False
+                n_samples,
+                size=int(duration / 10),
+                replace=False,
             )
             for event_time in event_times:
                 if event_time + int(0.5 * sfreq) < n_samples:

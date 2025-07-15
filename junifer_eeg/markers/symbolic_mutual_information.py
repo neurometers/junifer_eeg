@@ -8,7 +8,7 @@ import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers.base import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import apply_roi_trial_aggregation
 
 
 @register_marker
@@ -24,7 +24,7 @@ class SymbolicMutualInformation(BaseMarker):
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "symbolic_mutual_information": "matrix",
+            "symbolicmutualinformation": "matrix",
         },
     }
 
@@ -78,7 +78,10 @@ class SymbolicMutualInformation(BaseMarker):
         return result
 
     def _symb_python_optimized(
-        self, data: np.ndarray, kernel: int, tau: int
+        self,
+        data: np.ndarray,
+        kernel: int,
+        tau: int,
     ) -> tuple:
         """Compute symbolic transform following NICE logic but optimized."""
         symbols = self._define_symbols(kernel)
@@ -116,8 +119,10 @@ class SymbolicMutualInformation(BaseMarker):
 
         count = np.double(
             np.apply_along_axis(
-                lambda x: np.bincount(x, minlength=len(symbols)), 1, signal_sym
-            )
+                lambda x: np.bincount(x, minlength=len(symbols)),
+                1,
+                signal_sym,
+            ),
         )
 
         return signal_sym, (count / signal_sym_shape[1])
@@ -132,7 +137,10 @@ class SymbolicMutualInformation(BaseMarker):
         return wts
 
     def _wsmi_computation(
-        self, data_sym: np.ndarray, counts: np.ndarray, wts_matrix: np.ndarray
+        self,
+        data_sym: np.ndarray,
+        counts: np.ndarray,
+        wts_matrix: np.ndarray,
     ) -> np.ndarray:
         """Compute wSMI or SMI from symbolic data (following NICE logic)."""
         nchannels, nsamples_after_symb, ntrials = data_sym.shape
@@ -147,7 +155,8 @@ class SymbolicMutualInformation(BaseMarker):
             for ch1_idx in range(nchannels):
                 for ch2_idx in range(ch1_idx + 1, nchannels):
                     pxy = np.zeros(
-                        (n_unique_symbols, n_unique_symbols), dtype=np.double
+                        (n_unique_symbols, n_unique_symbols),
+                        dtype=np.double,
                     )
                     for sample_idx in range(nsamples_after_symb):
                         sym1 = data_sym[ch1_idx, sample_idx, trial_idx]
@@ -165,10 +174,14 @@ class SymbolicMutualInformation(BaseMarker):
                             if pxy[r_idx, c_idx] > epsilon:
                                 log_pxy_val = np.log(pxy[r_idx, c_idx])
                                 log_px_val = log_counts[
-                                    ch1_idx, r_idx, trial_idx
+                                    ch1_idx,
+                                    r_idx,
+                                    trial_idx,
                                 ]
                                 log_py_val = log_counts[
-                                    ch2_idx, c_idx, trial_idx
+                                    ch2_idx,
+                                    c_idx,
+                                    trial_idx,
                                 ]
 
                                 mi_term = pxy[r_idx, c_idx] * (
@@ -193,7 +206,9 @@ class SymbolicMutualInformation(BaseMarker):
         return result
 
     def _compute_smi_matrix(
-        self, data_sym: np.ndarray, counts: np.ndarray
+        self,
+        data_sym: np.ndarray,
+        counts: np.ndarray,
     ) -> np.ndarray:
         """Compute SMI matrix from symbolic data."""
         nchannels, nsamples_after_symb, ntrials = data_sym.shape
@@ -208,7 +223,8 @@ class SymbolicMutualInformation(BaseMarker):
             for ch1_idx in range(nchannels):
                 for ch2_idx in range(ch1_idx + 1, nchannels):
                     pxy = np.zeros(
-                        (n_unique_symbols, n_unique_symbols), dtype=np.double
+                        (n_unique_symbols, n_unique_symbols),
+                        dtype=np.double,
                     )
                     for sample_idx in range(nsamples_after_symb):
                         sym1 = data_sym[ch1_idx, sample_idx, trial_idx]
@@ -226,10 +242,14 @@ class SymbolicMutualInformation(BaseMarker):
                             if pxy[r_idx, c_idx] > epsilon:
                                 log_pxy_val = np.log(pxy[r_idx, c_idx])
                                 log_px_val = log_counts[
-                                    ch1_idx, r_idx, trial_idx
+                                    ch1_idx,
+                                    r_idx,
+                                    trial_idx,
                                 ]
                                 log_py_val = log_counts[
-                                    ch2_idx, c_idx, trial_idx
+                                    ch2_idx,
+                                    c_idx,
+                                    trial_idx,
                                 ]
 
                                 mi_term = pxy[r_idx, c_idx] * (
@@ -261,12 +281,11 @@ class SymbolicMutualInformation(BaseMarker):
 
         # Crop to time window if specified
         if self.tmin is not None or self.tmax is not None:
-            epochs = epochs.crop(tmin=self.tmin, tmax=self.tmax)
+            epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
         # Get data: (n_epochs, n_channels, n_times)
         data = epochs.get_data()
         sfreq = epochs.info["sfreq"]
-        ch_names = epochs.ch_names
 
         # Reshape for processing: (n_channels, n_times, n_epochs)
         fdata = data.transpose(1, 2, 0)
@@ -283,7 +302,9 @@ class SymbolicMutualInformation(BaseMarker):
 
         # Symbolic transformation
         sym, count = self._symb_python_optimized(
-            fdata_filtered, self.kernel, self.tau
+            fdata_filtered,
+            self.kernel,
+            self.tau,
         )
 
         # Compute Symbolic Mutual Information
@@ -301,26 +322,16 @@ class SymbolicMutualInformation(BaseMarker):
             for j in range(i + 1, n_channels):
                 smi_matrix[j, i] = smi_matrix[i, j]
 
-        # Handle ROI selection
-        if self.rois is not None:
-            # For matrix data, we flatten it
-            roi_data = get_data_for_rois(
-                smi_matrix.flatten()
-                .reshape(1, -1)
-                .T,  # Flatten to (n_features, 1)
-                [f"SMI_{ch1}_{ch2}" for ch1 in ch_names for ch2 in ch_names],
-                self.rois,
-            )
-        else:
-            # All channel pairs
-            roi_data = {"all_pairs": smi_matrix.flatten().reshape(1, -1).T}
+        # For connectivity matrices, we use all channel pairs
+        # ROI aggregation for connectivity is complex and not implemented properly yet
+        roi_data = {"all_pairs": smi_matrix.flatten().reshape(1, -1).T}
 
         # Apply aggregation
         results = apply_roi_trial_aggregation(
             roi_data,
             roi_aggregation_methods=self.roi_aggregation_method,
             trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="symbolicmutualinformation",
+            marker_name="symbolic_mutual_information",
         )
 
         return results

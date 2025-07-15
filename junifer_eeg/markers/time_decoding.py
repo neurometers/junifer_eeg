@@ -20,7 +20,7 @@ class TimeDecoding(BaseMarker):
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy", "scikit-learn"}
     _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"time_decoding_scores": "vector"}
+        "EEG": {"time_decoding_scores": "vector"},
     }
 
     def __init__(
@@ -72,7 +72,9 @@ class TimeDecoding(BaseMarker):
         super().__init__(on=on, name=name)
 
     def compute(
-        self, input: dict[str, Any], extra_input: dict[str, Any] | None = None
+        self,
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Compute time decoding.
 
@@ -106,7 +108,7 @@ class TimeDecoding(BaseMarker):
 
         if len(np.unique(y)) < 2:
             raise ValueError(
-                "Not enough conditions created for classification"
+                "Not enough conditions created for classification",
             )
 
         # Set up classifier pipeline
@@ -123,7 +125,7 @@ class TimeDecoding(BaseMarker):
                 ("scaler", scaler),
                 ("feature_select", feature_select),
                 ("svc", svc),
-            ]
+            ],
         )
 
         # Set up cross-validation
@@ -155,7 +157,7 @@ class TimeDecoding(BaseMarker):
             "time_decoding_scores": {
                 "data": mean_scores.reshape(1, -1),  # Shape: (1, n_times)
                 "col_names": time_labels,
-            }
+            },
         }
 
     def _create_epochs(self, raw):
@@ -270,13 +272,14 @@ class TimeDecoding(BaseMarker):
         elif self.condition_method == "spectral_power":
             # Create conditions based on overall spectral power
             power_per_epoch = np.mean(
-                np.var(X, axis=2), axis=1
+                np.var(X, axis=2),
+                axis=1,
             )  # Power per epoch
             y = (power_per_epoch > np.median(power_per_epoch)).astype(int)
 
         else:
             raise ValueError(
-                f"Unknown condition method: {self.condition_method}"
+                f"Unknown condition method: {self.condition_method}",
             )
 
         # Final check to ensure we have both classes
