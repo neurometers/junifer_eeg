@@ -19,9 +19,6 @@ from . import (
 # Import main classes for convenience
 from .datareader import EEGDataReader, ICMLGDataReader
 from .markers import (
-    ICMLGContrast,
-    ICMLGGlobalLocalIndex,
-    ICMLGMismatchNegativity,
     SpectralPower,
     TimeLockedContrast,
     TimeLockedTopography,
@@ -39,11 +36,8 @@ __all__ = [
     "EEGFilter",
     "ICMAdaptiveArtifactRejection",
     "ICMEquipmentFilter",
-    "ICMLGContrast",
     "ICMLGDataReader",
     "ICMLGEpoching",
-    "ICMLGGlobalLocalIndex",
-    "ICMLGMismatchNegativity",
     "SpectralPower",
     "TimeLockedContrast",
     "TimeLockedTopography",

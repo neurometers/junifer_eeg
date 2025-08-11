@@ -2,9 +2,6 @@
 
 from .contingent_negative_variation import ContingentNegativeVariation
 from .generalization_decoding import GeneralizationDecoding
-from .icm_lg_contrast import ICMLGContrast
-from .icm_lg_indices import ICMLGGlobalLocalIndex
-from .icm_lg_mmn import ICMLGMismatchNegativity
 from .kolmogorov_complexity import KolmogorovComplexity
 from .permutation_entropy import PermutationEntropy
 from .power_spectral_density import (
@@ -28,9 +25,6 @@ from .window_decoding import WindowDecoding
 __all__ = [
     "ContingentNegativeVariation",
     "GeneralizationDecoding",
-    "ICMLGContrast",
-    "ICMLGGlobalLocalIndex",
-    "ICMLGMismatchNegativity",
     "KolmogorovComplexity",
     "PermutationEntropy",
     "PowerSpectralDensityEstimator",

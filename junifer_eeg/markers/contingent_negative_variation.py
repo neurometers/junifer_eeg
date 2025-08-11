@@ -99,6 +99,39 @@ class ContingentNegativeVariation(BaseMarker):
         # Check if we have Epochs or Raw data
         if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
             # This is Epochs data
+            # Check for empty epochs first
+            if len(data_obj) == 0:
+                # Return empty results for empty epochs
+                ch_names = data_obj.ch_names
+                if self.rois is not None:
+                    roi_data = {
+                        roi: np.array([]).reshape(0, 0) for roi in self.rois
+                    }
+                else:
+                    roi_data = {
+                        ch: np.array([]).reshape(0, 0) for ch in ch_names
+                    }
+
+                # Apply aggregation to empty data for both slope and intercept
+                slope_results = apply_roi_trial_aggregation(
+                    roi_data,
+                    roi_aggregation_methods=self.roi_aggregation_method,
+                    trial_aggregation_methods=self.trial_aggregation_method,
+                    marker_name="cnvslope",
+                )
+                intercept_results = apply_roi_trial_aggregation(
+                    roi_data,
+                    roi_aggregation_methods=self.roi_aggregation_method,
+                    trial_aggregation_methods=self.trial_aggregation_method,
+                    marker_name="cnvintercept",
+                )
+
+                # Combine the results
+                result = {}
+                result.update(slope_results)
+                result.update(intercept_results)
+                return result
+
             epochs_data = (
                 data_obj.get_data()
             )  # Shape: (n_epochs, n_channels, n_times)

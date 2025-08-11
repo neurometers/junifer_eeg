@@ -3,6 +3,25 @@
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from scipy import stats
+
+
+def check_indices(indices):
+    """Check and format connectivity indices.
+
+    Parameters
+    ----------
+    indices : tuple of array_like or None
+        Indices specifying connectivity pairs
+
+    Returns
+    -------
+    tuple of np.ndarray
+        Validated indices as (sources, targets)
+    """
+    if indices is None:
+        return None
+    return (np.array(indices[0]), np.array(indices[1]))
 
 
 def get_roi_mapping() -> Dict[str, List[str]]:
@@ -600,8 +619,21 @@ def get_data_for_rois(
                     roi_indices.append(ch_names.index(electrode))
 
             if not roi_indices:
+                # Attempt fallback to other equipment configurations
+                for alt_equipment in ("egi256", "egi128"):
+                    if alt_equipment == equipment:
+                        continue
+                    alt_mapping = get_icm_roi_mapping(alt_equipment)
+                    if roi in alt_mapping:
+                        for electrode in alt_mapping[roi]:
+                            if electrode in ch_names:
+                                roi_indices.append(ch_names.index(electrode))
+                        if roi_indices:
+                            break
+
+            if not roi_indices:
                 raise ValueError(
-                    f"No electrodes found for ROI '{roi}' in equipment '{equipment}'",
+                    f"No electrodes found for ROI '{roi}' in channel names for any supported equipment (tried '{equipment}', 'egi256', 'egi128')",
                 )
 
             roi_data[roi] = data[roi_indices]
@@ -621,7 +653,7 @@ def aggregate_data(
     data : np.ndarray
         Data to aggregate.
     method : str
-        Aggregation method: 'mean', 'std', 'median', 'min', 'max'.
+        Aggregation method: 'mean', 'std', 'median', 'min', 'max', 'trim_mean80'.
     axis : int, optional
         Axis along which to aggregate. If None, aggregate over all.
 
@@ -640,7 +672,19 @@ def aggregate_data(
         return np.min(data, axis=axis)
     if method == "max":
         return np.max(data, axis=axis)
+    if method == "trim_mean80":
+        # NICE-compatible trimmed mean: remove top/bottom 10% (use 80% of data)
+        return stats.trim_mean(data, proportiontocut=0.1, axis=axis)
     raise ValueError(f"Unknown aggregation method: {method}")
+
+
+def _add_meta_to_result(
+    result_dict: Dict[str, Any], meta: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Add meta field to result dictionary if provided."""
+    if meta is not None:
+        result_dict["meta"] = meta
+    return result_dict
 
 
 def apply_roi_trial_aggregation(
@@ -648,6 +692,7 @@ def apply_roi_trial_aggregation(
     roi_aggregation_methods: Optional[List[str]] = None,
     trial_aggregation_methods: Optional[List[str]] = None,
     marker_name: str = "marker",
+    meta: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Apply ROI and trial aggregation to marker data.
 
@@ -693,10 +738,13 @@ def apply_roi_trial_aggregation(
                     all_values.append(trial_avg[i])
                     col_names.append(f"{roi_name}_elec_{i}")
 
-        results[base_output_name] = {
+        result_dict = {
             "data": np.array(all_values).reshape(1, -1),
             "col_names": col_names,
         }
+        if meta is not None:
+            result_dict["meta"] = meta
+        results[base_output_name] = result_dict
         return results
 
     # Handle case with no ROI aggregation but trial aggregation
@@ -770,9 +818,10 @@ def apply_roi_trial_aggregation(
                 col_names.append(f"{roi_name}_trial_{trial_agg}_roi_{roi_agg}")
                 all_values.append(roi_value)
 
-    results[base_output_name] = {
+    result_dict = {
         "data": np.array(all_values).reshape(1, -1),
         "col_names": col_names,
     }
+    results[base_output_name] = _add_meta_to_result(result_dict, meta)
 
     return results

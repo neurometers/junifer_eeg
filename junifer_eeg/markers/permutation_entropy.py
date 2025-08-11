@@ -110,6 +110,25 @@ class PermutationEntropy(BaseMarker):
         # Handle both Raw and Epochs objects
         if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
             # This is an Epochs object
+            # Check if epochs object is empty
+            if len(data_obj) == 0:
+                # Return empty results for empty epochs
+                ch_names = data_obj.ch_names
+                if self.rois is not None:
+                    roi_data = {
+                        roi: np.array([]).reshape(0, 0) for roi in self.rois
+                    }
+                else:
+                    roi_data = {
+                        ch: np.array([]).reshape(0, 0) for ch in ch_names
+                    }
+
+                return apply_roi_trial_aggregation(
+                    roi_data,
+                    roi_aggregation_methods=self.roi_aggregation_method,
+                    trial_aggregation_methods=self.trial_aggregation_method,
+                    marker_name="permutationentropy",
+                )
             epochs_data = (
                 data_obj.get_data()
             )  # Shape: (n_epochs, n_channels, n_times)

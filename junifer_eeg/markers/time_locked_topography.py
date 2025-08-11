@@ -152,26 +152,58 @@ class TimeLockedTopography(BaseMarker):
                 verbose=False,
             )
 
+        # Check for empty epochs first
+        if len(epochs) == 0:
+            # Return empty results for empty epochs
+            ch_names = epochs.ch_names
+            if self.rois is not None:
+                roi_data = {
+                    roi: np.array([]).reshape(0, 0) for roi in self.rois
+                }
+            else:
+                roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
+
+            # Apply aggregation to empty data
+            results = apply_roi_trial_aggregation(
+                roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="timelockedtopo",
+            )
+            return results
+
+        # Clamp to the available epoch time range to avoid MNE errors
+        epoch_min = epochs.tmin
+        epoch_max = epochs.tmax
+        crop_tmin = self.tmin
+        crop_tmax = self.tmax
+        if crop_tmin is None or crop_tmin < epoch_min:
+            crop_tmin = epoch_min
+        if crop_tmax is None or crop_tmax > epoch_max:
+            crop_tmax = epoch_max
+
+        # Crop epochs to the specified time window
+        epochs_cropped = epochs.copy().crop(tmin=crop_tmin, tmax=crop_tmax)
+
         # Apply baseline correction if specified
         if self.baseline is not None:
-            epochs.apply_baseline(self.baseline)
+            epochs_cropped.apply_baseline(self.baseline)
 
-        # Crop to requested time window
-        epochs_cropped = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
-
-        # Get the data
+        # Get the raw time-series data (like NICE implementation)
         data = (
             epochs_cropped.get_data()
         )  # Shape: (n_epochs, n_channels, n_times)
 
-        # Follow next_icm aggregation pattern:
-        # 1. Average across time first (following next_icm TimeLockedTopography)
+        # Follow NICE pattern: Apply time window selection first, then average
+        # NICE uses time_mask to select time points, then reduction functions handle averaging
+        # Since we already cropped to the time window, now we average across time
+        # This matches NICE's approach where time averaging happens after time selection
         time_averaged = np.mean(data, axis=2)  # Shape: (n_epochs, n_channels)
 
-        # 2. Transpose to (n_channels, n_epochs) for aggregation framework
+        # Reshape to (n_channels, n_epochs) for aggregation framework
         time_averaged = time_averaged.T  # Shape: (n_channels, n_epochs)
 
-        # 3. Apply ROI selection and aggregation
+        # Apply ROI selection
         if self.rois is not None:
             roi_data = get_data_for_rois(
                 time_averaged,  # (n_channels, n_epochs)
@@ -186,12 +218,12 @@ class TimeLockedTopography(BaseMarker):
                 for i, ch in enumerate(epochs.ch_names)
             }
 
-        # 4. Apply aggregation to get final clinical values
+        # Apply aggregation to get final clinical values
         results = apply_roi_trial_aggregation(
             roi_data,
             roi_aggregation_methods=self.roi_aggregation_method,
             trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="time_locked_topo",
+            marker_name="timelockedtopo",
         )
 
         return results

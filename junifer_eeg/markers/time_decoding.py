@@ -97,11 +97,19 @@ class TimeDecoding(BaseMarker):
         from sklearn.preprocessing import StandardScaler
         from sklearn.svm import SVC
 
-        # Get the MNE Raw object
-        raw = input["data"]
-
-        # Create epochs from continuous data
-        epochs = self._create_epochs(raw)
+        # Get the MNE data object (Raw or Epochs)
+        data = input["data"]
+        # Handle both Raw and Epochs input
+        if hasattr(data, "get_data") and hasattr(data, "events"):
+            # This is Epochs data
+            epochs = data
+            # Apply time cropping if specified
+            if self.tmin is not None or self.tmax is not None:
+                epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
+        else:
+            # This is Raw data - create epochs from continuous data
+            raw = data
+            epochs = self._create_epochs(raw)
 
         # Create conditions based on chosen method
         X, y = self._create_conditions(epochs)
@@ -276,6 +284,26 @@ class TimeDecoding(BaseMarker):
                 axis=1,
             )  # Power per epoch
             y = (power_per_epoch > np.median(power_per_epoch)).astype(int)
+
+        elif self.condition_method == "explicit_conditions":
+            # Use existing condition labels from epochs
+            if hasattr(epochs, "events") and hasattr(epochs, "event_id"):
+                # Extract labels from epochs events
+                event_ids = epochs.events[
+                    :, 2
+                ]  # Third column contains event IDs
+                unique_ids = np.unique(event_ids)
+                if len(unique_ids) >= 2:
+                    # Use first two unique event IDs as binary conditions
+                    y = (event_ids == unique_ids[1]).astype(int)
+                else:
+                    # Fallback to temporal halves if only one condition
+                    y = np.zeros(n_epochs, dtype=int)
+                    y[n_epochs // 2 :] = 1
+            else:
+                # Fallback to temporal halves if no event info
+                y = np.zeros(n_epochs, dtype=int)
+                y[n_epochs // 2 :] = 1
 
         else:
             raise ValueError(

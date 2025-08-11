@@ -97,11 +97,19 @@ class GeneralizationDecoding(BaseMarker):
         from sklearn.preprocessing import StandardScaler
         from sklearn.svm import SVC
 
-        # Get the MNE Raw object
-        raw = input["data"]
-
-        # Create epochs from continuous data
-        epochs = self._create_epochs(raw)
+        # Get the MNE data object (Raw or Epochs)
+        data = input["data"]
+        # Handle both Raw and Epochs input
+        if hasattr(data, "get_data") and hasattr(data, "events"):
+            # This is Epochs data
+            epochs = data
+            # Apply time cropping if specified
+            if self.tmin is not None or self.tmax is not None:
+                epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
+        else:
+            # This is Raw data - create epochs from continuous data
+            raw = data
+            epochs = self._create_epochs(raw)
 
         # Create conditions based on chosen method
         X, y = self._create_conditions(epochs)

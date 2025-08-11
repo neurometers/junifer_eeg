@@ -8,10 +8,55 @@ equipment-specific configurations based on the next_icm implementation.
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional
 
+# -----------------------------------------------------------------------------
+# Extend DefaultDataReader to support EGI .mff (and zipped .mff) raw files
+# -----------------------------------------------------------------------------
+import junifer.datareader.default as _junifer_default_module
 import mne
 import numpy as np
 from junifer.api.decorators import register_datareader
 from junifer.datareader import DefaultDataReader
+
+# Reader helper wrap MNE function for raw EGI files (.mff / .mff.zip extracted)
+
+
+def _read_mff(file_path: Path, **kwargs):
+    """Read EGI .mff file using MNE.
+
+    Parameters
+    ----------
+    file_path : pathlib.Path
+        Path to .mff directory (MNE accepts the directory path) or the .mff file.
+    **kwargs : dict
+        Additional keyword arguments passed to `mne.io.read_raw_egi`.
+
+    Returns
+    -------
+    mne.io.Raw
+        Raw instance loaded in memory.
+    """
+    return mne.io.read_raw_egi(file_path, preload=True, verbose=False)
+
+
+# Register new extension → type mapping (re-use existing "EGI_MFF" pseudo-type)
+_junifer_default_module._extensions.update(
+    {
+        ".mff": "MFF",
+        ".mff.zip": "MFFZIP",
+    }
+)
+
+# Register reader functions for both plain and zipped .mff
+_junifer_default_module._readers["MFF"] = {"func": _read_mff, "params": None}
+
+# For .mff.zip we rely on ICMLGDataReader trigger code that first extracts via
+# MNE; here we simply call the same reader after letting MNE handle the zip.
+# This keeps DataReader logic simple.
+_junifer_default_module._readers["MFFZIP"] = {
+    "func": _read_mff,
+    "params": None,
+}
+
 
 # ICM LG Event ID mappings
 ICM_LG_EVENT_ID = {

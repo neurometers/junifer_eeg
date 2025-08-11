@@ -362,10 +362,10 @@ class PowerSpectralDensitySummary(BaseMarker):
 
             ch_names = raw.ch_names
 
-        n_epochs, n_channels, n_samples = epochs_data.shape
+        n_epochs, n_channels_raw, n_samples = epochs_data.shape
 
-        # Compute PSD summary for each channel and epoch
-        psd_summary_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
+        # We will determine the actual number of PSD channels dynamically from the first epoch
+        psd_summary_values: np.ndarray | None = None
 
         for epoch_idx in range(n_epochs):
             epoch_data = epochs_data[
@@ -395,7 +395,13 @@ class PowerSpectralDensitySummary(BaseMarker):
             psd_result = estimator.compute({"data": temp_raw}, extra_input)
             psd_data = psd_result["psd_data"][
                 "data"
-            ]  # Shape: (n_channels, n_freqs)
+            ]  # Shape: (n_psd_ch, n_freqs)
+            n_psd_ch = psd_data.shape[0]
+            # allocate storage on first epoch
+            if psd_summary_values is None:
+                psd_summary_values = np.zeros(
+                    (n_epochs, n_psd_ch), dtype=np.float64
+                )
 
             # Compute percentile across frequencies for each channel
             if psd_data.ndim == 2 and psd_data.shape[1] > 1:
@@ -411,26 +417,36 @@ class PowerSpectralDensitySummary(BaseMarker):
                     psd_summary_values[epoch_idx, :] = psd_data[:, 0]
                 else:
                     # Ensure the array has the right shape
-                    if psd_data.shape[0] == n_channels:
+                    if psd_data.shape[0] == psd_summary_values.shape[1]:
                         psd_summary_values[epoch_idx, :] = psd_data
                     else:
                         # If shape doesn't match, use the first value for all channels
                         psd_summary_values[epoch_idx, :] = psd_data[0]
 
-        # Handle ROI selection
-        if self.rois is not None:
-            # Extract data for specified ROIs
-            roi_data = get_data_for_rois(
-                psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
-                ch_names,
-                self.rois,
-            )
+        # Check if we have any valid epochs
+        if psd_summary_values is None or n_epochs == 0:
+            # Return empty results for empty epochs
+            if self.rois is not None:
+                roi_data = {
+                    roi: np.array([]).reshape(0, 0) for roi in self.rois
+                }
+            else:
+                roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
         else:
-            # Use all channels as individual ROIs
-            roi_data = {
-                ch: psd_summary_values[:, i : i + 1].T
-                for i, ch in enumerate(ch_names)
-            }
+            # Handle ROI selection
+            if self.rois is not None:
+                # Extract data for specified ROIs
+                roi_data = get_data_for_rois(
+                    psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
+                    ch_names,
+                    self.rois,
+                )
+            else:
+                # Use all channels as individual ROIs
+                roi_data = {
+                    ch: psd_summary_values[:, i : i + 1].T
+                    for i, ch in enumerate(ch_names)
+                }
 
         # Apply aggregation
         results = apply_roi_trial_aggregation(

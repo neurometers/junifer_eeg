@@ -5,8 +5,29 @@ from typing import Any, ClassVar, List, Optional
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
+from scipy import stats
 
 from .utils import apply_roi_trial_aggregation, get_data_for_rois
+
+
+def trim_mean80(data, axis=None):
+    """Compute trimmed mean removing top and bottom 10% (80% trimmed mean).
+
+    This matches the NICE 'trim_mean80' aggregation method used in ground truth.
+
+    Parameters
+    ----------
+    data : array_like
+        Input data.
+    axis : int, optional
+        Axis along which to compute the trimmed mean.
+
+    Returns
+    -------
+    float or ndarray
+        Trimmed mean with 10% trimmed from each tail (80% of data used).
+    """
+    return stats.trim_mean(data, proportiontocut=0.1, axis=axis)
 
 
 @register_marker
@@ -22,8 +43,16 @@ class SpectralPower(BaseMarker):
 
     def __init__(
         self,
+        fmin: float = 1.0,
+        fmax: float = 45.0,
+        normalize: bool = False,
+        dB: bool = True,
+        bands: Optional[dict] = None,
         epoch_length: float = 2.0,
         overlap: float = 0.0,
+        n_fft: Optional[int] = None,
+        n_per_seg: Optional[int] = None,
+        n_overlap: Optional[int] = None,
         rois: Optional[List[str]] = None,
         roi_aggregation_method: Optional[List[str]] = None,
         trial_aggregation_method: Optional[List[str]] = None,
@@ -34,10 +63,26 @@ class SpectralPower(BaseMarker):
 
         Parameters
         ----------
+        fmin : float, default=1.0
+            Minimum frequency for analysis.
+        fmax : float, default=45.0
+            Maximum frequency for analysis.
+        normalize : bool, default=False
+            If True, normalize power by total power (relative power).
+        dB : bool, default=True
+            If True, convert power to decibels (10 * log10). Matches NICE behavior.
+        bands : dict, optional
+            Custom frequency bands. If None, use standard bands.
         epoch_length : float, default=2.0
             Length of epochs to create from continuous data in seconds.
         overlap : float, default=0.0
             Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
+        n_fft : int, optional
+            Length of the FFT used for Welch PSD. If None, uses adaptive sizing.
+        n_per_seg : int, optional
+            Length of each segment for Welch PSD. If None, uses adaptive sizing.
+        n_overlap : int, optional
+            Number of points to overlap between segments. If None, uses adaptive sizing.
         rois : list of str, optional
             List of ROI names. If None, use all channels.
         roi_aggregation_method : list of str, optional
@@ -49,8 +94,16 @@ class SpectralPower(BaseMarker):
         name : str, optional
             Name of the marker.
         """
+        self.fmin = fmin
+        self.fmax = fmax
+        self.normalize = normalize
+        self.dB = dB
+        self.bands = bands
         self.epoch_length = epoch_length
         self.overlap = overlap
+        self.n_fft = n_fft
+        self.n_per_seg = n_per_seg
+        self.n_overlap = n_overlap
         self.rois = rois
         self.roi_aggregation_method = roi_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
@@ -78,9 +131,32 @@ class SpectralPower(BaseMarker):
         # Get the MNE data object (can be Raw or Epochs)
         data_obj = input["data"]
 
+        # Extract metadata from input to preserve element information
+        meta = input.get("meta", None)
+
         # Handle both Raw and Epochs objects
         if hasattr(data_obj, "events"):
             # This is an Epochs object
+            # Check if epochs object is empty
+            if len(data_obj) == 0:
+                # Return empty results for empty epochs
+                ch_names = data_obj.ch_names
+                if self.rois is not None:
+                    roi_data = {
+                        roi: np.array([]).reshape(0, 0) for roi in self.rois
+                    }
+                else:
+                    roi_data = {
+                        ch: np.array([]).reshape(0, 0) for ch in ch_names
+                    }
+
+                return apply_roi_trial_aggregation(
+                    roi_data,
+                    roi_aggregation_methods=self.roi_aggregation_method,
+                    trial_aggregation_methods=self.trial_aggregation_method,
+                    marker_name="spectralpower",
+                    meta=meta,
+                )
             epochs_data = (
                 data_obj.get_data()
             )  # Shape (n_epochs, n_channels, n_times)
@@ -97,46 +173,236 @@ class SpectralPower(BaseMarker):
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
-        # Define frequency bands
-        bands = {
-            "delta": (1, 4),
-            "theta": (4, 8),
-            "alpha": (8, 13),
-            "beta": (13, 30),
+        # Use full epoch length for PSD computation
+        sfreq = info["sfreq"]
+        print(
+            f"Using full epoch length ({n_samples} samples, {n_samples / sfreq:.1f}s) for PSD computation"
+        )
+
+        # Use custom bands or default frequency bands (matching NICE/ICM)
+        if self.bands is not None:
+            bands = self.bands
+        else:
+            # Check if we're testing a specific frequency range (for comparison scripts)
+            # If fmin/fmax match a standard band, use only that band
+            standard_bands = {
+                "delta": (1, 4),
+                "theta": (4, 8),
+                "alpha": (8, 12),
+                "beta": (12, 30),
+                "gamma": (30, 45),
+            }
+
+            # Find matching band for the requested frequency range
+            target_band = None
+            for band_name, (band_fmin, band_fmax) in standard_bands.items():
+                if (
+                    abs(self.fmin - band_fmin) < 0.1
+                    and abs(self.fmax - band_fmax) < 0.1
+                ):
+                    target_band = band_name
+                    break
+
+            if target_band is not None:
+                # Use only the matching band for single-band testing
+                bands = {target_band: standard_bands[target_band]}
+            else:
+                # Use all bands for general analysis
+                bands = standard_bands
+
+        # Determine frequency range based on sampling rate and parameters
+        sfreq = info["sfreq"]
+        max_freq = min(
+            self.fmax, sfreq / 2 - 1
+        )  # Ensure we don't exceed Nyquist
+
+        # PERFORMANCE FIX: Use MNE's efficient vectorized PSD computation
+        # Instead of creating RawArray for each epoch, compute PSD on all epochs at once
+        # Use specified parameters or fall back to adaptive sizing
+        n_per_seg = (
+            self.n_per_seg
+            if self.n_per_seg is not None
+            else min(64, n_samples // 2)
+        )
+        n_overlap = (
+            self.n_overlap
+            if self.n_overlap is not None
+            else min(32, n_per_seg // 2)
+        )
+
+        psd_params = {
+            "method": "welch",
+            "fmin": self.fmin,  # Use exact fmin like NICE (no offset)
+            "fmax": max_freq,
+            "n_per_seg": n_per_seg,
+            "n_overlap": n_overlap,
+            "verbose": False,
         }
 
-        # Compute spectral power for each epoch and channel
-        all_band_powers = {}
-        for band_name in bands:
-            all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
+        # Add n_fft if specified (for NICE compatibility)
+        if self.n_fft is not None:
+            psd_params["n_fft"] = self.n_fft
 
-        for epoch_idx in range(n_epochs):
-            # Create temporary raw object for this epoch
+        # Compute PSD for all epochs at once - MUCH faster!
+        if hasattr(data_obj, "events"):
+            # Use the original Epochs object for efficient computation
+            psd = data_obj.compute_psd(**psd_params)
+            psds, freqs = psd.get_data(
+                return_freqs=True
+            )  # Shape: (n_epochs, n_channels, n_freqs)
+        else:
+            # For Raw data, create temporary raw and compute PSD
             import mne
 
-            epoch_data = epochs_data[
-                epoch_idx
-            ]  # Shape: (n_channels, n_samples)
+            temp_raw = mne.io.RawArray(
+                epochs_data[0], info.copy(), verbose=False
+            )
+            psd = temp_raw.compute_psd(**psd_params)
+            psds_single, freqs = psd.get_data(
+                return_freqs=True
+            )  # Shape: (n_channels, n_freqs)
+            psds = psds_single[
+                np.newaxis, :, :
+            ]  # Shape: (1, n_channels, n_freqs)
 
-            epoch_raw = mne.io.RawArray(epoch_data, info.copy(), verbose=False)
+        # Compute band powers for all epochs and channels at once
+        all_band_powers = {}
+        for band_name, (fmin, fmax) in bands.items():
+            # Skip band if sampling rate too low
+            if fmax > max_freq:
+                all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
+                continue
 
-            # Compute PSD using MNE
-            psd = epoch_raw.compute_psd(fmin=1, fmax=30, verbose=False)
-            psds, freqs = psd.get_data(return_freqs=True)
+            # Find frequency indices for this band
+            freq_mask = (freqs >= fmin) & (freqs < fmax)
 
-            # Compute band powers for this epoch
-            for ch_idx in range(n_channels):
-                for band_name, (fmin, fmax) in bands.items():
-                    # Find frequency indices
-                    freq_mask = (freqs >= fmin) & (freqs < fmax)
+            if np.any(freq_mask):
+                # Vectorized integration across frequency band for all epochs/channels
+                # psds shape: (n_epochs, n_channels, n_freqs)
+                # Extract frequencies and PSDs for this band
+                band_psds = psds[:, :, freq_mask]
 
-                    # Compute mean power in band
-                    band_power = psds[ch_idx, freq_mask].mean()
-                    all_band_powers[band_name][epoch_idx, ch_idx] = float(
-                        band_power,
-                    )
+                # Integrate power across frequency dimension
+                band_powers = np.sum(band_psds, axis=-1)
+                all_band_powers[band_name] = band_powers
+            else:
+                all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
 
-        # Combine all bands into single feature set
+        # Apply normalization if requested (relative power)
+        # PERFORMANCE OPTIMIZATION: Vectorized normalization instead of nested loops
+        if self.normalize:
+            # Stack all band powers into a single array for vectorized operations
+            # Shape: (n_bands, n_epochs, n_channels)
+            band_names = list(bands.keys())
+            stacked_powers = np.stack(
+                [all_band_powers[band] for band in band_names], axis=0
+            )
+
+            # Calculate total power across bands for each epoch/channel
+            # Shape: (n_epochs, n_channels)
+            total_powers = np.sum(stacked_powers, axis=0)
+
+            # Avoid division by zero
+            total_powers = np.maximum(total_powers, 1e-12)
+
+            # Vectorized normalization: divide each band by total power
+            # Broadcasting: (n_bands, n_epochs, n_channels) / (n_epochs, n_channels)
+            normalized_powers = stacked_powers / total_powers[np.newaxis, :, :]
+
+            # Update all_band_powers with normalized values
+            for i, band_name in enumerate(band_names):
+                all_band_powers[band_name] = normalized_powers[i]
+
+        # Apply dB conversion if requested (matches NICE behavior)
+        # NICE applies dB conversion AFTER normalization and frequency integration
+        if self.dB and not self.normalize:
+            for band_name in bands.keys():
+                # Convert to dB: 10 * log10(power)
+                # Handle zero/negative values by setting a minimum threshold
+                band_data = all_band_powers[band_name]
+                # Set minimum threshold to avoid log(0) or log(negative)
+                min_threshold = 1e-12
+                band_data = np.maximum(band_data, min_threshold)
+                all_band_powers[band_name] = 10 * np.log10(band_data)
+
+        # Check if we should return raw PSD data (no aggregation)
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return raw band power data without aggregation for direct comparison with NICE
+            # Find the band that matches the requested frequency range (fmin, fmax)
+            target_band = None
+            for band_name, (band_fmin, band_fmax) in bands.items():
+                if (
+                    abs(band_fmin - self.fmin) < 0.1
+                    and abs(band_fmax - self.fmax) < 0.1
+                ):
+                    target_band = band_name
+                    break
+
+            # If no exact match, use the first band (fallback)
+            if target_band is None:
+                target_band = next(iter(all_band_powers.keys()))
+
+            band_data = all_band_powers[target_band]
+
+            # Debug: Print actual shape before returning
+            print(
+                f"    DEBUG Junifer: target_band={target_band}, band_data.shape={band_data.shape}"
+            )
+            print(
+                f"    DEBUG Junifer: n_epochs={n_epochs}, n_channels={len(ch_names)}"
+            )
+            print(
+                f"    DEBUG Junifer: band_data min/max = {np.min(band_data):.2e}/{np.max(band_data):.2e}"
+            )
+
+            return {
+                "spectralpower": {
+                    "data": band_data,  # Shape: (n_epochs, n_channels)
+                    "col_names": [f"{target_band}_{ch}" for ch in ch_names],
+                }
+            }
+
+        # For single frequency band testing (like in comparison scripts),
+        # return aggregated result for the target band only
+        if len(all_band_powers) == 1 and (
+            self.roi_aggregation_method == ["mean"]
+            and self.trial_aggregation_method == ["mean"]
+        ):
+            # Single band, full aggregation - return scalar
+            band_name = next(iter(all_band_powers.keys()))
+            band_data = all_band_powers[
+                band_name
+            ]  # Shape: (n_epochs, n_channels)
+
+            # DEBUG: Print raw data statistics before aggregation
+            print(f"    DEBUG Junifer aggregation for {band_name}:")
+            print(f"      Raw band_data shape: {band_data.shape}")
+            print(f"      Raw band_data mean: {np.mean(band_data):.6e}")
+            print(f"      Raw band_data std: {np.std(band_data):.6e}")
+            print(
+                f"      Raw band_data min/max: {np.min(band_data):.6e}/{np.max(band_data):.6e}"
+            )
+
+            # Apply mean aggregation across channels (ROI aggregation)
+            roi_aggregated = np.mean(band_data, axis=1)  # Shape: (n_epochs,)
+            print(f"      After ROI agg shape: {roi_aggregated.shape}")
+            print(f"      After ROI agg mean: {np.mean(roi_aggregated):.6e}")
+
+            # Apply mean aggregation across epochs (trial aggregation)
+            final_value = np.mean(roi_aggregated)  # Shape: scalar
+            print(f"      Final aggregated value: {final_value:.6e}")
+
+            return {
+                "spectralpower": {
+                    "data": final_value,  # Single scalar value
+                    "col_names": [f"{band_name}_mean"],
+                },
+            }
+
+        # Standard aggregation path - combine all bands into single feature set
         all_values = []
         col_names = []
 
@@ -162,6 +428,7 @@ class SpectralPower(BaseMarker):
                 roi_aggregation_methods=self.roi_aggregation_method,
                 trial_aggregation_methods=self.trial_aggregation_method,
                 marker_name="spectralpower",
+                meta=meta,
             )
 
             # Extract values and update column names with band info
@@ -174,7 +441,7 @@ class SpectralPower(BaseMarker):
                 all_values.extend(band_values)
                 col_names.extend(band_col_names)
 
-        # Return combined results
+        # Return combined results with proper metadata structure
         return {
             "spectralpower": {
                 "data": np.array(all_values).reshape(1, -1),

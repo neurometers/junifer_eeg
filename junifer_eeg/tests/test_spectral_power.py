@@ -28,7 +28,7 @@ def test_spectral_power_basic():
     assert "data" in result["spectralpower"]
     assert "col_names" in result["spectralpower"]
     assert isinstance(result["spectralpower"]["data"], np.ndarray)
-    assert len(result["spectralpower"]["col_names"]) == 4  # 4 bands
+    assert len(result["spectralpower"]["col_names"]) == 5  # 5 bands
 
     # Check that alpha power is higher (since we have 10Hz signal)
     col_names = result["spectralpower"]["col_names"]
