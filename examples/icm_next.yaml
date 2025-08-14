@@ -44,8 +44,8 @@ preprocess:
     on: EEG
 
 storage:
-  kind: HDF5FeatureStorage
-  uri: icm_lg_features.hdf5
+  kind: XLSXFeatureStorage
+  uri: icm_lg_features.xlsx
   single_output: true
 
 # COMPLETE NEXT_ICM LG MARKER SET (30 markers total)
@@ -55,14 +55,20 @@ markers:
   # RESTING STATE MARKERS (17 markers) - from next_icm/rs/markers.py
   # ===================================================================
   
-  # Power Spectral Density markers (11 markers) - EXACT next_icm parameters
-  # Using SpectralPower with NICE-compatible parameters
+  # Power Spectral Density markers (2 multi-band markers) - EXACT next_icm parameters
+  # Using SpectralPower with NICE-compatible parameters and multi-band approach
+  # This replaces the previous 10 single-band markers with 2 multi-band markers
+  # for correct normalization and reduced complexity
   
-  # Delta band (1-4 Hz) - absolute power
+  # Multi-band spectral power - absolute power (dB)
   - kind: SpectralPower
-    name: psd_delta
-    fmin: 1.0
-    fmax: 4.0
+    name: psd_absolute
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
     normalize: false
     dB: true                                    # NICE uses dB conversion
     n_fft: 4096                                 # NICE parameter
@@ -72,129 +78,21 @@ markers:
     trial_aggregation_method: ["mean"]
     on: EEG
     
-  # Delta band (1-4 Hz) - relative power
+  # Multi-band spectral power - relative power (normalized)
   - kind: SpectralPower
-    name: psd_deltan
-    fmin: 1.0
-    fmax: 4.0
+    name: psd_relative
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
     normalize: true
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Theta band (4-8 Hz) - absolute power
-  - kind: SpectralPower
-    name: psd_theta
-    fmin: 4.0
-    fmax: 8.0
-    normalize: false
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Theta band (4-8 Hz) - relative power
-  - kind: SpectralPower
-    name: psd_thetan
-    fmin: 4.0
-    fmax: 8.0
-    normalize: true
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Alpha band (8-12 Hz) - absolute power
-  - kind: SpectralPower
-    name: psd_alpha
-    fmin: 8.0
-    fmax: 12.0
-    normalize: false
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Alpha band (8-12 Hz) - relative power
-  - kind: SpectralPower
-    name: psd_alphan
-    fmin: 8.0
-    fmax: 12.0
-    normalize: true
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Beta band (12-30 Hz) - absolute power
-  - kind: SpectralPower
-    name: psd_beta
-    fmin: 12.0
-    fmax: 30.0
-    normalize: false
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Beta band (12-30 Hz) - relative power
-  - kind: SpectralPower
-    name: psd_betan
-    fmin: 12.0
-    fmax: 30.0
-    normalize: true
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Gamma band (30-45 Hz) - absolute power
-  - kind: SpectralPower
-    name: psd_gamma
-    fmin: 30.0
-    fmax: 45.0
-    normalize: false
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-    
-  # Gamma band (30-45 Hz) - relative power
-  - kind: SpectralPower
-    name: psd_gamman
-    fmin: 30.0
-    fmax: 45.0
-    normalize: true
-    dB: true
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: ["trim_mean80"]
+    dB: false                                   # Don't use dB for normalized values
+    n_fft: 4096                                 # NICE parameter
+    n_overlap: 100                              # NICE parameter
+    n_per_seg: 128                              # NICE parameter
+    roi_aggregation_method: ["trim_mean80"]     # NICE reduction method
     trial_aggregation_method: ["mean"]
     on: EEG
     

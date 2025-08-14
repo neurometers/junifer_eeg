@@ -782,13 +782,19 @@ def apply_roi_trial_aggregation(
                 if roi_data.ndim == 1:
                     # Single trial
                     roi_value = aggregate_data(roi_data, roi_agg)
+                    col_names.append(f"{roi_name}_roi_{roi_agg}")
+                    all_values.append(roi_value)
                 else:
-                    # Multiple trials - average across trials first
-                    trial_avg = np.mean(roi_data, axis=1)
-                    roi_value = aggregate_data(trial_avg, roi_agg)
-
-                col_names.append(f"{roi_name}_roi_{roi_agg}")
-                all_values.append(roi_value)
+                    # Multiple trials - aggregate across ROI for each trial separately
+                    for trial_idx in range(roi_data.shape[1]):
+                        trial_data = roi_data[
+                            :, trial_idx
+                        ]  # Shape: (n_channels,)
+                        roi_value = aggregate_data(trial_data, roi_agg)
+                        col_names.append(
+                            f"{roi_name}_trial_{trial_idx}_roi_{roi_agg}"
+                        )
+                        all_values.append(roi_value)
 
             results[base_output_name] = {
                 "data": np.array(all_values).reshape(1, -1),
@@ -802,21 +808,38 @@ def apply_roi_trial_aggregation(
 
     for trial_agg in trial_aggregation_methods:
         for roi_agg in roi_aggregation_methods:
-            for roi_name, roi_data in data.items():
-                if roi_data.ndim == 1:
-                    # Single trial
-                    roi_value = aggregate_data(roi_data, roi_agg)
-                else:
-                    # Multiple trials
-                    trial_aggregated = aggregate_data(
-                        roi_data,
-                        trial_agg,
-                        axis=1,
-                    )
-                    roi_value = aggregate_data(trial_aggregated, roi_agg)
+            # Combine all ROIs/channels into one for aggregation
+            all_roi_data = []
 
-                col_names.append(f"{roi_name}_trial_{trial_agg}_roi_{roi_agg}")
-                all_values.append(roi_value)
+            for _, roi_data in data.items():
+                if roi_data.ndim == 1:
+                    # Single trial - add to combined data
+                    all_roi_data.append(roi_data)
+                else:
+                    # Multiple trials - add to combined data
+                    all_roi_data.append(roi_data)
+
+            # Concatenate all ROI data along channel axis
+            if all_roi_data[0].ndim == 1:
+                # Single trial case
+                combined_data = np.concatenate(
+                    all_roi_data, axis=0
+                )  # Shape: (all_channels,)
+                roi_value = aggregate_data(combined_data, roi_agg)
+            else:
+                # Multiple trials case
+                combined_data = np.concatenate(
+                    all_roi_data, axis=0
+                )  # Shape: (all_channels, n_trials)
+                trial_aggregated = aggregate_data(
+                    combined_data, trial_agg, axis=1
+                )  # Shape: (all_channels,)
+                roi_value = aggregate_data(
+                    trial_aggregated, roi_agg
+                )  # Shape: scalar
+
+            col_names.append(f"all_channels_trial_{trial_agg}_roi_{roi_agg}")
+            all_values.append(roi_value)
 
     result_dict = {
         "data": np.array(all_values).reshape(1, -1),

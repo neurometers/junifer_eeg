@@ -14,6 +14,7 @@ from . import (
     datareader,
     markers,
     preprocessors,
+    storage,
 )
 
 # Import main classes for convenience

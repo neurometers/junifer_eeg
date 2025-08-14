@@ -14,7 +14,7 @@ from junifer_eeg.markers import (
 def create_test_raw():
     """Create synthetic Raw object for testing."""
     sfreq = 100  # 100 Hz sampling rate
-    duration = 5  # 5 seconds (shorter for faster decoding tests)
+    duration = 20  # 20 seconds (longer to avoid filter warnings)
     times = np.arange(0, duration, 1 / sfreq)
 
     # Create different frequency components

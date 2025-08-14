@@ -101,9 +101,9 @@ class TestSymbolicMutualInformation:
         # Reshape to matrix
         smi_matrix = data.reshape(n_channels, n_channels)
 
-        # Diagonal should be 1.0 (self-SMI)
+        # Diagonal should be 0.0 (matches NICE behavior - validated in WSMI comparison)
         diagonal = np.diag(smi_matrix)
-        assert np.allclose(diagonal, 1.0)
+        assert np.allclose(diagonal, 0.0)
 
     def test_symbolic_mutual_information_ordinal_patterns(self, sample_epochs):
         """Test ordinal pattern computation."""
@@ -146,9 +146,9 @@ class TestSymbolicMutualInformation:
         # Reshape to matrix
         smi_matrix = data.reshape(n_channels, n_channels)
 
-        # Check that diagonal is 1.0 (self-SMI)
+        # Check that diagonal is 0.0 (matches NICE behavior - validated in WSMI comparison)
         diagonal = np.diag(smi_matrix)
-        assert np.allclose(diagonal, 1.0)
+        assert np.allclose(diagonal, 0.0)
 
         # Check that matrix is square
         assert smi_matrix.shape == (n_channels, n_channels)

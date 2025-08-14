@@ -18,8 +18,19 @@ def test_spectral_power_basic():
     info = mne.create_info(ch_names=["Cz"], sfreq=sfreq, ch_types=["eeg"])
     raw = mne.io.RawArray(data[np.newaxis, :], info)
 
-    # Test marker
-    marker = SpectralPower()
+    # Test marker with explicit bands parameter to ensure all 5 bands
+    # Use aggregation methods to avoid the raw data return path
+    marker = SpectralPower(
+        bands={
+            "delta": (1, 4),
+            "theta": (4, 8),
+            "alpha": (8, 12),
+            "beta": (12, 30),
+            "gamma": (30, 45),
+        },
+        roi_aggregation_method=["mean"],
+        trial_aggregation_method=["mean"],
+    )
     input_data = {"data": raw}
     result = marker.compute(input_data)
 
@@ -32,11 +43,18 @@ def test_spectral_power_basic():
 
     # Check that alpha power is higher (since we have 10Hz signal)
     col_names = result["spectralpower"]["col_names"]
-    alpha_idx = next(i for i, name in enumerate(col_names) if "alpha" in name)
-    alpha_power = result["spectralpower"]["data"][0, alpha_idx]
+    data = result["spectralpower"]["data"]
 
-    # Alpha should have higher power than others for 10Hz signal
-    assert alpha_power > 0
+    # Find alpha and other band indices
+    alpha_idx = next(i for i, name in enumerate(col_names) if "alpha" in name)
+    delta_idx = next(i for i, name in enumerate(col_names) if "delta" in name)
+
+    alpha_power = data[0, alpha_idx]
+    delta_power = data[0, delta_idx]
+
+    # Alpha should have higher power than delta for 10Hz signal (even in dB)
+    # Since we're using dB conversion, values can be negative, but alpha should still be higher
+    assert alpha_power > delta_power
 
 
 def test_spectral_power_initialization():
