@@ -16,21 +16,27 @@ from . import (
     preprocessors,
     storage,
 )
-
-# Import main classes for convenience
-from .datareader import EEGDataReader, ICMLGDataReader
+from .datareader import EEGDataReader, ICMLGDataReader, SARTDataReader
 from .markers import (
     SpectralPower,
     TimeLockedContrast,
     TimeLockedTopography,
     WindowDecoding,
 )
+
+# Import MNE data type dumpers
+from .mne_asset_dumper import register_mne_dumpers
 from .preprocessors import (
     EEGFilter,
     ICMAdaptiveArtifactRejection,
     ICMEquipmentFilter,
     ICMLGEpoching,
 )
+
+# Register MNE data types with junifer's DataObjectDumper
+register_mne_dumpers()
+
+# Import main classes for convenience
 
 __all__ = [
     "EEGDataReader",
@@ -39,6 +45,7 @@ __all__ = [
     "ICMEquipmentFilter",
     "ICMLGDataReader",
     "ICMLGEpoching",
+    "SARTDataReader",
     "SpectralPower",
     "TimeLockedContrast",
     "TimeLockedTopography",
@@ -46,4 +53,5 @@ __all__ = [
     "datareader",
     "markers",
     "preprocessors",
+    "storage",
 ]

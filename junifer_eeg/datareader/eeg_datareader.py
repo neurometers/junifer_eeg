@@ -22,8 +22,16 @@ def _read_fif(file_path: Path, **kwargs) -> Any:
     """Read FIF file using MNE."""
     # Handle both raw and epochs FIF files
     if "_epo.fif" in str(file_path):
-        # It's an epochs file
-        return mne.read_epochs(file_path, preload=True, verbose=False)
+        # It's an epochs file - try preload=True first, fallback to preload=False
+        try:
+            return mne.read_epochs(file_path, preload=True, verbose=False)
+        except (ValueError, RuntimeError) as e:
+            # If preload fails due to calibration issues, try without preload
+            print(f"Warning: Preload failed ({e}), trying without preload...")
+            epochs = mne.read_epochs(file_path, preload=False, verbose=False)
+            # Force load the data to ensure it's available
+            epochs.load_data()
+            return epochs
     # It's a raw file
     return mne.io.read_raw_fif(file_path, preload=True, verbose=False)
 
@@ -42,13 +50,27 @@ default_module._readers["EDF"] = {"func": _read_edf, "params": None}
 default_module._readers["FIF"] = {"func": _read_fif, "params": None}
 
 
-# Add EEG to the patterns schema
-validation_module.PATTERNS_SCHEMA["EEG"] = {
-    "mandatory": ["pattern", "space"],
-    "optional": {
-        "mask": {"mandatory": ["pattern", "space"], "optional": []},
-    },
-}
+# Add EEG to the patterns schema using new registration system
+try:
+    # Try new registration system first
+    validation_module.register_data_type(
+        "EEG",
+        {
+            "mandatory": ["pattern", "space"],
+            "optional": {
+                "mask": {"mandatory": ["pattern", "space"], "optional": []},
+            },
+        },
+    )
+except AttributeError:
+    # Fallback to old PATTERNS_SCHEMA if available
+    if hasattr(validation_module, "PATTERNS_SCHEMA"):
+        validation_module.PATTERNS_SCHEMA["EEG"] = {
+            "mandatory": ["pattern", "space"],
+            "optional": {
+                "mask": {"mandatory": ["pattern", "space"], "optional": []},
+            },
+        }
 
 
 @register_datareader

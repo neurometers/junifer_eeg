@@ -63,6 +63,9 @@ class TestTimeLockedTopography:
             epoch_length=1.0,
             overlap=0.0,
             on="EEG",
+            trial_aggregation_method=[
+                "mean"
+            ],  # Explicitly request aggregation
         )
 
         input_data = {"data": raw}

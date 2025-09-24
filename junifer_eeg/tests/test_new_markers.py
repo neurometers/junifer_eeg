@@ -63,7 +63,7 @@ class TestKolmogorovComplexity:
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
         assert all(
-            "elec" in name for name in col_names
+            "Cz" in name or "Fz" in name for name in col_names
         )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all(data > 0)  # Complexity should be positive
@@ -101,7 +101,7 @@ class TestPermutationEntropy:
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
         assert all(
-            "elec" in name for name in col_names
+            "Cz" in name or "Fz" in name for name in col_names
         )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all((data >= 0) & (data <= 1))  # PE should be normalized
@@ -137,10 +137,10 @@ class TestContingentNegativeVariation:
         assert len(slope_names) == 2
         assert len(intercept_names) == 2
         assert all(
-            "elec" in name for name in slope_names
+            "Cz" in name or "Fz" in name for name in slope_names
         )  # Check for electrode naming
         assert all(
-            "elec" in name for name in intercept_names
+            "Cz" in name or "Fz" in name for name in intercept_names
         )  # Check for electrode naming
         assert np.all(np.isfinite(slope_data))
         assert np.all(np.isfinite(intercept_data))
@@ -224,7 +224,7 @@ class TestPowerSpectralDensitySummary:
         assert data.shape == (1, 2)  # 1 observation, 2 channels
         assert len(col_names) == 2
         assert all(
-            "elec" in name for name in col_names
+            "Cz" in name or "Fz" in name for name in col_names
         )  # Check for electrode naming
         assert np.all(np.isfinite(data))
         assert np.all(data >= 0)  # PSD summary should be non-negative

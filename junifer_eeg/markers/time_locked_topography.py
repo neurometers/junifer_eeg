@@ -218,12 +218,48 @@ class TimeLockedTopography(BaseMarker):
                 for i, ch in enumerate(epochs.ch_names)
             }
 
-        # Apply aggregation to get final clinical values
-        results = apply_roi_trial_aggregation(
-            roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="timelockedtopo",
-        )
+        # Check if we should return per-epoch data without aggregation
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return per-epoch results without any aggregation
+            col_names = []
+
+            # Collect column names from all ROIs/channels
+            for roi_name, roi_data_array in roi_data.items():
+                # roi_data_array is (n_channels_in_roi, n_epochs)
+                n_channels_in_roi = roi_data_array.shape[0]
+                for ch_idx in range(n_channels_in_roi):
+                    col_names.append(f"{roi_name}_ch{ch_idx}")
+
+            # Stack data: each row is an epoch, each column is a channel
+            n_epochs = time_averaged.shape[1]
+            epoch_data = []
+            for epoch_idx in range(n_epochs):
+                epoch_values = []
+                for _, roi_data_array in roi_data.items():
+                    # Extract values for this epoch across all channels in this ROI
+                    for ch_idx in range(roi_data_array.shape[0]):
+                        epoch_values.append(roi_data_array[ch_idx, epoch_idx])
+                epoch_data.append(epoch_values)
+
+            # Convert to numpy array: (n_epochs, n_channels)
+            epoch_data_array = np.array(epoch_data)
+
+            results = {
+                "timelockedtopo": {
+                    "data": epoch_data_array,
+                    "col_names": col_names,
+                }
+            }
+        else:
+            # Apply aggregation to get final clinical values
+            results = apply_roi_trial_aggregation(
+                roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="timelockedtopo",
+            )
 
         return results

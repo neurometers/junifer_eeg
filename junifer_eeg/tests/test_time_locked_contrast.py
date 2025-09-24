@@ -84,6 +84,7 @@ class TestTimeLockedContrast:
             condition_a="LSGS",
             condition_b="LDGD",
             comment="test",
+            trial_aggregation_method="mean",  # Explicitly request aggregation
         )
 
         input_data = {"data": sample_epochs}
@@ -97,7 +98,7 @@ class TestTimeLockedContrast:
         data = result["timelockedcontrast"]["data"]
         col_names = result["timelockedcontrast"]["col_names"]
 
-        assert data.shape[0] == 1  # One contrast
+        assert data.shape[0] == 1  # One contrast (aggregated)
         assert data.shape[1] == len(sample_epochs.ch_names)  # One per channel
         assert len(col_names) == len(sample_epochs.ch_names)
 
@@ -109,6 +110,7 @@ class TestTimeLockedContrast:
             tmin=0.1,
             tmax=0.5,
             comment="windowed",
+            trial_aggregation_method="mean",  # Explicitly request aggregation
         )
 
         input_data = {"data": sample_epochs}
@@ -142,6 +144,7 @@ class TestTimeLockedContrast:
             condition_b="LDGD",
             baseline=(-0.2, 0.0),
             comment="baseline",
+            trial_aggregation_method="mean",  # Explicitly request aggregation
         )
 
         input_data = {"data": sample_epochs}

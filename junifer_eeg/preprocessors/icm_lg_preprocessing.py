@@ -1,77 +1,89 @@
-"""ICM Local-Global Equipment-Specific Preprocessing for EEG data."""
+"""ICM Local-Global Equipment-Specific Preprocessing for EEG data.
 
-from typing import Any, Dict, List, Optional, Tuple
+This module provides preprocessing components that closely follow the original
+next_icm/lg/preprocessing.py implementation, reusing the same functions and
+logic wherever possible.
+"""
+
+import pickle
+from pathlib import Path
+from typing import Any, Optional
 
 import mne
 import numpy as np
 from junifer.api.decorators import register_preprocessor
 from junifer.preprocess.base import BasePreprocessor
+from mne.utils import logger
 
-# Equipment-specific filtering parameters
-EQUIPMENT_FILTER_PARAMS = {
-    "egi": {
-        "l_freq": 0.1,
-        "h_freq": 40.0,
-        "notch_freq": 60.0,
-        "resample_freq": 250,
-    },
-    "brainvision": {
-        "l_freq": 0.1,
-        "h_freq": 30.0,
-        "notch_freq": 50.0,
-        "resample_freq": 250,
-    },
-    "ant": {
-        "l_freq": 0.1,
-        "h_freq": 30.0,
-        "notch_freq": 50.0,
-        "resample_freq": 250,
-    },
-    "biosemi": {
-        "l_freq": 0.1,
-        "h_freq": 30.0,
-        "notch_freq": 50.0,
-        "resample_freq": 250,
-    },
-}
+from .utils import (
+    EQUIPMENT_FILTER_PARAMS,
+    ICM_LG_EVENT_ID,
+    _adaptive_egi,
+    _check_min_channels,
+    _check_min_events,
+)
+
+
+def _dump_data(data, element, stage, step_num, dump_location):
+    """Helper function to dump preprocessing data."""
+    if not dump_location:
+        return
+
+    dump_path = Path(dump_location) / element
+    dump_path.mkdir(parents=True, exist_ok=True)
+
+    # Dump EEG data in native MNE format
+    if isinstance(data.get("data"), (mne.io.BaseRaw, mne.BaseEpochs)):
+        eeg_file = dump_path / f"{step_num:02d}_{stage}_eeg.fif"
+        data["data"].save(eeg_file, overwrite=True)
+        logger.info(f"Dumped EEG data: {eeg_file}")
+
+    # Dump metadata
+    metadata = {k: v for k, v in data.items() if k != "data"}
+    if metadata:
+        meta_file = dump_path / f"{step_num:02d}_{stage}_metadata.pkl"
+        with open(meta_file, "wb") as f:
+            pickle.dump(metadata, f)
+        logger.info(f"Dumped metadata: {meta_file}")
 
 
 @register_preprocessor
 class ICMEquipmentFilter(BasePreprocessor):
-    """ICM Equipment-specific EEG filtering.
+    """ICM Equipment-specific EEG filtering with self-contained implementation.
+
+    This preprocessor applies the exact same filtering parameters and logic as the
+    original next_icm implementation, but uses a self-contained MNE-based approach
+    without any external dependencies on nice_ext.
 
     Parameters
     ----------
     equipment_type : str, optional
-        Equipment type for filtering parameters. Default: 'egi'
-    l_freq : float, optional
-        Low-pass filter frequency.
-    h_freq : float, optional
-        High-pass filter frequency.
-    notch_freq : float, optional
-        Notch filter frequency.
-    resample_freq : float, optional
-        Resampling frequency.
+        Equipment type ('egi', 'brainvision', 'ant', 'biosemi'). Default: 'egi'
+    config_params : dict, optional
+        Additional configuration parameters passed to the filtering functions.
+    n_jobs : int, optional
+        Number of parallel jobs for filtering. Default: 1
+    on : list of str, optional
+        Data types to apply preprocessing to.
     """
 
     def __init__(
         self,
         equipment_type: str = "egi",
-        l_freq: Optional[float] = None,
-        h_freq: Optional[float] = None,
-        notch_freq: Optional[float] = None,
-        resample_freq: Optional[float] = None,
-        on: Optional[List[str]] = None,
+        config_params: Optional[dict[str, Any]] = None,
+        n_jobs: int = 1,
+        dump_location: Optional[str] = None,
+        dump_granularity: str = "full",
+        on: Optional[list[str]] = None,
     ):
         self.equipment_type = equipment_type
-        self.l_freq = l_freq
-        self.h_freq = h_freq
-        self.notch_freq = notch_freq
-        self.resample_freq = resample_freq
-
+        self.config_params = config_params or {}
+        self.n_jobs = n_jobs
+        self.dump_location = dump_location
+        self.dump_granularity = dump_granularity
         super().__init__(on=on)
 
-    def get_valid_inputs(self) -> List[str]:
+    def get_valid_inputs(self) -> list[str]:
         """Get valid input types."""
         return ["EEG"]
 
@@ -81,72 +93,170 @@ class ICMEquipmentFilter(BasePreprocessor):
 
     def preprocess(
         self,
-        input: Dict[str, Any],
-        extra_input: Dict[str, Any] | None = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
-        """Apply equipment-specific filtering."""
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Apply equipment-specific filtering using original next_icm functions."""
         raw = input["data"]
 
         if not isinstance(raw, mne.io.BaseRaw):
             raise ValueError("Input data must be mne.io.BaseRaw")
 
-        # Get equipment-specific parameters
-        params = EQUIPMENT_FILTER_PARAMS.get(
-            self.equipment_type,
-            EQUIPMENT_FILTER_PARAMS["egi"],
-        )
-
-        # Use custom parameters if provided
-        l_freq = self.l_freq or params["l_freq"]
-        h_freq = self.h_freq or params["h_freq"]
-        notch_freq = self.notch_freq or params["notch_freq"]
-        resample_freq = self.resample_freq or params["resample_freq"]
-
-        # Apply filtering
+        # Make a copy to avoid modifying original
         raw = raw.copy()
 
-        # Resample if necessary
-        if raw.info["sfreq"] != resample_freq:
-            raw.resample(resample_freq)
+        # Get equipment-specific parameters
+        if self.equipment_type not in EQUIPMENT_FILTER_PARAMS:
+            raise ValueError(
+                f"Unsupported equipment type: {self.equipment_type}"
+            )
 
-        # Apply bandpass filter
-        raw.filter(l_freq, h_freq)
+        params = EQUIPMENT_FILTER_PARAMS[self.equipment_type].copy()
+        # Override with any user-provided parameters
+        params.update(self.config_params)
 
-        # Apply notch filter
-        raw.notch_filter(notch_freq)
+        # Apply equipment-specific filtering using self-contained implementation
+        self._apply_equipment_filtering(raw, params)
 
-        input["data"] = raw
-        return input, None
+        output = input.copy()
+        output["data"] = raw
+
+        # Dump data if requested
+        if self.dump_location:
+            element = input.get("meta", {}).get("element", "unknown_element")
+            if isinstance(element, dict):
+                element = "unknown_element"
+            _dump_data(
+                output, element, "equipment_filtered", 1, self.dump_location
+            )
+
+        return output, None
+
+    def _apply_equipment_filtering(self, raw, params):
+        """Apply equipment-specific filtering using self-contained MNE implementation."""
+        # Get parameters with defaults
+        lpass = params.get("lpass", 40.0)
+        hpass = params.get("hpass", 0.5)
+        notches = params.get("notches", [50, 100])
+        hp_order = params.get("hp_order", 4)
+        lp_order = params.get("lp_order", 8)
+        l_trans_bandwidth = params.get("l_trans_bandwidth", 0.1)
+
+        # Pick EEG channels
+        picks = mne.pick_types(
+            raw.info, eeg=True, meg=True, ecg=True, exclude=[]
+        )
+
+        # Apply high-pass filter (Butterworth)
+        if hpass is not None:
+            logger.info(
+                f"Applying high-pass filter at {hpass} Hz (order {hp_order})"
+            )
+            raw.filter(
+                l_freq=hpass,
+                h_freq=None,
+                picks=picks,
+                method="iir",
+                iir_params={"ftype": "butter", "order": hp_order},
+                l_trans_bandwidth=l_trans_bandwidth,
+                n_jobs=self.n_jobs,
+            )
+
+        # Apply low-pass filter (Butterworth)
+        if lpass is not None:
+            logger.info(
+                f"Applying low-pass filter at {lpass} Hz (order {lp_order})"
+            )
+            raw.filter(
+                l_freq=None,
+                h_freq=lpass,
+                picks=picks,
+                method="iir",
+                iir_params={"ftype": "butter", "order": lp_order},
+                n_jobs=self.n_jobs,
+            )
+
+        # Apply notch filters
+        if notches:
+            # For BrainVision, add 200Hz notch if sampling rate > 400Hz
+            if (
+                self.equipment_type == "brainvision"
+                and raw.info["sfreq"] > 400
+            ):
+                notches = [*notches, 200]
+
+            # Filter out notch frequencies that are above current Nyquist frequency
+            current_nyquist = raw.info["sfreq"] / 2.0
+            valid_notches = [f for f in notches if f < current_nyquist]
+
+            if (
+                valid_notches
+            ):  # Only apply if there are valid notch frequencies
+                logger.info(f"Applying notch filters at {valid_notches} Hz")
+                raw.notch_filter(
+                    valid_notches, method="fft", n_jobs=self.n_jobs
+                )
+
+        # Resample to target frequency (EGI always resamples to 250Hz)
+        resample_freq = params.get("resample_freq")
+        if resample_freq and raw.info["sfreq"] != resample_freq:
+            logger.info(f"Resampling to {resample_freq} Hz")
+            raw.resample(resample_freq, npad="auto")
+            logger.info("Resampling done")
 
 
 @register_preprocessor
 class ICMAdaptiveArtifactRejection(BasePreprocessor):
-    """ICM Adaptive artifact rejection.
+    """ICM Adaptive artifact rejection using original next_icm _adaptive_egi function.
+
+    This preprocessor uses the exact same _adaptive_egi function from nice_ext
+    as the original next_icm implementation.
 
     Parameters
     ----------
-    z_threshold : float, optional
-        Z-score threshold for artifact detection. Default: 3.0
-    max_bad_channels : float, optional
-        Maximum proportion of bad channels to reject. Default: 0.1
-    max_bad_epochs : float, optional
-        Maximum proportion of bad epochs to reject. Default: 0.2
+    reject : dict, optional
+        Rejection criteria. Default: {'eeg': 100e-6}
+    n_epochs_bad_ch : float, optional
+        Fraction of epochs for bad channel detection. Default: 0.5
+    n_channels_bad_epoch : float, optional
+        Fraction of channels for bad epoch detection. Default: 0.1
+    zscore_thresh : float, optional
+        Z-score threshold for artifact detection. Default: 4
+    max_iter : int, optional
+        Maximum iterations for adaptive algorithm. Default: 4
+    min_channels : float, optional
+        Minimum fraction of good channels required. Default: 0.7
+    min_events : float, optional
+        Minimum fraction of good events required. Default: 0.3
+    on : list of str, optional
+        Data types to apply preprocessing to.
     """
 
     def __init__(
         self,
-        z_threshold: float = 3.0,
-        max_bad_channels: float = 0.1,
-        max_bad_epochs: float = 0.2,
-        on: Optional[List[str]] = None,
+        reject: Optional[dict[str, float]] = None,
+        n_epochs_bad_ch: float = 0.5,
+        n_channels_bad_epoch: float = 0.1,
+        zscore_thresh: float = 4,
+        max_iter: int = 4,
+        min_channels: float = 0.7,
+        min_events: float = 0.3,
+        dump_location: Optional[str] = None,
+        dump_granularity: str = "full",
+        on: Optional[list[str]] = None,
     ):
-        self.z_threshold = z_threshold
-        self.max_bad_channels = max_bad_channels
-        self.max_bad_epochs = max_bad_epochs
-
+        self.reject = reject or {"eeg": 100e-6}
+        self.n_epochs_bad_ch = n_epochs_bad_ch
+        self.n_channels_bad_epoch = n_channels_bad_epoch
+        self.zscore_thresh = zscore_thresh
+        self.max_iter = max_iter
+        self.min_channels = min_channels
+        self.min_events = min_events
+        self.dump_location = dump_location
+        self.dump_granularity = dump_granularity
         super().__init__(on=on)
 
-    def get_valid_inputs(self) -> List[str]:
+    def get_valid_inputs(self) -> list[str]:
         """Get valid input types."""
         return ["EEG"]
 
@@ -156,134 +266,126 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
 
     def preprocess(
         self,
-        input: Dict[str, Any],
-        extra_input: Dict[str, Any] | None = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
-        """Apply adaptive artifact rejection."""
-        data = input["data"]
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Apply adaptive artifact rejection using original next_icm functions."""
+        epochs = input["data"]
 
-        if isinstance(data, mne.io.BaseRaw):
-            # For continuous data, create epochs for artifact detection
-            events = mne.find_events(data)
-            if len(events) == 0:
-                output = input.copy()
-                output["data"] = data
-                return output, None
+        if not isinstance(epochs, mne.BaseEpochs):
+            raise ValueError("Input data must be mne.BaseEpochs")
 
-            # Create temporary epochs
-            epochs = mne.Epochs(
-                data,
-                events,
-                tmin=-0.1,
-                tmax=0.8,
-                baseline=None,
-                preload=True,
-                verbose=False,
+        # Check if we have any epochs to process
+        if len(epochs) == 0:
+            logger.warning(
+                "No epochs available for artifact rejection. Returning empty epochs."
             )
-
-            # Apply artifact rejection
-            epochs_clean = self._apply_adaptive_rejection(epochs)
-
-            # Return cleaned epochs with preserved meta
             output = input.copy()
-            output["data"] = epochs_clean
+            output["data"] = epochs
             return output, None
 
-        if isinstance(data, mne.BaseEpochs):
-            # Apply artifact rejection to epochs
-            epochs_clean = self._apply_adaptive_rejection(data)
-            output = input.copy()
-            output["data"] = epochs_clean
-            return output, None
+        # Store original epoch indices before any dropping
+        original_epoch_indices = list(range(len(epochs)))
 
-        raise ValueError(
-            "Input data must be mne.io.BaseRaw or mne.BaseEpochs",
+        bad_channels, bad_epochs = _adaptive_egi(
+            epochs,
+            self.reject,
+            n_epochs_bad_ch=self.n_epochs_bad_ch,
+            n_channels_bad_epoch=self.n_channels_bad_epoch,
+            zscore_thresh=self.zscore_thresh,
+            max_iter=self.max_iter,
         )
 
-    def _apply_adaptive_rejection(
-        self,
-        epochs: mne.BaseEpochs,
-    ) -> mne.BaseEpochs:
-        """Apply adaptive artifact rejection algorithm."""
-        epochs = epochs.copy()
+        # Store bad epochs/channels info in epochs metadata for report generation
+        epochs.info["description"] = "ICM LG preprocessed data"
 
-        # Get data matrix
-        data = epochs.get_data()
-        n_epochs, n_channels, n_times = data.shape
+        # Store bad channels info (before interpolation)
+        all_bad_channels = list(set(epochs.info["bads"] + bad_channels))
+        epochs.info["bads"].extend(bad_channels)
 
-        # Calculate channel-wise statistics
-        channel_stats = np.zeros(n_channels)
-        for ch in range(n_channels):
-            ch_data = data[:, ch, :].flatten()
-            channel_stats[ch] = np.std(ch_data)
+        # Store preprocessing info in epochs.info for later access
+        # Store bad epochs and bad channels info in epochs metadata
+        # Use MNE's approved 'temp' key for custom info storage
+        if "temp" not in epochs.info:
+            epochs.info["temp"] = {}
+        epochs.info["temp"]["preprocessing_info"] = {}
 
-        # Find bad channels
-        channel_z_scores = np.abs(
-            (channel_stats - np.mean(channel_stats)) / np.std(channel_stats),
+        epochs.info["temp"]["preprocessing_info"]["bad_channels_detected"] = (
+            bad_channels
         )
-        bad_channels = np.where(channel_z_scores > self.z_threshold)[0]
-
-        # Limit number of bad channels
-        max_bad_ch = int(self.max_bad_channels * n_channels)
-        if len(bad_channels) > max_bad_ch:
-            bad_channels = bad_channels[
-                np.argsort(channel_z_scores[bad_channels])[-max_bad_ch:]
-            ]
-
-        # Calculate epoch-wise statistics
-        epoch_stats = np.zeros(n_epochs)
-        for ep in range(n_epochs):
-            ep_data = data[ep, :, :].flatten()
-            epoch_stats[ep] = np.std(ep_data)
-
-        # Find bad epochs
-        epoch_z_scores = np.abs(
-            (epoch_stats - np.mean(epoch_stats)) / np.std(epoch_stats),
+        epochs.info["temp"]["preprocessing_info"]["bad_channels_total"] = (
+            all_bad_channels
         )
-        bad_epochs = np.where(epoch_z_scores > self.z_threshold)[0]
+        epochs.info["temp"]["preprocessing_info"]["bad_epochs_detected"] = (
+            bad_epochs
+        )
+        epochs.info["temp"]["preprocessing_info"][
+            "n_epochs_before_rejection"
+        ] = len(original_epoch_indices)
+        epochs.info["temp"]["preprocessing_info"][
+            "n_epochs_after_rejection"
+        ] = len(epochs)
+        epochs.info["temp"]["preprocessing_info"][
+            "n_channels_interpolated"
+        ] = len(all_bad_channels)
 
-        # Limit number of bad epochs
-        max_bad_ep = int(self.max_bad_epochs * n_epochs)
-        if max_bad_ep == 0:
-            bad_epochs = []  # do not drop any epochs
-        elif len(bad_epochs) > max_bad_ep:
-            bad_epochs = bad_epochs[
-                np.argsort(epoch_z_scores[bad_epochs])[-max_bad_ep:]
-            ]
+        logger.info(
+            f"found bad channels: {len(bad_channels)} {bad_channels!s}"
+        )
+        logger.info(f"found bad epochs: {len(bad_epochs)} epochs")
 
-        # Update bad channels and epochs
-        bad_ch_names = [epochs.ch_names[ch] for ch in bad_channels]
-        if bad_ch_names:
-            epochs.info["bads"] = list(set(epochs.info["bads"] + bad_ch_names))
+        _check_min_events(epochs, self.min_events)
+        _check_min_channels(epochs, bad_channels, self.min_channels)
 
-        if len(bad_epochs) > 0:
-            epochs.drop(bad_epochs)
-
-        # Apply average referencing (matching NICE behavior)
+        # Apply average reference (modern MNE approach)
         epochs.set_eeg_reference("average", projection=True)
 
-        # Interpolate bad channels (only if digitization info is available)
+        # Interpolate bad channels (but keep the info about which were bad)
         if len(epochs.info["bads"]) > 0:
-            try:
-                epochs.interpolate_bads(reset_bads=True)
-            except RuntimeError as e:
-                if "Cannot fit headshape without digitization" in str(e):
-                    # Skip interpolation for synthetic data without electrode positions
-                    print(
-                        "Warning: Skipping channel interpolation - no digitization info available"
-                    )
-                    print(
-                        f"Bad channels marked but not interpolated: {epochs.info['bads']}"
-                    )
-                else:
-                    raise e
+            epochs.interpolate_bads(reset_bads=False)  # Keep bad channel info
 
-        return epochs
+        output = input.copy()
+        output["data"] = epochs
+
+        # Dump data if requested - save only essential metadata for visualization
+        if self.dump_location:
+            element = input.get("meta", {}).get("element", "unknown_element")
+            if isinstance(element, dict):
+                element = "unknown_element"
+
+            # Save only essential metadata for visualization (no large files)
+            dump_path = Path(self.dump_location) / element
+            dump_path.mkdir(parents=True, exist_ok=True)
+
+            # Save only preprocessing metadata (bad channels list)
+            preprocessing_info = {
+                "bad_channels_detected": bad_channels,
+                "bad_epochs_detected": bad_epochs,
+                "n_epochs_before_rejection": len(original_epoch_indices),
+                "n_epochs_after_rejection": len(epochs),
+                "n_channels_interpolated": len(all_bad_channels),
+            }
+
+            metadata = {"preprocessing_info": preprocessing_info}
+
+            meta_file = dump_path / "03_bad_channels_metadata.pkl"
+            with open(meta_file, "wb") as f:
+                pickle.dump(metadata, f)
+
+            logger.info(f"Dumped bad channels metadata: {meta_file}")
+            logger.info(
+                f"Bad channels: {len(bad_channels)}, Bad epochs: {len(bad_epochs)}"
+            )
+
+        return output, None
 
 
 @register_preprocessor
 class ICMLGEpoching(BasePreprocessor):
-    """ICM Local-Global epoching preprocessor.
+    """ICM Local-Global epoching preprocessor using original next_icm approach.
+
+    This preprocessor follows the exact same epoching logic as the original
+    next_icm implementation, including event detection and channel handling.
 
     Parameters
     ----------
@@ -291,36 +393,33 @@ class ICMLGEpoching(BasePreprocessor):
         Start time before event. Default: -0.2
     tmax : float, optional
         End time after event. Default: 1.34
-    baseline : tuple, optional
-        Baseline period. Default: (-0.2, 0.0)
-    reject_criteria : dict, optional
-        Rejection criteria for epochs. Default: {'eeg': 100e-6}
+    baseline : tuple of float, optional
+        Baseline correction period. Default: (None, 0)
+    event_id : dict, optional
+        Event ID mapping. If None, uses ICM LG default mapping.
+    on : list of str, optional
+        Data types to apply preprocessing to.
     """
 
     def __init__(
         self,
         tmin: float = -0.2,
         tmax: float = 1.34,
-        baseline: Tuple[float, float] = (-0.2, 0.0),
-        reject_criteria: Optional[Dict[str, float]] = None,
-        event_id: Optional[Dict[str, int]] = None,
-        on: Optional[List[str]] = None,
+        baseline: tuple[Optional[float], float] = (None, 0),
+        event_id: Optional[dict[str, int]] = None,
+        dump_location: Optional[str] = None,
+        dump_granularity: str = "full",
+        on: Optional[list[str]] = None,
     ):
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
-        # Handle reject_criteria: None means no rejection, empty dict means no rejection, otherwise use provided criteria
-        if reject_criteria is None:
-            self.reject_criteria = None  # No rejection
-        elif isinstance(reject_criteria, dict) and len(reject_criteria) == 0:
-            self.reject_criteria = None  # Empty dict means no rejection
-        else:
-            self.reject_criteria = reject_criteria or {"eeg": 100e-6}
-        # Allow user-provided event_id mapping (e.g. to match custom trigger codes)
-        self.event_id = event_id
+        self.event_id = event_id or ICM_LG_EVENT_ID
+        self.dump_location = dump_location
+        self.dump_granularity = dump_granularity
         super().__init__(on=on)
 
-    def get_valid_inputs(self) -> List[str]:
+    def get_valid_inputs(self) -> list[str]:
         """Get valid input types."""
         return ["EEG"]
 
@@ -330,110 +429,80 @@ class ICMLGEpoching(BasePreprocessor):
 
     def preprocess(
         self,
-        input: Dict[str, Any],
-        extra_input: Dict[str, Any] | None = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
-        """Create epochs from continuous data."""
+        input: dict[str, Any],
+        extra_input: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Create epochs from continuous data using original next_icm approach."""
         raw = input["data"]
 
         if not isinstance(raw, mne.io.BaseRaw):
             raise ValueError("Input data must be mne.io.BaseRaw")
 
-        # Keep EEG channels and stimulus channels, drop everything else
-        # Get EEG channels using MNE's channel type detection
-        eeg_picks = mne.pick_types(raw.info, eeg=True)
-        eeg_channels = [raw.ch_names[i] for i in eeg_picks]
-        # Get all stimulus channels
-        stim_picks = mne.pick_types(raw.info, stim=True)
-        stim_channels = [raw.ch_names[i] for i in stim_picks]
+        # Make a copy to avoid modifying original
+        raw = raw.copy()
 
-        # Define good channels: all EEG + all stimulus channels
-        good_channels = eeg_channels + stim_channels
+        # Find events (matching original next_icm approach)
+        events = mne.find_events(raw, shortest_event=1)
+        found_id = np.unique(events[:, 2])
+        this_id = {k: v for k, v in self.event_id.items() if v in found_id}
 
-        # Find channels to drop (everything not in good_channels)
-        to_drop = [x for x in raw.ch_names if x not in good_channels]
-
-        if len(to_drop) > 0:
-            print(
-                f"Dropping {len(to_drop)} non-EEG channels: {to_drop[:5]}{'...' if len(to_drop) > 5 else ''}"
-            )
-            raw = raw.copy()  # Make a copy to avoid modifying original
-            raw.drop_channels(to_drop)
-
-        # Find events - try stim channels first, then annotations
-        try:
-            events = mne.find_events(raw)
-        except ValueError as e:
-            if "No stim channels found" in str(e) and raw.annotations:
-                # Convert annotations to events
-                events, event_id_from_annot = mne.events_from_annotations(raw)
-                print(f"Extracted {len(events)} events from annotations")
-            else:
-                raise e
-
-        if len(events) == 0:
-            raise ValueError("No events found in the data")
-
-        # Use provided event_id mapping or default ICM LG codes
-        event_id = self.event_id or {
-            "HSTD": 10,
-            "HDVT": 20,
-            "LSGS": 30,
-            "LSGD": 40,
-            "LDGS": 60,
-            "LDGD": 50,
-        }
-
-        # Filter events to ICM LG events only
-        icm_events = []
-        # Keep only the events matching mapping values (or all if mapping empty)
-        if event_id == "auto":
-            # Build deterministic mapping based on sorted unique codes
-            codes = sorted(np.unique(events[:, 2]))
-            if len(codes) >= 6:
-                event_id = dict(
-                    zip(
-                        ["HSTD", "HDVT", "LSGS", "LSGD", "LDGD", "LDGS"],
-                        codes[:6],
-                    )
-                )
-            else:
-                event_id = {}  # accept all events if not enough codes
-
-        if isinstance(event_id, dict) and event_id:
-            for event in events:
-                if event[2] in event_id.values():
-                    icm_events.append(event)
-            icm_events = np.array(icm_events)
-            if len(icm_events) == 0:
-                raise ValueError(
-                    "No matching ICM LG events found in the data. Check event_id mapping or raw triggers."
-                )
-        else:
-            # event_id empty dict (or None) means accept all events
-            icm_events = events
-
-        # Create epochs
+        # Create epochs (matching original next_icm parameters)
         epochs = mne.Epochs(
             raw,
-            icm_events,
-            event_id=event_id,
+            events,
+            this_id,
             tmin=self.tmin,
             tmax=self.tmax,
-            baseline=self.baseline,
-            reject=self.reject_criteria,
             preload=True,
+            reject=None,  # No rejection at epoching stage (done later in artifact rejection)
+            picks=None,
+            baseline=self.baseline,
             verbose=False,
-            on_missing="ignore",
         )
 
-        # Drop stimulus channels after epoching (matching NICE behavior)
-        stim_channels_to_drop = [
-            ch for ch in epochs.ch_names if ch.startswith("STI")
-        ]
-        if stim_channels_to_drop:
-            epochs.drop_channels(stim_channels_to_drop)
+        # Handle concatenation events (matching original next_icm)
+        # Look for STI 014 channel and remove concatenation events
+        if "STI 014" in epochs.ch_names:
+            ch_idx = epochs.ch_names.index("STI 014")
+            concat_idx = []
+
+            # ICM LG concatenation event constant (from next_icm/lg/constants.py)
+            icm_lg_concatenation_event = 2014.0
+
+            for ii, e in enumerate(epochs):
+                if icm_lg_concatenation_event in e[ch_idx]:
+                    concat_idx.append(ii)
+
+            if concat_idx:
+                epochs.drop(concat_idx, reason="concatenation")
+                logger.info(f"Dropped {len(concat_idx)} concatenation epochs")
+
+        # Drop stimulus channels after epoching (matching original next_icm)
+        if "STI 014" in epochs.ch_names:
+            epochs.drop_channels(["STI 014"])
 
         output = input.copy()
         output["data"] = epochs
+
+        # Dump data if requested - save original epochs for bad epochs visualization
+        if self.dump_location:
+            element = input.get("meta", {}).get("element", "unknown_element")
+            if isinstance(element, dict):
+                element = "unknown_element"
+
+            # Save original epochs for bad epochs visualization (render_bad_epochs needs drop_log)
+            dump_path = Path(self.dump_location) / element
+            dump_path.mkdir(parents=True, exist_ok=True)
+
+            # Save original epochs with complete drop_log
+            eeg_file = dump_path / "02_original_epochs_for_visualization.fif"
+            epochs.save(eeg_file, overwrite=True)
+
+            logger.info(
+                f"Dumped original epochs for visualization: {eeg_file}"
+            )
+            logger.info(
+                f"Original epochs count: {len(epochs)} with drop_log available"
+            )
+
         return output, None

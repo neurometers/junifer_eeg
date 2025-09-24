@@ -275,7 +275,7 @@ class ContingentNegativeVariation(BaseMarker):
             else [f"ch_{i}" for i in range(n_channels)]
         )
 
-        if self.rois is not None:
+        if self.rois is not None and len(self.rois) > 0:
             slope_roi_data = get_data_for_rois(
                 slope_values.T,  # Transpose to (n_channels, n_epochs)
                 ch_names,
@@ -287,7 +287,7 @@ class ContingentNegativeVariation(BaseMarker):
                 self.rois,
             )
         else:
-            # Use all channels as individual ROIs
+            # Use all channels as individual ROIs - this preserves spatial information for topoplots
             slope_roi_data = {
                 ch: slope_values[:, i : i + 1].T
                 for i, ch in enumerate(ch_names)
@@ -297,21 +297,45 @@ class ContingentNegativeVariation(BaseMarker):
                 for i, ch in enumerate(ch_names)
             }
 
-        # Apply aggregation for slopes
-        slope_results = apply_roi_trial_aggregation(
-            slope_roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="cnvslope",
-        )
+        # Apply aggregation for slopes - bypass if both aggregation methods are None
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return raw per-trial, per-channel data for CNV plotting
+            slope_results = {
+                "cnvslope": {
+                    "data": slope_values,  # Shape: (n_epochs, n_channels)
+                    "col_names": [f"slope_{ch}" for ch in ch_names],
+                }
+            }
+        else:
+            slope_results = apply_roi_trial_aggregation(
+                slope_roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="cnvslope",
+            )
 
-        # Apply aggregation for intercepts
-        intercept_results = apply_roi_trial_aggregation(
-            intercept_roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="cnvintercept",
-        )
+        # Apply aggregation for intercepts - bypass if both aggregation methods are None
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return raw per-trial, per-channel data for CNV plotting
+            intercept_results = {
+                "cnvintercept": {
+                    "data": intercept_values,  # Shape: (n_epochs, n_channels)
+                    "col_names": [f"intercept_{ch}" for ch in ch_names],
+                }
+            }
+        else:
+            intercept_results = apply_roi_trial_aggregation(
+                intercept_roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="cnvintercept",
+            )
 
         # Combine the results
         result = {}

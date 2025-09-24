@@ -485,8 +485,52 @@ class ICMLGDataReader(DefaultDataReader):
         equipment_type: str,
     ) -> mne.io.Raw:
         """Apply equipment-specific configurations based on next_icm."""
-        # Apply montage based on equipment type and channel count
-        if self.apply_montage:
+        # CRITICAL CHANNEL FILTERING: Separate EEG and auxiliary channels for proper processing
+        # This logic was moved from preprocessing to data reader as requested
+
+        # Get EEG channels using MNE's channel type detection
+        eeg_picks = mne.pick_types(raw.info, eeg=True)
+        eeg_channels = [raw.ch_names[i] for i in eeg_picks]
+
+        # CRITICAL FIX: Exclude Vertex Reference channel from EEG analysis
+        # The Vertex Reference is always zero and should not be included in EEG analysis
+        eeg_channels = [ch for ch in eeg_channels if ch != "Vertex Reference"]
+
+        # Get all stimulus channels
+        stim_picks = mne.pick_types(raw.info, stim=True)
+        stim_channels = [raw.ch_names[i] for i in stim_picks]
+
+        # Define good channels: all EEG + all stimulus channels
+        good_channels = eeg_channels + stim_channels
+
+        # Find channels to drop (everything not in good_channels)
+        to_drop = [x for x in raw.ch_names if x not in good_channels]
+
+        if len(to_drop) > 0:
+            print(
+                f"DATA READER: Dropping {len(to_drop)} non-EEG channels: {to_drop[:5]}{'...' if len(to_drop) > 5 else ''}"
+            )
+            raw.drop_channels(to_drop)
+
+        # Separate EEG and auxiliary channels for artifact detection
+        n_channels = len(raw.ch_names)
+        eeg_indices = [
+            i
+            for i, ch in enumerate(raw.ch_names)
+            if ch.startswith("E") and ch[1:].isdigit()
+        ]
+        aux_indices = [i for i in range(n_channels) if i not in eeg_indices]
+
+        print(
+            f"DATA READER: Channel separation - {len(eeg_indices)} EEG channels, {len(aux_indices)} auxiliary channels"
+        )
+
+        # Count EGI channels (E1, E2, etc.) vs standard channels
+        n_egi_channels = len(eeg_indices)
+
+        # CRITICAL FIX: Preserve EGI channel names for EGI/256 equipment
+        # Only apply standard montages if we don't have EGI channels
+        if self.apply_montage and n_egi_channels == 0:
             n_eeg = sum(
                 1
                 for ch in raw.ch_names
@@ -543,6 +587,10 @@ class ICMLGDataReader(DefaultDataReader):
                 print(
                     f"Warning: Could not apply montage for {equipment_type}: {e}",
                 )
+        elif n_egi_channels > 0:
+            print(
+                f"INFO: Preserving {n_egi_channels} EGI channel names (E1-E{n_egi_channels}) for {equipment_type} equipment"
+            )
 
         # Set description for equipment tracking
         n_final_eeg = len(

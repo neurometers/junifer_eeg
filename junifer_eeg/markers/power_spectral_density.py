@@ -93,8 +93,13 @@ class PowerSpectralDensityEstimator(BaseMarker):
         dict
             Computed PSD data, frequencies, and normalized PSD.
         """
+        from .utils import filter_to_eeg_channels
+
         # Get the MNE data object
         data_obj = input["data"]
+
+        # CRITICAL FIX: Filter to only EEG channels (E1-E256), excluding D/DI auxiliary channels
+        data_obj, eeg_ch_names, eeg_indices = filter_to_eeg_channels(data_obj)
 
         # Handle both Raw and Epochs data
         if hasattr(data_obj, "events"):  # This is Epochs
@@ -569,7 +574,9 @@ class PowerSpectralDensitySummary(BaseMarker):
                     agg_name = f"trial_{trial_agg_method}_roi_{roi_agg_method}"
                     results = {
                         "psdsummary": {
-                            "data": final_value,
+                            "data": np.array(
+                                [[final_value]]
+                            ),  # Ensure it's a 2D array
                             "col_names": [f"all_channels_{agg_name}"],
                         }
                     }

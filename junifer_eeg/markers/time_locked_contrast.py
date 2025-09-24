@@ -131,43 +131,123 @@ class TimeLockedContrast(BaseMarker):
             epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
             epochs_b = epochs_b.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
-        # Get data and compute averages following NICE approach
+        # Get data and compute contrast following NICE approach exactly
         data_a = epochs_a.get_data()  # (n_epochs, n_channels, n_times)
         data_b = epochs_b.get_data()  # (n_epochs, n_channels, n_times)
 
-        # Average across time and epochs for each condition (following NICE)
-        # First average across epochs, then across time
-        evoked_a = np.mean(data_a, axis=0)  # (n_channels, n_times)
-        evoked_b = np.mean(data_b, axis=0)  # (n_channels, n_times)
+        # NICE approach: Average each condition separately first, then compute contrast
+        # This matches NICE's TimeLockedTopography -> contrast workflow
+        evoked_a = np.mean(
+            data_a, axis=0
+        )  # (n_channels, n_times) - average across epochs
+        evoked_b = np.mean(
+            data_b, axis=0
+        )  # (n_channels, n_times) - average across epochs
+        # Compute contrast between averaged conditions (like NICE)
+        contrast_evoked = evoked_a - evoked_b  # (n_channels, n_times)
+        # NICE returns the full temporal contrast, not time-averaged
+        contrast = contrast_evoked  # Keep temporal dimension like NICE
 
-        # Then average across time
-        evoked_a_mean = np.mean(evoked_a, axis=1)  # (n_channels,)
-        evoked_b_mean = np.mean(evoked_b, axis=1)  # (n_channels,)
-
-        # Compute contrast (condition_a - condition_b)
-        contrast = evoked_a_mean - evoked_b_mean
-
-        # Handle ROI selection
+        # Handle ROI selection - NICE preserves temporal dimension
         if self.rois is not None:
-            contrast_roi_data = get_data_for_rois(
-                contrast.reshape(1, -1).T,  # Transpose to (n_channels, 1)
-                list(epochs.ch_names),
-                self.rois,
-                equipment=self.equipment,
-            )
+            # For temporal data, we need to handle ROI selection differently
+            # Apply ROI selection to each time point
+            n_channels, n_times = contrast.shape
+            contrast_roi_list = []
+            for t in range(n_times):
+                time_slice = contrast[:, t].reshape(-1, 1)  # (n_channels, 1)
+                roi_data = get_data_for_rois(
+                    time_slice,
+                    list(epochs.ch_names),
+                    self.rois,
+                    equipment=self.equipment,
+                )
+                contrast_roi_list.append(roi_data.flatten())
+            contrast_roi_data = np.array(
+                contrast_roi_list
+            ).T  # (n_rois, n_times)
         else:
-            # Use all channels as individual ROIs
-            contrast_roi_data = {
-                ch: contrast[i : i + 1].reshape(1, -1).T
-                for i, ch in enumerate(epochs.ch_names)
-            }
+            # No ROI selection - create individual channel ROIs with temporal data
+            if self.trial_aggregation_method is not None:
+                # For trial aggregation, we want to aggregate across time dimension
+                # Shape each channel as (1, n_times) so aggregation works correctly
+                contrast_roi_data = {
+                    ch: contrast[i : i + 1, :]  # (1, n_times) for each channel
+                    for i, ch in enumerate(epochs.ch_names)
+                }
+            else:
+                # For no aggregation, keep temporal structure
+                contrast_roi_data = {
+                    ch: contrast[
+                        i : i + 1, :
+                    ].T  # (n_times, 1) for each channel
+                    for i, ch in enumerate(epochs.ch_names)
+                }
 
-        # Apply aggregation
-        results = apply_roi_trial_aggregation(
-            contrast_roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="timelockedcontrast",
-        )
+        # For NICE compatibility, return temporal data directly without aggregation
+        # when no specific aggregation methods are requested
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+            and self.rois is None
+        ):
+            # Return raw temporal contrast data like NICE
+            results = {
+                "timelockedcontrast": {
+                    "data": contrast,  # Keep as (n_channels, n_times) to match NICE exactly
+                    "col_names": list(epochs.ch_names),
+                }
+            }
+        else:
+            # Handle temporal aggregation for contrast data
+            if self.trial_aggregation_method is not None:
+                # For contrast, "trial_aggregation" means temporal aggregation
+                # since contrast is already computed between condition averages
+                from .utils import aggregate_data
+
+                if self.trial_aggregation_method == "mean":
+                    # Average across time dimension
+                    aggregated_contrast = np.mean(
+                        contrast, axis=1, keepdims=True
+                    )  # (n_channels, 1)
+                else:
+                    # Use general aggregation function
+                    aggregated_contrast = aggregate_data(
+                        contrast, self.trial_aggregation_method, axis=1
+                    )
+                    if aggregated_contrast.ndim == 1:
+                        aggregated_contrast = aggregated_contrast.reshape(
+                            -1, 1
+                        )
+                results = {
+                    "timelockedcontrast": {
+                        "data": aggregated_contrast.T,  # (1, n_channels) to match expected format
+                        "col_names": list(epochs.ch_names),
+                    }
+                }
+                # Skip the HDF5 transpose for aggregated case since we already have correct format
+                return results
+            else:
+                # Apply ROI aggregation only
+                # Convert single string to list for aggregation function
+                roi_agg_methods = (
+                    [self.roi_aggregation_method]
+                    if isinstance(self.roi_aggregation_method, str)
+                    else self.roi_aggregation_method
+                )
+
+                results = apply_roi_trial_aggregation(
+                    contrast_roi_data,
+                    roi_aggregation_methods=roi_agg_methods,
+                    trial_aggregation_methods=None,
+                    marker_name="timelockedcontrast",
+                )
+
+            # Fix output format to match HDF5: transpose from (1, n_channels) to (n_channels, 1)
+            if "timelockedcontrast" in results:
+                data = results["timelockedcontrast"]["data"]
+                if data.shape[0] == 1 and data.shape[1] > 1:
+                    # Transpose to column format to match HDF5
+                    results["timelockedcontrast"]["data"] = data.T
 
         return results

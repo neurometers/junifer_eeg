@@ -35,6 +35,16 @@ class TestSymbolicMutualInformation:
         ch_names = [f"EEG{i:03d}" for i in range(1, n_channels + 1)]
         info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
 
+        # Add montage for CSD computation (required by SMI marker)
+        # Create a simple montage with fake positions for our test channels
+        fake_montage = mne.channels.make_dig_montage(
+            ch_pos={
+                ch_names[i]: [0.1 * i, 0.1 * i, 0.1] for i in range(n_channels)
+            },
+            coord_frame="head",
+        )
+        info.set_montage(fake_montage)
+
         # Create events
         n_epochs = 10
         events = []
@@ -80,13 +90,15 @@ class TestSymbolicMutualInformation:
         # Check dimensions
         data = result["symbolicmutualinformation"]["data"]
         col_names = result["symbolicmutualinformation"]["col_names"]
+        n_epochs = len(sample_epochs)
         n_channels = len(sample_epochs.ch_names)
+        # With default behavior, expect per-epoch data with upper triangular connectivity
+        n_connections = (
+            n_channels * (n_channels - 1) // 2
+        )  # Upper triangular pairs only
 
-        assert data.shape == (
-            1,
-            n_channels * n_channels,
-        )  # Flattened connectivity matrix
-        assert len(col_names) == n_channels * n_channels
+        assert data.shape == (n_epochs, n_connections)
+        assert len(col_names) == n_connections
 
     def test_symbolic_mutual_information_diagonal(self, sample_epochs):
         """Test SymbolicMutualInformation diagonal values."""
@@ -96,14 +108,14 @@ class TestSymbolicMutualInformation:
         result = marker.compute(input_data)
 
         data = result["symbolicmutualinformation"]["data"]
+        n_epochs = len(sample_epochs)
         n_channels = len(sample_epochs.ch_names)
+        n_connections = n_channels * (n_channels - 1) // 2
 
-        # Reshape to matrix
-        smi_matrix = data.reshape(n_channels, n_channels)
-
-        # Diagonal should be 0.0 (matches NICE behavior - validated in WSMI comparison)
-        diagonal = np.diag(smi_matrix)
-        assert np.allclose(diagonal, 0.0)
+        # With per-epoch data, check that we have the right shape
+        assert data.shape == (n_epochs, n_connections)
+        # SMI values should be finite (can be negative)
+        assert np.all(np.isfinite(data))
 
     def test_symbolic_mutual_information_ordinal_patterns(self, sample_epochs):
         """Test ordinal pattern computation."""
@@ -115,7 +127,8 @@ class TestSymbolicMutualInformation:
 
         assert "symbolicmutualinformation" in result
         data = result["symbolicmutualinformation"]["data"]
-        assert data.shape[0] == 1  # One trial
+        n_epochs = len(sample_epochs)
+        assert data.shape[0] == n_epochs  # Per-epoch data
         assert data.shape[1] > 0  # Should have connectivity values
 
     def test_symbolic_mutual_information_pattern_to_index(self, sample_epochs):
@@ -141,20 +154,14 @@ class TestSymbolicMutualInformation:
         result = marker.compute(input_data)
 
         data = result["symbolicmutualinformation"]["data"]
+        n_epochs = len(sample_epochs)
         n_channels = len(sample_epochs.ch_names)
+        n_connections = n_channels * (n_channels - 1) // 2
 
-        # Reshape to matrix
-        smi_matrix = data.reshape(n_channels, n_channels)
-
-        # Check that diagonal is 0.0 (matches NICE behavior - validated in WSMI comparison)
-        diagonal = np.diag(smi_matrix)
-        assert np.allclose(diagonal, 0.0)
-
-        # Check that matrix is square
-        assert smi_matrix.shape == (n_channels, n_channels)
-
-        # Check that values are finite (not NaN or inf)
-        assert np.all(np.isfinite(smi_matrix))
+        # With per-epoch data, check shape and values
+        assert data.shape == (n_epochs, n_connections)
+        # SMI values should be finite (can be negative)
+        assert np.all(np.isfinite(data))
 
     def test_symbolic_mutual_information_parameters(self, sample_epochs):
         """Test different parameters."""
@@ -171,12 +178,19 @@ class TestSymbolicMutualInformation:
 
         assert "symbolicmutualinformation" in result
         data = result["symbolicmutualinformation"]["data"]
+        n_epochs = len(sample_epochs)
         n_channels = len(sample_epochs.ch_names)
-        assert data.shape == (1, n_channels * n_channels)
+        # With default behavior, expect per-epoch data with upper triangular connectivity
+        n_connections = (
+            n_channels * (n_channels - 1) // 2
+        )  # Upper triangular pairs only
+        assert data.shape == (n_epochs, n_connections)
 
     def test_symbolic_mutual_information_short_signals(self):
         """Test SMI with reasonable signals."""
-        marker = SymbolicMutualInformation(kernel=3, tau=1)  # Smaller kernel
+        marker = SymbolicMutualInformation(
+            kernel=3, tau=1, csd=False
+        )  # Disable CSD for minimal channels
 
         # Create reasonable length epochs
         n_channels = 2
@@ -185,6 +199,18 @@ class TestSymbolicMutualInformation:
 
         ch_names = [f"EEG{i:03d}" for i in range(1, n_channels + 1)]
         info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+
+        # Add montage for CSD computation (required by SMI marker)
+        # Need at least 4 digitization points for sphere fitting
+        # Add extra fake channels to meet minimum requirement
+        ch_pos = {}
+        for i in range(max(4, n_channels)):  # Ensure at least 4 positions
+            ch_name = ch_names[i] if i < n_channels else f"FAKE{i:03d}"
+            ch_pos[ch_name] = [0.1 * i, 0.1 * i, 0.1]
+        fake_montage = mne.channels.make_dig_montage(
+            ch_pos=ch_pos, coord_frame="head"
+        )
+        info.set_montage(fake_montage)
 
         # Reasonable signals
         data = np.random.randn(n_channels, n_times) * 1e-6
@@ -208,7 +234,12 @@ class TestSymbolicMutualInformation:
         # Should complete successfully
         assert "symbolicmutualinformation" in result
         data = result["symbolicmutualinformation"]["data"]
-        assert data.shape == (1, n_channels * n_channels)
+        n_epochs = len(epochs)
+        # With default behavior, expect per-epoch data with upper triangular connectivity
+        n_connections = (
+            n_channels * (n_channels - 1) // 2
+        )  # Upper triangular pairs only
+        assert data.shape == (n_epochs, n_connections)
 
         # Values should be finite
         assert np.all(np.isfinite(data))

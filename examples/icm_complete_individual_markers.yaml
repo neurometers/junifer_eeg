@@ -1,0 +1,545 @@
+---
+# ICM Complete Configuration with Individual Markers
+# Replicates ICMReportDataExtractorReviewed using individual junifer markers
+# Based on analysis of icm_report_data_extractor_reviewed.py
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: PatternDataGrabber
+  patterns:
+    EEG:
+      pattern: "sub-JG318_ses-01_task-lg_acq-01_run-01_eeg.mff"
+      space: "native"
+  replacements: []
+  types:
+    - EEG
+  datadir: "./site/bckp/ground_truth"
+
+datareader:
+  kind: ICMLGDataReader
+  equipment: "egi/256"
+  types:
+    - EEG
+
+
+preprocess:
+  - kind: ICMEquipmentFilter
+    equipment_type: "egi"
+    dump_location: examples
+    dump_granularity: full
+    on: EEG
+  - kind: ICMLGEpoching
+    tmin: -0.2
+    tmax: 1.34
+    baseline: [-0.2, 0.0]
+    event_id:
+      "HSTD": 13  # High-density standard (52 events)
+      "HDVT": 11  # High-density deviant (48 events) 
+      "LSGS": 12  # Local standard global standard (208 events)
+      "LSGD": 15  # Local standard global deviant (208 events)
+      "LDGS": 18  # Local deviant global standard (208 events)
+      "LDGD": 21  # Local deviant global deviant (208 events)
+    dump_location: examples
+    dump_granularity: full
+    on: EEG
+  - kind: ICMAdaptiveArtifactRejection
+    zscore_thresh: 4.0
+    min_channels: 0.7
+    min_events: 0.3
+    dump_location: examples
+    dump_granularity: full
+    on: EEG
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: icm_complete_features.h5
+  single_output: true
+
+markers:
+
+  # ========================================
+  # 1. PER-CHANNEL SPECTRAL DATA (for topoplots)
+  # ========================================
+  
+  # Per-channel spectral power (no ROI aggregation, trial averaged)
+  - kind: SpectralPower
+    name: per_channel_delta
+    bands:
+      delta: [1.0, 4.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
+    trial_aggregation_method: ["mean"]  # Average across trials
+    on: EEG
+
+  - kind: SpectralPower
+    name: per_channel_theta
+    bands:
+      theta: [4.0, 8.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: SpectralPower
+    name: per_channel_alpha
+    bands:
+      alpha: [8.0, 12.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: SpectralPower
+    name: per_channel_beta
+    bands:
+      beta: [12.0, 30.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: SpectralPower
+    name: per_channel_gamma
+    bands:
+      gamma: [30.0, 45.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # Per-channel spectral summaries
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_msf
+    percentile: 50.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: null  # No ROI aggregation
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_sef90
+    percentile: 90.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_sef95
+    percentile: 95.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # ========================================
+  # 2. CONNECTIVITY ANALYSIS
+  # ========================================
+
+  # Symbolic Mutual Information (unweighted)
+  - kind: SymbolicMutualInformation
+    name: smi_default
+    tmin: null
+    tmax: 0.6  # ICM standard
+    kernel: 3
+    tau: 8
+    weighted: false
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # Weighted Symbolic Mutual Information
+  - kind: SymbolicMutualInformation
+    name: smi_weighted
+    tmin: null
+    tmax: 0.6  # ICM standard
+    kernel: 3
+    tau: 8
+    weighted: true
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # ========================================
+  # 3. PER-BAND WSMI CONNECTIVITY (for topoplots)
+  # ========================================
+  
+  # WSMI Delta band (1-4 Hz)
+  - kind: SymbolicMutualInformation
+    name: wsmi_delta
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    fmin: 1.0
+    fmax: 4.0
+    filter_order: 6
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: ["mean"]  # No aggregation for topoplots
+    on: EEG
+
+  # WSMI Theta band (4-8 Hz)
+  - kind: SymbolicMutualInformation
+    name: wsmi_theta
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    fmin: 4.0
+    fmax: 8.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # WSMI Alpha band (8-12 Hz)
+  - kind: SymbolicMutualInformation
+    name: wsmi_alpha
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    fmin: 8.0
+    fmax: 12.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # WSMI Beta band (12-30 Hz)
+  - kind: SymbolicMutualInformation
+    name: wsmi_beta
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    fmin: 12.0
+    fmax: 30.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # WSMI Gamma band (30-45 Hz)
+  - kind: SymbolicMutualInformation
+    name: wsmi_gamma
+    tmin: null
+    tmax: 0.6
+    kernel: 3
+    tau: 8
+    weighted: true
+    fmin: 30.0
+    fmax: 45.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # ========================================
+  # 3. TIME-LOCKED ANALYSIS
+  # ========================================
+
+  # Time-locked topographies
+  - kind: TimeLockedTopography
+    name: p1_topography
+    tmin: 0.064  # ICM standard
+    tmax: 0.112  # ICM standard
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3a_topography
+    tmin: 0.876  # ICM standard
+    tmax: 0.936  # ICM standard
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3b_topography
+    tmin: 0.996  # ICM standard
+    tmax: 1.196  # ICM standard
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # CNV (Contingent Negative Variation)
+  - kind: ContingentNegativeVariation
+    name: cnv_aggregated
+    tmin: null  # Use full epoch for CNV slope calculation
+    tmax: 0.6  # ICM standard: up to 600ms
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # CNV for detailed analysis (no aggregation)
+  - kind: ContingentNegativeVariation
+    name: cnv_detailed
+    tmin: -0.004  # EXACT next_icm parameter
+    tmax: 0.596  # EXACT next_icm parameter
+    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
+    trial_aggregation_method: null  # Keep all trials for statistics
+    on: EEG
+
+  # ========================================
+  # 4. TIME-LOCKED CONTRASTS
+  # ========================================
+
+  # MMN contrast: Local Deviant vs Local Standard (736-788ms)
+  - kind: TimeLockedContrast
+    name: contrast_mmn
+    condition_a: ["LDGS", "LDGD"]  # Local Deviant
+    condition_b: ["LSGS", "LSGD"]  # Local Standard
+    tmin: 0.736  # ICM standard MMN window
+    tmax: 0.788  # ICM standard MMN window
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: null  # No aggregation for topoplots
+    on: EEG
+
+  # P3A contrast: Local Deviant vs Local Standard (876-936ms)
+  - kind: TimeLockedContrast
+    name: contrast_p3a
+    condition_a: ["LDGS", "LDGD"]  # Local Deviant
+    condition_b: ["LSGS", "LSGD"]  # Local Standard
+    tmin: 0.876  # ICM standard P3A window
+    tmax: 0.936  # ICM standard P3A window
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: null  # No aggregation for topoplots
+    on: EEG
+
+  # MMN Global contrast: Global Deviant vs Global Standard (64-112ms)
+  - kind: TimeLockedContrast
+    name: contrast_mmn_global
+    condition_a: ["LSGD", "LDGD"]  # Global Deviant
+    condition_b: ["LSGS", "LDGS"]  # Global Standard
+    tmin: 0.064  # ICM standard MMN window
+    tmax: 0.112  # ICM standard MMN window
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: null  # No aggregation for topoplots
+    on: EEG
+
+  # P3B contrast: Global Deviant vs Global Standard (996-1196ms)
+  - kind: TimeLockedContrast
+    name: contrast_p3b
+    condition_a: ["LSGD", "LDGD"]  # Global Deviant
+    condition_b: ["LSGS", "LDGS"]  # Global Standard
+    tmin: 0.996  # ICM standard P3B window
+    tmax: 1.196  # ICM standard P3B window
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: null  # No aggregation for topoplots
+    on: EEG
+
+  # ========================================
+  # 5. DECODING ANALYSIS
+  # ========================================
+
+  # Window decoding - Local: 600-967ms
+  - kind: WindowDecoding
+    name: window_decoding_local
+    condition_a: ["LDGS", "LDGD"]  # Local Deviant
+    condition_b: ["LSGS", "LSGD"]  # Local Standard
+    tmin: 0.6  # ICM standard local window
+    tmax: 0.967  # ICM standard local window
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # Window decoding - Global: 967-1336ms
+  - kind: WindowDecoding
+    name: window_decoding_global
+    condition_a: ["LSGD", "LDGD"]  # Global Deviant
+    condition_b: ["LSGS", "LDGS"]  # Global Standard
+    tmin: 0.967  # ICM standard global window
+    tmax: 1.336  # ICM standard global window
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # General window decoding (0-600ms)
+  - kind: WindowDecoding
+    name: window_decoding_general
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    tmin: 0.0
+    tmax: 0.6
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # ========================================
+  # 6. INFORMATION THEORY
+  # ========================================
+
+  # Kolmogorov Complexity (broadband)
+  - kind: KolmogorovComplexity
+    name: kolmogorov_complexity
+    tmin: null
+    tmax: 0.6  # ICM standard
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+
+  # ========================================
+  # 6b. PER-BAND PERMUTATION ENTROPY (for topoplots)
+  # ========================================
+  
+  # PE Delta band (1-4 Hz)
+  - kind: PermutationEntropy
+    name: pe_delta
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 4.0
+    filter_order: 6
+    roi_aggregation_method: null  # No aggregation for topoplots
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # PE Theta band (4-8 Hz)
+  - kind: PermutationEntropy
+    name: pe_theta
+    tmin: null
+    tmax: 0.6
+    fmin: 4.0
+    fmax: 8.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # PE Alpha band (8-12 Hz)
+  - kind: PermutationEntropy
+    name: pe_alpha
+    tmin: null
+    tmax: 0.6
+    fmin: 8.0
+    fmax: 12.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # PE Beta band (12-30 Hz)
+  - kind: PermutationEntropy
+    name: pe_beta
+    tmin: null
+    tmax: 0.6
+    fmin: 12.0
+    fmax: 30.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # PE Gamma band (30-45 Hz)
+  - kind: PermutationEntropy
+    name: pe_gamma
+    tmin: null
+    tmax: 0.6
+    fmin: 30.0
+    fmax: 45.0
+    filter_order: 6
+    roi_aggregation_method: null
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # ========================================
+  # 7. AGGREGATED SPECTRAL ANALYSIS (for compatibility)
+  # ========================================
+
+  # Aggregated spectral power (all bands)
+  - kind: SpectralPower
+    name: psd_aggregated_absolute
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: false
+    dB: true
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # Aggregated relative spectral power
+  - kind: SpectralPower
+    name: psd_aggregated_relative
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: true
+    dB: false
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  # Aggregated spectral summaries
+  - kind: PowerSpectralDensitySummary
+    name: summary_msf_aggregated
+    percentile: 50.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: summary_sef90_aggregated
+    percentile: 90.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: summary_sef95_aggregated
+    percentile: 95.0
+    fmin: 1.0
+    fmax: 45.0
+    roi_aggregation_method: ["trim_mean80"]
+    trial_aggregation_method: ["mean"]
+    on: EEG

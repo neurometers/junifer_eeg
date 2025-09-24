@@ -34,6 +34,9 @@ class PermutationEntropy(BaseMarker):
         kernel: int = 3,
         tau: int = 8,
         filter_freq: float | None = None,
+        fmin: float | None = None,
+        fmax: float | None = None,
+        filter_order: int = 6,
         rois: list[str] | None = None,
         roi_aggregation_method: list[str] | None = None,
         trial_aggregation_method: list[str] | None = None,
@@ -56,6 +59,12 @@ class PermutationEntropy(BaseMarker):
             Time delay for ordinal patterns.
         filter_freq : float, optional
             Low-pass filter frequency. If None, automatically computed.
+        fmin : float, optional
+            Lower frequency bound for band-pass filtering. If None, no filtering is applied.
+        fmax : float, optional
+            Upper frequency bound for band-pass filtering. If None, no filtering is applied.
+        filter_order : int, optional
+            Order of the Butterworth filter. Default: 6 (matches NICE implementation).
         rois : list of str, optional
             List of ROI names or electrode names to aggregate.
         roi_aggregation_method : list of str, optional
@@ -76,6 +85,9 @@ class PermutationEntropy(BaseMarker):
         self.kernel = kernel
         self.tau = tau
         self.filter_freq = filter_freq
+        self.fmin = fmin
+        self.fmax = fmax
+        self.filter_order = filter_order
         self.rois = rois
         self.roi_aggregation_method = roi_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
@@ -132,11 +144,6 @@ class PermutationEntropy(BaseMarker):
             epochs_data = (
                 data_obj.get_data()
             )  # Shape: (n_epochs, n_channels, n_times)
-
-            # Apply time cropping if specified
-            if self.tmin is not None or self.tmax is not None:
-                data_obj = data_obj.copy().crop(tmin=self.tmin, tmax=self.tmax)
-                epochs_data = data_obj.get_data()
         else:
             # This is a Raw object, get data directly and reshape to 3D
             raw_data = data_obj.get_data()  # Shape: (n_channels, n_times)
@@ -148,39 +155,72 @@ class PermutationEntropy(BaseMarker):
 
         n_epochs, n_channels, n_samples = epochs_data.shape
 
-        # Apply frequency filtering if specified
-        if self.filter_freq is not None:
-            # Design low-pass filter
+        # Apply frequency filtering based on parameters (matching WSMI approach)
+        if self.fmin is not None and self.fmax is not None:
+            # Bandpass filtering using fmin/fmax parameters (like WSMI)
             nyquist = sfreq / 2.0
-            if self.filter_freq >= nyquist:
-                raise ValueError(
-                    f"Filter frequency ({self.filter_freq}) must be less than "
-                    f"Nyquist frequency ({nyquist})",
-                )
+            low = self.fmin / nyquist
+            high = self.fmax / nyquist
+            b, a = butter(self.filter_order, [low, high], btype="band")
 
+            # NICE-style filtering: concatenate epochs horizontally, filter, then split back
+            data_concat = np.hstack(
+                epochs_data
+            )  # Shape: (n_channels, total_time)
+
+            # Filter concatenated data
+            for ch_idx in range(n_channels):
+                data_concat[ch_idx, :] = filtfilt(b, a, data_concat[ch_idx, :])
+
+            # Split back and transpose exactly like NICE: [1, 2, 0]
+            fdata = np.transpose(
+                np.array(np.split(data_concat, n_epochs, axis=1)), [1, 2, 0]
+            )
+        elif self.filter_freq is not None:
+            # Low-pass filtering using filter_freq parameter
+            nyquist = sfreq / 2.0
             b, a = butter(4, self.filter_freq / nyquist, btype="low")
 
-            # Apply filter to each epoch and channel
-            for epoch_idx in range(n_epochs):
-                for ch_idx in range(n_channels):
-                    epochs_data[epoch_idx, ch_idx, :] = filtfilt(
-                        b,
-                        a,
-                        epochs_data[epoch_idx, ch_idx, :],
-                    )
+            # NICE-style filtering: concatenate epochs horizontally, filter, then split back
+            data_concat = np.hstack(
+                epochs_data
+            )  # Shape: (n_channels, total_time)
+
+            # Filter concatenated data
+            for ch_idx in range(n_channels):
+                data_concat[ch_idx, :] = filtfilt(b, a, data_concat[ch_idx, :])
+
+            # Split back and transpose exactly like NICE: [1, 2, 0]
+            fdata = np.transpose(
+                np.array(np.split(data_concat, n_epochs, axis=1)), [1, 2, 0]
+            )
         else:
-            # Apply default filtering (following NICE approach)
+            # Apply default filtering (following NICE approach exactly)
             filter_freq = np.double(sfreq) / self.kernel / self.tau
             b, a = butter(6, 2.0 * filter_freq / np.double(sfreq), "lowpass")
 
-            # Apply filter to each epoch and channel
-            for epoch_idx in range(n_epochs):
-                for ch_idx in range(n_channels):
-                    epochs_data[epoch_idx, ch_idx, :] = filtfilt(
-                        b,
-                        a,
-                        epochs_data[epoch_idx, ch_idx, :],
-                    )
+            # NICE-style filtering: concatenate epochs horizontally, filter, then split back
+            data_concat = np.hstack(
+                epochs_data
+            )  # Shape: (n_channels, total_time)
+
+            # Filter concatenated data
+            for ch_idx in range(n_channels):
+                data_concat[ch_idx, :] = filtfilt(b, a, data_concat[ch_idx, :])
+
+            # Split back and transpose exactly like NICE: [1, 2, 0]
+            fdata = np.transpose(
+                np.array(np.split(data_concat, n_epochs, axis=1)), [1, 2, 0]
+            )
+
+        # Apply time mask AFTER filtering (like NICE)
+        from mne.utils import _time_mask
+
+        time_mask = _time_mask(data_obj.times, self.tmin, self.tmax)
+        fdata = fdata[:, time_mask, :]
+
+        # Convert back to (n_epochs, n_channels, n_samples) for our processing
+        epochs_data = np.transpose(fdata, [2, 0, 1])
 
         # Compute permutation entropy for each epoch and channel
         pe_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
@@ -210,13 +250,48 @@ class PermutationEntropy(BaseMarker):
                 ch: pe_values[:, i : i + 1].T for i, ch in enumerate(ch_names)
             }
 
-        # Apply aggregation
-        results = apply_roi_trial_aggregation(
-            roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="permutationentropy",
-        )
+        # Check if we should return per-epoch data without aggregation
+        if (
+            self.roi_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return per-epoch results without any aggregation
+            col_names = []
+
+            # Collect column names from all ROIs/channels
+            for roi_name, roi_data_array in roi_data.items():
+                # roi_data_array is (n_channels_in_roi, n_epochs)
+                n_channels_in_roi = roi_data_array.shape[0]
+                for ch_idx in range(n_channels_in_roi):
+                    col_names.append(f"{roi_name}_ch{ch_idx}")
+
+            # Stack data: each row is an epoch, each column is a channel
+            epoch_data = []
+            for epoch_idx in range(n_epochs):
+                epoch_values = []
+                for _, roi_data_array in roi_data.items():
+                    # Extract values for this epoch across all channels in this ROI
+                    for ch_idx in range(roi_data_array.shape[0]):
+                        epoch_values.append(roi_data_array[ch_idx, epoch_idx])
+                epoch_data.append(epoch_values)
+
+            # Convert to numpy array: (n_epochs, n_channels)
+            epoch_data_array = np.array(epoch_data)
+
+            results = {
+                "permutationentropy": {
+                    "data": epoch_data_array,
+                    "col_names": col_names,
+                }
+            }
+        else:
+            # Apply aggregation
+            results = apply_roi_trial_aggregation(
+                roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="permutationentropy",
+            )
 
         return results
 

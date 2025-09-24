@@ -60,6 +60,30 @@ def create_test_raw_with_events():
     )
     raw = mne.io.RawArray(all_data, info, verbose=False)
 
+    # Add EGI montage for digitization (needed for artifact rejection)
+    # Use GSN-HydroCel-64 montage which has E1-E64 channels
+    try:
+        montage = mne.channels.make_standard_montage("GSN-HydroCel-64_1.0")
+        raw.set_montage(montage, match_case=False, on_missing="ignore")
+    except Exception:
+        # If EGI montage fails, create simple fake digitization points
+        # This is just for testing - real data would have proper montage
+        fake_pos = {}
+        for ch_name in raw.ch_names:
+            if ch_name.startswith("E"):
+                # Create fake positions in a circle
+                angle = hash(ch_name) % 360
+                fake_pos[ch_name] = [
+                    np.cos(np.radians(angle)) * 0.1,
+                    np.sin(np.radians(angle)) * 0.1,
+                    0.05,
+                ]
+        if fake_pos:
+            fake_montage = mne.channels.make_dig_montage(
+                fake_pos, coord_frame="head"
+            )
+            raw.set_montage(fake_montage)
+
     return raw
 
 
@@ -67,28 +91,29 @@ class TestICMEquipmentFilter:
     """Test ICMEquipmentFilter preprocessor."""
 
     def test_initialization(self):
-        """Test filter initialization."""
-        # Default initialization
+        """Test ICMEquipmentFilter initialization."""
+        # Test default initialization
         filter_proc = ICMEquipmentFilter()
         assert filter_proc.equipment_type == "egi"
-        assert filter_proc.l_freq is None
-        assert filter_proc.h_freq is None
-        assert filter_proc.notch_freq is None
-        assert filter_proc.resample_freq is None
+        assert filter_proc.config_params == {}
+        assert filter_proc.n_jobs == 1
 
-        # Custom initialization
+        # Test custom initialization with config_params
+        config_params = {
+            "l_freq": 0.5,
+            "h_freq": 35.0,
+            "notch_freq": 50.0,
+            "resample_freq": 256,
+        }
         filter_proc = ICMEquipmentFilter(
             equipment_type="brainvision",
-            l_freq=0.5,
-            h_freq=35.0,
-            notch_freq=50.0,
-            resample_freq=256,
+            config_params=config_params,
         )
         assert filter_proc.equipment_type == "brainvision"
-        assert filter_proc.l_freq == 0.5
-        assert filter_proc.h_freq == 35.0
-        assert filter_proc.notch_freq == 50.0
-        assert filter_proc.resample_freq == 256
+        assert filter_proc.config_params["l_freq"] == 0.5
+        assert filter_proc.config_params["h_freq"] == 35.0
+        assert filter_proc.config_params["notch_freq"] == 50.0
+        assert filter_proc.config_params["resample_freq"] == 256
 
     def test_valid_inputs_outputs(self):
         """Test valid input/output types."""
@@ -122,11 +147,14 @@ class TestICMEquipmentFilter:
         """Test filtering with custom parameters."""
         raw = create_test_raw_with_events()
 
+        config_params = {
+            "hpass": 1.0,
+            "lpass": 45.0,
+            "resample_freq": 200,
+        }
         filter_proc = ICMEquipmentFilter(
             equipment_type="egi",
-            l_freq=1.0,
-            h_freq=45.0,
-            resample_freq=200,
+            config_params=config_params,
         )
         input_data = {"data": raw}
 
@@ -160,22 +188,21 @@ class TestICMLGEpoching:
         epoch_proc = ICMLGEpoching()
         assert epoch_proc.tmin == -0.2
         assert epoch_proc.tmax == 1.34
-        assert epoch_proc.baseline == (-0.2, 0.0)
-        assert epoch_proc.reject_criteria is None
-        assert epoch_proc.event_id is None
+        assert epoch_proc.baseline == (None, 0)
+        assert (
+            epoch_proc.event_id is not None
+        )  # Uses ICM_LG_EVENT_ID by default
 
         # Custom initialization
         epoch_proc = ICMLGEpoching(
             tmin=-0.1,
             tmax=1.0,
             baseline=(-0.1, 0.0),
-            reject_criteria={"eeg": 150e-6},
             event_id={"custom": 99},
         )
         assert epoch_proc.tmin == -0.1
         assert epoch_proc.tmax == 1.0
         assert epoch_proc.baseline == (-0.1, 0.0)
-        assert epoch_proc.reject_criteria == {"eeg": 150e-6}
         assert epoch_proc.event_id == {"custom": 99}
 
     def test_valid_inputs_outputs(self):
@@ -190,7 +217,7 @@ class TestICMLGEpoching:
         """Test basic epoching functionality."""
         raw = create_test_raw_with_events()
 
-        epoch_proc = ICMLGEpoching(reject_criteria={})  # No rejection
+        epoch_proc = ICMLGEpoching()  # Default parameters
         input_data = {"data": raw}
 
         result, extra = epoch_proc.preprocess(input_data)
@@ -221,7 +248,6 @@ class TestICMLGEpoching:
 
         epoch_proc = ICMLGEpoching(
             event_id=custom_event_id,
-            reject_criteria={},
         )
         input_data = {"data": raw}
 
@@ -237,8 +263,7 @@ class TestICMLGEpoching:
         raw = create_test_raw_with_events()
 
         epoch_proc = ICMLGEpoching(
-            event_id="auto",
-            reject_criteria={},
+            event_id={"LSGS": 30, "LDGD": 50},
         )
         input_data = {"data": raw}
 
@@ -290,19 +315,20 @@ class TestICMAdaptiveArtifactRejection:
         """Test artifact rejection initialization."""
         # Default initialization
         reject_proc = ICMAdaptiveArtifactRejection()
-        assert reject_proc.z_threshold == 3.0
-        assert reject_proc.max_bad_channels == 0.1
-        assert reject_proc.max_bad_epochs == 0.2
+        assert reject_proc.zscore_thresh == 4
+        assert reject_proc.n_channels_bad_epoch == 0.1
+        assert reject_proc.n_epochs_bad_ch == 0.5
+        assert reject_proc.reject == {"eeg": 100e-6}
 
         # Custom initialization
         reject_proc = ICMAdaptiveArtifactRejection(
-            z_threshold=2.5,
-            max_bad_channels=0.15,
-            max_bad_epochs=0.25,
+            zscore_thresh=2.5,
+            n_channels_bad_epoch=0.15,
+            n_epochs_bad_ch=0.25,
         )
-        assert reject_proc.z_threshold == 2.5
-        assert reject_proc.max_bad_channels == 0.15
-        assert reject_proc.max_bad_epochs == 0.25
+        assert reject_proc.zscore_thresh == 2.5
+        assert reject_proc.n_channels_bad_epoch == 0.15
+        assert reject_proc.n_epochs_bad_ch == 0.25
 
     def test_valid_inputs_outputs(self):
         """Test valid input/output types."""
@@ -316,13 +342,13 @@ class TestICMAdaptiveArtifactRejection:
         """Test basic artifact rejection functionality."""
         # Create epochs first
         raw = create_test_raw_with_events()
-        epoch_proc = ICMLGEpoching(reject_criteria={})
+        epoch_proc = ICMLGEpoching()
         epochs_data, _ = epoch_proc.preprocess({"data": raw})
         epochs = epochs_data["data"]
 
         # Apply artifact rejection
         reject_proc = ICMAdaptiveArtifactRejection(
-            z_threshold=5.0
+            zscore_thresh=5.0
         )  # Lenient threshold
         input_data = {"data": epochs}
 
@@ -339,7 +365,7 @@ class TestICMAdaptiveArtifactRejection:
         """Test artifact rejection with strict parameters."""
         # Create epochs with some artificial artifacts
         raw = create_test_raw_with_events()
-        epoch_proc = ICMLGEpoching(reject_criteria={})
+        epoch_proc = ICMLGEpoching()
         epochs_data, _ = epoch_proc.preprocess({"data": raw})
         epochs = epochs_data["data"]
 
@@ -357,7 +383,7 @@ class TestICMAdaptiveArtifactRejection:
 
         # Apply strict artifact rejection
         reject_proc = ICMAdaptiveArtifactRejection(
-            z_threshold=1.0
+            zscore_thresh=1.0
         )  # Very strict
         input_data = {"data": epochs_with_artifacts}
 
@@ -373,8 +399,7 @@ class TestICMAdaptiveArtifactRejection:
 
         # Test with non-Epochs input
         with pytest.raises(
-            ValueError,
-            match="Input data must be mne.io.BaseRaw or mne.BaseEpochs",
+            ValueError, match="Input data must be mne.BaseEpochs"
         ):
             reject_proc.preprocess({"data": "not_epochs_data"})
 
@@ -391,11 +416,11 @@ class TestICMPreprocessingIntegration:
         filtered_data, _ = filter_proc.preprocess({"data": raw})
 
         # Step 2: Epoching
-        epoch_proc = ICMLGEpoching(reject_criteria={})
+        epoch_proc = ICMLGEpoching()
         epochs_data, _ = epoch_proc.preprocess(filtered_data)
 
         # Step 3: Artifact rejection
-        reject_proc = ICMAdaptiveArtifactRejection(z_threshold=3.0)
+        reject_proc = ICMAdaptiveArtifactRejection(zscore_thresh=3.0)
         final_data, _ = reject_proc.preprocess(epochs_data)
 
         # Check final result
@@ -415,9 +440,8 @@ class TestICMPreprocessingIntegration:
         raw = create_test_raw_with_events()
 
         # Use very strict rejection to get empty epochs
-        epoch_proc = ICMLGEpoching(
-            reject_criteria={"eeg": 1e-9}
-        )  # Extremely strict
+        epoch_proc = ICMLGEpoching()
+        # Note: rejection criteria handled by ICMAdaptiveArtifactRejection
 
         try:
             epochs_data, _ = epoch_proc.preprocess({"data": raw})
@@ -447,6 +471,11 @@ class TestICMPreprocessingIntegration:
 
             # Should process successfully for all equipment types
             assert isinstance(result["data"], mne.io.BaseRaw)
-            assert (
-                result["data"].info["sfreq"] == 250
-            )  # All resample to 250 Hz
+
+            # Only EGI resamples to 250 Hz, others keep original sampling rate
+            if eq_type == "egi":
+                assert result["data"].info["sfreq"] == 250
+            else:
+                assert (
+                    result["data"].info["sfreq"] == 500
+                )  # Original sampling rate

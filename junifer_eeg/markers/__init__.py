@@ -13,13 +13,6 @@ from .symbolic_mutual_information import SymbolicMutualInformation
 from .time_decoding import TimeDecoding
 from .time_locked_contrast import TimeLockedContrast
 from .time_locked_topography import TimeLockedTopography
-from .utils import (
-    aggregate_data,
-    apply_roi_trial_aggregation,
-    get_data_for_rois,
-    get_icm_roi_mapping,
-    get_roi_mapping,
-)
 from .window_decoding import WindowDecoding
 
 __all__ = [
@@ -35,10 +28,4 @@ __all__ = [
     "TimeLockedContrast",
     "TimeLockedTopography",
     "WindowDecoding",
-    # Utility functions
-    "aggregate_data",
-    "apply_roi_trial_aggregation",
-    "get_data_for_rois",
-    "get_icm_roi_mapping",
-    "get_roi_mapping",
 ]

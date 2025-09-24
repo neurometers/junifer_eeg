@@ -6,6 +6,48 @@ import numpy as np
 from scipy import stats
 
 
+def filter_to_eeg_channels(data_obj):
+    """Filter data to only EEG channels (supports both EGI and standard naming).
+
+    Parameters
+    ----------
+    data_obj : mne.Epochs or mne.Raw
+        MNE data object
+
+    Returns
+    -------
+    filtered_data : mne.Epochs or mne.Raw
+        Data with only EEG channels
+    eeg_channel_names : list
+        Names of EEG channels
+    eeg_channel_indices : list
+        Indices of EEG channels
+    """
+    # Try EGI naming convention first (E1, E2, ..., E256)
+    egi_channel_indices = [
+        i
+        for i, ch in enumerate(data_obj.ch_names)
+        if ch.startswith("E") and ch[1:].isdigit()
+    ]
+
+    if egi_channel_indices:
+        # Use EGI channels if found
+        eeg_channel_indices = egi_channel_indices
+        eeg_channel_names = [data_obj.ch_names[i] for i in eeg_channel_indices]
+    else:
+        # Fall back to MNE's channel type detection for standard EEG names
+        import mne
+
+        eeg_picks = mne.pick_types(data_obj.info, eeg=True, exclude=[])
+        eeg_channel_indices = eeg_picks.tolist()
+        eeg_channel_names = [data_obj.ch_names[i] for i in eeg_channel_indices]
+
+    # Filter data to only EEG channels
+    filtered_data = data_obj.copy().pick(eeg_channel_names)
+
+    return filtered_data, eeg_channel_names, eeg_channel_indices
+
+
 def check_indices(indices):
     """Check and format connectivity indices.
 
@@ -721,7 +763,7 @@ def apply_roi_trial_aggregation(
 
     # Default aggregation if none specified
     if roi_aggregation_methods is None and trial_aggregation_methods is None:
-        # Return per-electrode, per-trial data (or averaged if only one trial)
+        # Return per-electrode, per-trial data - NO AGGREGATION
         all_values = []
         col_names = []
 
@@ -732,14 +774,41 @@ def apply_roi_trial_aggregation(
                     all_values.append(roi_data[i])
                     col_names.append(f"{roi_name}_elec_{i}")
             else:
-                # Multiple trials - average across trials by default
-                trial_avg = np.mean(roi_data, axis=1)
-                for i in range(len(trial_avg)):
-                    all_values.append(trial_avg[i])
-                    col_names.append(f"{roi_name}_elec_{i}")
+                # Multiple trials - keep all trials, don't average
+                n_electrodes, n_trials = roi_data.shape
+                # Flatten to (n_electrodes * n_trials,) to preserve all trial data
+                flattened_data = roi_data.flatten(
+                    order="F"
+                )  # Column-major order (trials vary fastest)
+                for trial_idx in range(n_trials):
+                    for elec_idx in range(n_electrodes):
+                        idx = trial_idx * n_electrodes + elec_idx
+                        all_values.append(flattened_data[idx])
+                        col_names.append(
+                            f"{roi_name}_trial_{trial_idx}_elec_{elec_idx}"
+                        )
+
+        # Handle data reshaping based on marker type and data structure
+        if len(all_values) > 0:
+            # Determine structure from first ROI
+            first_roi_data = next(iter(data.values()))
+            if first_roi_data.ndim > 1 and marker_name in [
+                "cnvslope",
+                "cnvintercept",
+            ]:
+                # CNV-specific: reshape to (n_trials, n_electrodes) to preserve trial structure
+                n_electrodes, n_trials = first_roi_data.shape
+                result_data = np.array(all_values).reshape(
+                    n_trials, n_electrodes
+                )
+            else:
+                # Default behavior for other markers: flatten to (1, n_features)
+                result_data = np.array(all_values).reshape(1, -1)
+        else:
+            result_data = np.array([]).reshape(0, 0)
 
         result_dict = {
-            "data": np.array(all_values).reshape(1, -1),
+            "data": result_data,
             "col_names": col_names,
         }
         if meta is not None:
