@@ -102,8 +102,51 @@ class ICMEquipmentFilter(BasePreprocessor):
         if not isinstance(raw, mne.io.BaseRaw):
             raise ValueError("Input data must be mne.io.BaseRaw")
 
+        # Debug: Check annotations received by preprocessor
+        from collections import Counter
+
+        desc_counts = Counter(raw.annotations.description)
+        icm_conditions = {
+            desc: count
+            for desc, count in desc_counts.items()
+            if desc in {"HSTD", "HDVT", "LSGS", "LSGD", "LDGD", "LDGS"}
+        }
+        logger.info(
+            f"[PREPROCESSOR DEBUG] Received raw with {sum(icm_conditions.values())} ICM events"
+        )
+        logger.info(f"[PREPROCESSOR DEBUG] ICM conditions: {icm_conditions}")
+
         # Make a copy to avoid modifying original
         raw = raw.copy()
+
+        # Debug: Check annotations after copy
+        desc_counts_after = Counter(raw.annotations.description)
+        icm_after = {
+            desc: count
+            for desc, count in desc_counts_after.items()
+            if desc in {"HSTD", "HDVT", "LSGS", "LSGD", "LDGD", "LDGS"}
+        }
+        logger.info(
+            f"[PREPROCESSOR DEBUG] After copy: {sum(icm_after.values())} ICM events"
+        )
+
+        # Re-apply montage if needed (Junifer loses dig points in data transfer)
+        # This is critical for bad channel interpolation later
+        if self.equipment_type == "egi":
+            if (
+                raw.info.get("dig") is None
+                or len(raw.info.get("dig", [])) == 0
+            ):
+                logger.info(
+                    "Re-applying montage (dig points lost in data transfer)"
+                )
+                montage = mne.channels.make_standard_montage(
+                    "GSN-HydroCel-256"
+                )
+                raw.set_montage(montage, on_missing="ignore")
+                logger.info(
+                    f"Montage applied: {len(raw.info['dig'])} dig points"
+                )
 
         # Get equipment-specific parameters
         if self.equipment_type not in EQUIPMENT_FILTER_PARAMS:
@@ -201,8 +244,8 @@ class ICMEquipmentFilter(BasePreprocessor):
         resample_freq = params.get("resample_freq")
         if resample_freq and raw.info["sfreq"] != resample_freq:
             logger.info(f"Resampling to {resample_freq} Hz")
+            # Modern MNE preserves digitization points automatically
             raw.resample(resample_freq, npad="auto")
-            logger.info("Resampling done")
 
 
 @register_preprocessor
@@ -241,6 +284,7 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
         max_iter: int = 4,
         min_channels: float = 0.7,
         min_events: float = 0.3,
+        interpolate_bads: bool = True,
         dump_location: Optional[str] = None,
         dump_granularity: str = "full",
         on: Optional[list[str]] = None,
@@ -252,6 +296,7 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
         self.max_iter = max_iter
         self.min_channels = min_channels
         self.min_events = min_events
+        self.interpolate_bads = interpolate_bads
         self.dump_location = dump_location
         self.dump_granularity = dump_granularity
         super().__init__(on=on)
@@ -338,11 +383,31 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
         _check_min_channels(epochs, bad_channels, self.min_channels)
 
         # Apply average reference (modern MNE approach)
+        # Keep projection=True to add projection to info (will be applied on data access)
         epochs.set_eeg_reference("average", projection=True)
 
         # Interpolate bad channels (but keep the info about which were bad)
-        if len(epochs.info["bads"]) > 0:
-            epochs.interpolate_bads(reset_bads=False)  # Keep bad channel info
+        # Only interpolate if enabled and digitization points are available
+        if self.interpolate_bads and len(epochs.info["bads"]) > 0:
+            has_dig = (
+                epochs.info.get("dig") is not None
+                and len(epochs.info["dig"]) > 0
+            )
+            if has_dig:
+                logger.info(
+                    f"Interpolating {len(epochs.info['bads'])} bad channels"
+                )
+                # Use origin='auto' (modern MNE default, fits from dig points)
+                epochs.interpolate_bads(origin="auto", reset_bads=True)
+            else:
+                logger.warning(
+                    f"Skipping interpolation for {len(epochs.info['bads'])} bad channels: "
+                    "no digitization points available"
+                )
+        elif not self.interpolate_bads and len(epochs.info["bads"]) > 0:
+            logger.info(
+                f"Skipping interpolation for {len(epochs.info['bads'])} bad channels (disabled)"
+            )
 
         output = input.copy()
         output["data"] = epochs
@@ -375,6 +440,16 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
             logger.info(f"Dumped bad channels metadata: {meta_file}")
             logger.info(
                 f"Bad channels: {len(bad_channels)}, Bad epochs: {len(bad_epochs)}"
+            )
+
+            # Save final clean epochs after artifact rejection (stage 03)
+            eeg_file = dump_path / "03_artifact_rejected_eeg.fif"
+            epochs.save(eeg_file, overwrite=True)
+            logger.info(
+                f"Dumped clean epochs after artifact rejection: {eeg_file}"
+            )
+            logger.info(
+                f"Clean epochs: {len(epochs)}, Projections: {len(epochs.info['projs'])}"
             )
 
         return output, None
@@ -442,9 +517,33 @@ class ICMLGEpoching(BasePreprocessor):
         raw = raw.copy()
 
         # Find events (matching original next_icm approach)
-        events = mne.find_events(raw, shortest_event=1)
-        found_id = np.unique(events[:, 2])
-        this_id = {k: v for k, v in self.event_id.items() if v in found_id}
+        # For EDF files with annotations, use events_from_annotations instead
+        try:
+            events = mne.find_events(raw, shortest_event=1)
+            found_id = np.unique(events[:, 2])
+            this_id = {k: v for k, v in self.event_id.items() if v in found_id}
+        except ValueError:
+            # No STI channel found - try reading from annotations (EDF files)
+            logger.info(
+                "No STI channel found, reading events from annotations"
+            )
+            events, event_id_from_annot = mne.events_from_annotations(raw)
+            # Filter to only include ICM LG condition events
+            # The datareader already mapped MARQUEUR codes to condition names (HSTD, HDVT, LSGS, etc.)
+            icm_conditions = {"HSTD", "HDVT", "LSGS", "LSGD", "LDGD", "LDGS"}
+            this_id = {
+                k: v
+                for k, v in event_id_from_annot.items()
+                if k in icm_conditions
+            }
+
+            if not this_id:
+                raise ValueError(
+                    f"No ICM LG events found in annotations. Available: {list(event_id_from_annot.keys())}"
+                ) from None
+
+            logger.info(f"Found ICM conditions: {sorted(this_id.keys())}")
+            found_id = np.unique(events[:, 2])
 
         # Create epochs (matching original next_icm parameters)
         epochs = mne.Epochs(
@@ -459,6 +558,17 @@ class ICMLGEpoching(BasePreprocessor):
             baseline=self.baseline,
             verbose=False,
         )
+
+        # Filter to keep only E1-E256 EEG channels and STI 014 (matching NICE)
+        channels_to_keep = [f"E{i}" for i in range(1, 257)] + ["STI 014"]
+        channels_in_epochs = [
+            ch for ch in channels_to_keep if ch in epochs.ch_names
+        ]
+        if len(channels_in_epochs) < len(epochs.ch_names):
+            epochs.pick_channels(channels_in_epochs)
+            logger.info(
+                f"Filtered to {len(channels_in_epochs)} channels (E1-E256 + STI 014)"
+            )
 
         # Handle concatenation events (matching original next_icm)
         # Look for STI 014 channel and remove concatenation events
@@ -484,25 +594,7 @@ class ICMLGEpoching(BasePreprocessor):
         output = input.copy()
         output["data"] = epochs
 
-        # Dump data if requested - save original epochs for bad epochs visualization
-        if self.dump_location:
-            element = input.get("meta", {}).get("element", "unknown_element")
-            if isinstance(element, dict):
-                element = "unknown_element"
-
-            # Save original epochs for bad epochs visualization (render_bad_epochs needs drop_log)
-            dump_path = Path(self.dump_location) / element
-            dump_path.mkdir(parents=True, exist_ok=True)
-
-            # Save original epochs with complete drop_log
-            eeg_file = dump_path / "02_original_epochs_for_visualization.fif"
-            epochs.save(eeg_file, overwrite=True)
-
-            logger.info(
-                f"Dumped original epochs for visualization: {eeg_file}"
-            )
-            logger.info(
-                f"Original epochs count: {len(epochs)} with drop_log available"
-            )
+        # Note: Epoch file saving moved to ICMAdaptiveArtifactRejection
+        # so that projections are included in the saved file
 
         return output, None

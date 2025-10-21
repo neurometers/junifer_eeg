@@ -8,57 +8,13 @@ equipment-specific configurations based on the next_icm implementation.
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional
 
-# -----------------------------------------------------------------------------
-# Extend DefaultDataReader to support EGI .mff (and zipped .mff) raw files
-# -----------------------------------------------------------------------------
 import junifer.datareader.default as _junifer_default_module
 import mne
 import numpy as np
 from junifer.api.decorators import register_datareader
 from junifer.datareader import DefaultDataReader
 
-# Reader helper wrap MNE function for raw EGI files (.mff / .mff.zip extracted)
-
-
-def _read_mff(file_path: Path, **kwargs):
-    """Read EGI .mff file using MNE.
-
-    Parameters
-    ----------
-    file_path : pathlib.Path
-        Path to .mff directory (MNE accepts the directory path) or the .mff file.
-    **kwargs : dict
-        Additional keyword arguments passed to `mne.io.read_raw_egi`.
-
-    Returns
-    -------
-    mne.io.Raw
-        Raw instance loaded in memory.
-    """
-    return mne.io.read_raw_egi(file_path, preload=True, verbose=False)
-
-
-# Register new extension → type mapping (re-use existing "EGI_MFF" pseudo-type)
-_junifer_default_module._extensions.update(
-    {
-        ".mff": "MFF",
-        ".mff.zip": "MFFZIP",
-    }
-)
-
-# Register reader functions for both plain and zipped .mff
-_junifer_default_module._readers["MFF"] = {"func": _read_mff, "params": None}
-
-# For .mff.zip we rely on ICMLGDataReader trigger code that first extracts via
-# MNE; here we simply call the same reader after letting MNE handle the zip.
-# This keeps DataReader logic simple.
-_junifer_default_module._readers["MFFZIP"] = {
-    "func": _read_mff,
-    "params": None,
-}
-
-
-# ICM LG Event ID mappings
+# ICM LG Event ID mappings (NICE standard codes)
 ICM_LG_EVENT_ID = {
     "HSTD": 10,  # Hierarchical Standard
     "HDVT": 20,  # Hierarchical Deviant
@@ -68,7 +24,7 @@ ICM_LG_EVENT_ID = {
     "LDGD": 50,  # Local Deviant Global Deviant
 }
 
-# Arduino trigger mappings for different equipment
+# Arduino trigger mappings (includes normal and inverted tones)
 ARDUINO_TRIGGER_MAP = {
     0x40: "HSTD",  # 64
     0x48: "HDVT",  # 72
@@ -86,6 +42,25 @@ ARDUINO_TRIGGER_MAP = {
 }
 
 
+# MFF reader with ICM LG trigger processing
+def _read_mff(file_path: Path, **kwargs):
+    """Read EGI .mff file and process ICM LG triggers."""
+    raw = mne.io.read_raw_egi(file_path, preload=True, verbose=False)
+    # Process triggers using ICMTriggerProcessor
+    processor = ICMTriggerProcessor("egi")
+    raw = processor.process_triggers(raw, **kwargs)
+    return raw
+
+
+# Register .mff and .raw extensions with DefaultDataReader
+_junifer_default_module._extensions.update({".mff": "MFF", ".raw": "RAW"})
+_junifer_default_module._readers["MFF"] = {"func": _read_mff, "params": None}
+_junifer_default_module._readers["RAW"] = {
+    "func": _read_mff,
+    "params": None,
+}  # Use same reader
+
+
 class ICMEquipmentDetector:
     """Detects EEG equipment type from file extensions and patterns."""
 
@@ -96,6 +71,7 @@ class ICMEquipmentDetector:
         "gtec": [".hdf5"],
         "biosemi": [".bdf"],
         "matlab": [".mat"],
+        "edf": [".edf"],  # EDF files use annotations
     }
 
     @classmethod
@@ -133,6 +109,8 @@ class ICMTriggerProcessor:
             return self._process_ant_triggers(raw, **kwargs)
         if self.equipment_type == "biosemi":
             return self._process_biosemi_triggers(raw, **kwargs)
+        if self.equipment_type == "edf":
+            return self._process_edf_annotations(raw, **kwargs)
         return self._process_generic_triggers(raw, **kwargs)
 
     def _process_egi_triggers(self, raw: mne.io.Raw, **kwargs) -> mne.io.Raw:
@@ -360,6 +338,78 @@ class ICMTriggerProcessor:
         raw._data[stim_idx] = new_trigger_data
         return raw
 
+    def _process_edf_annotations(
+        self,
+        raw: mne.io.Raw,
+        **kwargs,
+    ) -> mne.io.Raw:
+        """Process EDF+ annotations by mapping MARQUEUR codes to ICM LG condition names.
+        EDF files store events as text annotations (e.g., 'MARQUEUR 129').
+        This method maps them to condition names (e.g., 'LSGS') so they can be
+        used in epoching with the event_id dictionary.
+        """
+        from junifer.utils import logger
+
+        logger.info("Processing EDF annotations for ICM LG")
+
+        if not raw.annotations:
+            logger.warning("No annotations found in raw data")
+            return raw
+
+        # Create mapping from MARQUEUR code to condition name
+        # MARQUEUR code = Arduino trigger + 1
+        marqueur_to_condition = {}
+        for arduino_trigger, condition in ARDUINO_TRIGGER_MAP.items():
+            marqueur_code = arduino_trigger + 1
+            marqueur_to_condition[marqueur_code] = condition
+
+        # Process annotations - create new Annotations object
+        new_descriptions = []
+        for desc in raw.annotations.description:
+            if desc.startswith("MARQUEUR"):
+                try:
+                    # Extract MARQUEUR code (e.g., "MARQUEUR 129" -> 129)
+                    parts = desc.split()
+                    if len(parts) >= 2:
+                        code = int(parts[1])
+                        if code in marqueur_to_condition:
+                            # Map to ICM condition name
+                            new_descriptions.append(
+                                marqueur_to_condition[code]
+                            )
+                        else:
+                            # Keep original if not mapped (e.g., calibration codes)
+                            new_descriptions.append(desc)
+                    else:
+                        new_descriptions.append(desc)
+                except (ValueError, IndexError):
+                    # Keep original if parsing fails
+                    new_descriptions.append(desc)
+            else:
+                # Keep non-MARQUEUR annotations as-is
+                new_descriptions.append(desc)
+
+        # Create new Annotations object with mapped descriptions
+        new_annotations = mne.Annotations(
+            onset=raw.annotations.onset,
+            duration=raw.annotations.duration,
+            description=new_descriptions,
+            orig_time=raw.annotations.orig_time,
+        )
+        raw.set_annotations(new_annotations)
+
+        # Log mapping results
+        mapped_conditions = {
+            desc
+            for desc in new_descriptions
+            if desc in marqueur_to_condition.values()
+        }
+        logger.info(
+            f"Mapped {len(mapped_conditions)} unique ICM conditions: {sorted(mapped_conditions)}"
+        )
+
+        return raw
+
     def _process_generic_triggers(
         self,
         raw: mne.io.Raw,
@@ -440,8 +490,15 @@ class ICMLGDataReader(DefaultDataReader):
         params: Optional[Dict] = None,
     ) -> Dict:
         """Fit and transform EEG data with ICM LG specific processing."""
+        from junifer.utils import logger
+
+        logger.info("[DATAREADER] ICMLGDataReader._fit_transform called")
+
         # Use parent class for basic file reading
         output = super()._fit_transform(input, params)
+        logger.info(
+            f"[DATAREADER] After parent _fit_transform, output keys: {list(output.keys())}"
+        )
 
         # Apply ICM LG specific processing to EEG data
         for data_type, data_info in output.items():
@@ -462,12 +519,30 @@ class ICMLGDataReader(DefaultDataReader):
 
                     # Process triggers if enabled
                     if self.process_triggers:
+                        from collections import Counter
+
+                        from junifer.utils import logger
+
+                        logger.info(
+                            f"[DATAREADER] Processing triggers for equipment: {detected_equipment}"
+                        )
                         trigger_processor = ICMTriggerProcessor(
                             detected_equipment,
                         )
                         raw = trigger_processor.process_triggers(
                             raw,
                             **self.trigger_params,
+                        )
+                        # Debug: check annotations after processing
+                        desc_counts = Counter(raw.annotations.description)
+                        icm_conds = {
+                            d: c
+                            for d, c in desc_counts.items()
+                            if d
+                            in {"HSTD", "HDVT", "LSGS", "LSGD", "LDGD", "LDGS"}
+                        }
+                        logger.info(
+                            f"[DATAREADER] After trigger processing: {sum(icm_conds.values())} ICM events"
                         )
 
                     # Apply equipment-specific configurations
@@ -485,51 +560,116 @@ class ICMLGDataReader(DefaultDataReader):
         equipment_type: str,
     ) -> mne.io.Raw:
         """Apply equipment-specific configurations based on next_icm."""
-        # CRITICAL CHANNEL FILTERING: Separate EEG and auxiliary channels for proper processing
-        # This logic was moved from preprocessing to data reader as requested
+        # Normalize channel names (matching NICE's approach)
+        # This handles cases like 'E 001', 'EEG 001', 'EG 001' -> 'E1'
+        n_eeg = sum(
+            1
+            for i in range(len(raw.ch_names))
+            if mne.channel_type(raw.info, i) == "eeg"
+        )
+
+        replacement = {}
+        for ch in raw.ch_names:
+            if ch == "STI 014":  # Don't rename stimulus channel
+                continue
+            new_name = (
+                ch.replace("EG", "")
+                .replace(" 00", "")
+                .replace(" 0", "")
+                .replace(" ", "")
+            )
+            # Handle Cz replacement for n+1 channel (e.g., E257 -> Cz)
+            if new_name == f"E{n_eeg}" or new_name == f"EEG{n_eeg}":
+                new_name = "Cz"
+            replacement[ch] = new_name
+
+        # Apply channel renaming
+        if replacement:
+            mne.rename_channels(raw.info, replacement)
+
+        # Drop Cz if present (for EGI 257-channel systems)
+        if "Cz" in raw.ch_names and n_eeg == 257:
+            raw.drop_channels(["Cz"])
+            n_eeg -= 1
 
         # Get EEG channels using MNE's channel type detection
         eeg_picks = mne.pick_types(raw.info, eeg=True)
         eeg_channels = [raw.ch_names[i] for i in eeg_picks]
 
-        # CRITICAL FIX: Exclude Vertex Reference channel from EEG analysis
-        # The Vertex Reference is always zero and should not be included in EEG analysis
-        eeg_channels = [ch for ch in eeg_channels if ch != "Vertex Reference"]
+        # For EGI systems, keep only E1-E256 channels and STI 014
+        if equipment_type == "egi":
+            # Define exactly which channels to keep (E1-E256 + STI 014)
+            egi_channels = [f"E{i}" for i in range(1, 257)]  # E1 to E256
+            stimulus_channels = ["STI 014"]
+            good_channels = egi_channels + stimulus_channels
 
-        # Get all stimulus channels
-        stim_picks = mne.pick_types(raw.info, stim=True)
-        stim_channels = [raw.ch_names[i] for i in stim_picks]
+            # Find channels to drop (everything not in good_channels)
+            to_drop = [x for x in raw.ch_names if x not in good_channels]
 
-        # Define good channels: all EEG + all stimulus channels
-        good_channels = eeg_channels + stim_channels
+            if to_drop:
+                raw.drop_channels(to_drop)
 
-        # Find channels to drop (everything not in good_channels)
-        to_drop = [x for x in raw.ch_names if x not in good_channels]
+            # Set montage AFTER channel dropping (for interpolation later)
+            if self.apply_montage:
+                try:
+                    montage = mne.channels.make_standard_montage(
+                        "GSN-HydroCel-256"
+                    )
+                    raw.set_montage(montage, on_missing="ignore")
+                except Exception:
+                    pass  # Silently skip if montage fails
+        else:
+            # For non-EGI systems, use the original logic
+            # Exclude Vertex Reference channel (always zero)
+            eeg_channels = [
+                ch for ch in eeg_channels if ch != "Vertex Reference"
+            ]
 
-        if len(to_drop) > 0:
-            print(
-                f"DATA READER: Dropping {len(to_drop)} non-EEG channels: {to_drop[:5]}{'...' if len(to_drop) > 5 else ''}"
-            )
-            raw.drop_channels(to_drop)
+            # Get all stimulus channels
+            stim_picks = mne.pick_types(raw.info, stim=True)
+            stim_channels = [raw.ch_names[i] for i in stim_picks]
 
-        # Separate EEG and auxiliary channels for artifact detection
-        n_channels = len(raw.ch_names)
-        eeg_indices = [
-            i
-            for i, ch in enumerate(raw.ch_names)
-            if ch.startswith("E") and ch[1:].isdigit()
-        ]
-        aux_indices = [i for i in range(n_channels) if i not in eeg_indices]
+            # Define good channels: all EEG + all stimulus channels
+            good_channels = eeg_channels + stim_channels
 
-        print(
-            f"DATA READER: Channel separation - {len(eeg_indices)} EEG channels, {len(aux_indices)} auxiliary channels"
+            # Find channels to drop (everything not in good_channels)
+            to_drop = [x for x in raw.ch_names if x not in good_channels]
+
+            if to_drop:
+                raw.drop_channels(to_drop)
+
+            # Apply montage for EDF files (standard 10-20 system)
+            if self.apply_montage and equipment_type == "edf":
+                try:
+                    # Try standard montages in order of likelihood
+                    montage_names = [
+                        "standard_1020",
+                        "standard_1005",
+                        "biosemi64",
+                    ]
+                    for montage_name in montage_names:
+                        try:
+                            montage = mne.channels.make_standard_montage(
+                                montage_name
+                            )
+                            raw.set_montage(montage, on_missing="ignore")
+                            from junifer.utils import logger
+
+                            logger.info(
+                                f"[DATAREADER] Applied {montage_name} montage for EDF"
+                            )
+                            break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass  # Silently skip if all montages fail
+
+        # Count EGI channels
+        n_egi_channels = sum(
+            1 for ch in raw.ch_names if ch.startswith("E") and ch[1:].isdigit()
         )
 
-        # Count EGI channels (E1, E2, etc.) vs standard channels
-        n_egi_channels = len(eeg_indices)
-
-        # CRITICAL FIX: Preserve EGI channel names for EGI/256 equipment
-        # Only apply standard montages if we don't have EGI channels
+        # Only apply standard montages for non-EGI systems
         if self.apply_montage and n_egi_channels == 0:
             n_eeg = sum(
                 1
@@ -583,14 +723,8 @@ class ICMLGDataReader(DefaultDataReader):
 
                 raw.set_montage(montage, on_missing="ignore")
 
-            except Exception as e:
-                print(
-                    f"Warning: Could not apply montage for {equipment_type}: {e}",
-                )
-        elif n_egi_channels > 0:
-            print(
-                f"INFO: Preserving {n_egi_channels} EGI channel names (E1-E{n_egi_channels}) for {equipment_type} equipment"
-            )
+            except Exception:
+                pass  # Silently skip if montage fails
 
         # Set description for equipment tracking
         n_final_eeg = len(

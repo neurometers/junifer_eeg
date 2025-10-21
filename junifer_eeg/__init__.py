@@ -16,6 +16,7 @@ from . import (
     preprocessors,
     storage,
 )
+from .datagrabber import ICMLGDataGrabber
 from .datareader import EEGDataReader, ICMLGDataReader, SARTDataReader
 from .markers import (
     SpectralPower,
@@ -43,6 +44,7 @@ __all__ = [
     "EEGFilter",
     "ICMAdaptiveArtifactRejection",
     "ICMEquipmentFilter",
+    "ICMLGDataGrabber",
     "ICMLGDataReader",
     "ICMLGEpoching",
     "SARTDataReader",

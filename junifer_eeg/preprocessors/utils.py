@@ -4,7 +4,6 @@ import mne
 import numpy as np
 from mne.utils import logger
 from scipy.signal import butter, filtfilt
-from scipy.stats import zscore
 
 # Equipment-specific filter parameters (from nice_ext/equipments/filters.py)
 EQUIPMENT_FILTER_PARAMS = {
@@ -100,14 +99,12 @@ def _check_min_events(epochs, min_events):
 
 
 def find_bads_channels_variance(inst, picks, zscore_thresh=4, max_iter=2):
-    """Find bad channels based on iterated Z-scoring outliers of the channel variances.
+    """Find bad channels based on Z-scoring outliers of the channel variances.
 
-    First, the channel variances are calculated. using numpy.var along the sample axis.
-    Then, the channel variances are passed to mne.preprocessing.bads._find_outliers
-    to find bad channels based on iterated Z-scoring over the calculated variance.
+    First, the channel variances are calculated using numpy.var along the sample axis.
+    Then, the channel variances are passed to Z-scoring outlier detection
+    to find bad channels based on Z-scoring over the calculated variance.
     This procedure compares the absolute z-score of the variances against the threshold.
-    After excluding local outliers, the comparison is repeated until no
-    local outlier is present any more.
 
     Parameters
     ----------
@@ -128,7 +125,7 @@ def find_bads_channels_variance(inst, picks, zscore_thresh=4, max_iter=2):
     """
 
     logger.info("Looking for bad channels with variance")
-    if isinstance(inst, mne.Epochs):
+    if isinstance(inst, mne.BaseEpochs):  # Use BaseEpochs instead of Epochs
         data = inst.get_data()
     else:
         data = inst._data[None, :]
@@ -137,10 +134,13 @@ def find_bads_channels_variance(inst, picks, zscore_thresh=4, max_iter=2):
     if len(exclude) > 0:
         masked_data[:, exclude, :] = np.ma.masked
     ch_var = np.ma.hstack(masked_data).var(axis=-1)
-    # Use proper scipy.stats.zscore for outlier detection (replacing deprecated MNE function)
-    ch_var_clean = ch_var[~ch_var.mask] if hasattr(ch_var, "mask") else ch_var
-    z_scores = np.abs(zscore(ch_var_clean, nan_policy="omit"))
-    bad_ch_var = np.where(z_scores > zscore_thresh)[0]
+
+    # Use MNE's iterated z-scoring for outlier detection (original NICE approach)
+    from mne.preprocessing.bads import _find_outliers
+
+    bad_ch_var = _find_outliers(
+        ch_var, threshold=zscore_thresh, max_iter=max_iter
+    )
     logger.info(f"Reject by variance: bad_channels: {bad_ch_var}")
     bad_chs = list({inst.ch_names[i] for i in bad_ch_var})
     return bad_chs
@@ -149,15 +149,13 @@ def find_bads_channels_variance(inst, picks, zscore_thresh=4, max_iter=2):
 def find_bads_channels_high_frequency(
     inst, picks, zscore_thresh=4, max_iter=2
 ):
-    """Find bad channels based on iterated Z-scoring outliers of the channel high frequencies standard deviation.
+    """Find bad channels based on Z-scoring outliers of the channel high frequencies standard deviation.
 
     First, the channel high frequencies standard deviations are calculated.
     Then, the channel high frequencies standard deviations are passed to
-    mne.preprocessing.bads._find_outliers to find bad channels based on iterated
-    Z-scoring over the calculated standard deviation of the channels high frequencies.
+    Z-scoring outlier detection to find bad channels based on Z-scoring
+    over the calculated standard deviation of the channels high frequencies.
     This procedure compares the absolute z-score of the standard deviations against the threshold.
-    After excluding local outliers, the comparison is repeated until no
-    local outlier is present any more.
 
     Parameters
     ----------
@@ -176,7 +174,7 @@ def find_bads_channels_high_frequency(
         The names of the bad channels.
     """
     logger.info("Looking for bad channels with high frequency variance")
-    if isinstance(inst, mne.Epochs):
+    if isinstance(inst, mne.BaseEpochs):  # Use BaseEpochs instead of Epochs
         data = inst.get_data()
     else:
         data = inst._data[None, :]
@@ -190,20 +188,15 @@ def find_bads_channels_high_frequency(
     filt_masked_data = np.ma.masked_array(filt_data, fill_value=np.NaN)
     if len(exclude) > 0:
         filt_masked_data[exclude, :] = np.ma.masked
-    # Use proper scipy.stats.zscore for outlier detection (replacing deprecated MNE function)
+    # Use MNE's iterated z-scoring for outlier detection (original NICE approach)
+    from mne.preprocessing.bads import _find_outliers
+
     hf_std = filt_masked_data.std(axis=-1)
-    hf_std_clean = hf_std[~hf_std.mask] if hasattr(hf_std, "mask") else hf_std
-    z_scores_hf = np.abs(zscore(hf_std_clean, nan_policy="omit"))
-    bad_ch_hf = np.where(z_scores_hf > zscore_thresh)[0]
+    bad_ch_hf = _find_outliers(
+        hf_std, threshold=zscore_thresh, max_iter=max_iter
+    )
     logger.info(f"Reject by high frequency std: bad_channels: {bad_ch_hf}")
-    # Map indices back to original channel indices using picks
-    bad_chs = []
-    for idx in bad_ch_hf:
-        if idx < len(picks):
-            ch_idx = picks[idx]
-            if ch_idx < len(inst.ch_names):
-                bad_chs.append(inst.ch_names[ch_idx])
-    bad_chs = list(set(bad_chs))  # Remove duplicates
+    bad_chs = list({inst.ch_names[i] for i in bad_ch_hf})
     return bad_chs
 
 
@@ -435,14 +428,9 @@ def _adaptive_egi(
     logger.info(f"found bad epochs: {len(bad_epochs)} {bad_epochs!s}")
 
     # 4. Adaptive - High frequency (Channels)
-    # Only consider EEG channels, excluding already identified bad channels
-    current_eeg_channels = [
-        ch for ch in epochs.ch_names if ch.startswith("E") and ch[1:].isdigit()
-    ]
-    good_eeg_channels = [
-        ch for ch in current_eeg_channels if ch not in bad_channels
-    ]
-    picks = mne.pick_channels(epochs.ch_names, include=good_eeg_channels)
+    picks = mne.pick_channels(
+        epochs.info["ch_names"], include=[], exclude=list(bad_channels)
+    )
     method_params = {"zscore_thresh": zscore_thresh, "max_iter": max_iter}
     bad_chs = find_bads_channels_high_frequency(epochs, picks, **method_params)
     bad_channels.update(bad_chs)

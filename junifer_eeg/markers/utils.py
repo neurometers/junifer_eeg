@@ -287,8 +287,11 @@ def get_icm_roi_mapping(equipment: str = "standard") -> Dict[str, List[str]]:
                     256,
                 ]
             ],
+            # CNV ROI - Frontal midline (Fz region) - matches NICE exactly
+            # From NICE: np.array([6, 7, 14, 15, 16, 22, 23]) - 1 (0-indexed)
+            "cnv": ["E6", "E7", "E14", "E15", "E16", "E22", "E23"],
             # CNV ROI - central and frontal-central electrodes for CNV analysis
-            "cnv": [
+            "old_cnv": [
                 "E5",
                 "E6",
                 "E11",
@@ -900,12 +903,14 @@ def apply_roi_trial_aggregation(
                 combined_data = np.concatenate(
                     all_roi_data, axis=0
                 )  # Shape: (all_channels, n_trials)
-                trial_aggregated = aggregate_data(
-                    combined_data, trial_agg, axis=1
-                )  # Shape: (all_channels,)
+                # IMPORTANT: Apply ROI aggregation FIRST, then trial aggregation
+                # This matches NICE's order: channels first, then epochs
+                roi_aggregated = aggregate_data(
+                    combined_data, roi_agg, axis=0
+                )  # Shape: (n_trials,) - mean across channels
                 roi_value = aggregate_data(
-                    trial_aggregated, roi_agg
-                )  # Shape: scalar
+                    roi_aggregated, trial_agg
+                )  # Shape: scalar - trim_mean80 across trials
 
             col_names.append(f"all_channels_trial_{trial_agg}_roi_{roi_agg}")
             all_values.append(roi_value)

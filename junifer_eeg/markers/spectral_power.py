@@ -47,6 +47,7 @@ class SpectralPower(BaseMarker):
         fmax: float = 45.0,
         normalize: bool = False,
         dB: bool = True,
+        entropy: bool = False,
         bands: Optional[dict] = None,
         epoch_length: float = 2.0,
         overlap: float = 0.0,
@@ -71,6 +72,8 @@ class SpectralPower(BaseMarker):
             If True, normalize power by total power (relative power).
         dB : bool, default=True
             If True, convert power to decibels (10 * log10). Matches NICE behavior.
+        entropy : bool, default=False
+            If True, compute spectral entropy instead of band power. Requires normalize=True.
         bands : dict, optional
             Custom frequency bands. If None, use standard bands.
         epoch_length : float, default=2.0
@@ -98,6 +101,7 @@ class SpectralPower(BaseMarker):
         self.fmax = fmax
         self.normalize = normalize
         self.dB = dB
+        self.entropy = entropy
         self.bands = bands
         self.epoch_length = epoch_length
         self.overlap = overlap
@@ -107,6 +111,11 @@ class SpectralPower(BaseMarker):
         self.rois = rois
         self.roi_aggregation_method = roi_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+
+        # Validate entropy usage
+        if self.entropy and not self.normalize:
+            raise ValueError("Spectral entropy requires normalize=True")
+
         super().__init__(on=on, name=name)
 
     def compute(
@@ -177,12 +186,7 @@ class SpectralPower(BaseMarker):
             info = data_obj.info
 
         n_epochs, n_channels, n_samples = epochs_data.shape
-
-        # Use full epoch length for PSD computation
         sfreq = info["sfreq"]
-        print(
-            f"Using full epoch length ({n_samples} samples, {n_samples / sfreq:.1f}s) for PSD computation"
-        )
 
         # Use custom bands or default frequency bands (matching NICE/ICM)
         if self.bands is not None:
@@ -219,11 +223,17 @@ class SpectralPower(BaseMarker):
                 # Use only the matching band for single-band testing
                 bands = {target_band: standard_bands[target_band]}
             else:
-                # Use all bands for general analysis (default case)
-                bands = standard_bands
+                # CRITICAL FIX: If fmin/fmax don't match a standard band, create a custom band
+                # This handles cases like 1-45 Hz (full spectrum) for NICE summary_se
+                # Use all standard bands ONLY if this is the default initialization (fmin=1, fmax=45)
+                if abs(self.fmin - 1.0) < 0.1 and abs(self.fmax - 45.0) < 0.1:
+                    # Full spectrum request - create single custom band
+                    bands = {"full_spectrum": (self.fmin, self.fmax)}
+                else:
+                    # Use all bands for general analysis (default case)
+                    bands = standard_bands
 
         # Determine frequency range based on sampling rate and parameters
-        sfreq = info["sfreq"]
         # Handle both single values and lists for fmax
         if isinstance(self.fmax, list):
             max_freq = min(max(self.fmax), sfreq / 2 - 1)
@@ -244,9 +254,17 @@ class SpectralPower(BaseMarker):
             else min(32, n_per_seg // 2)
         )
 
-        # For multi-band analysis, compute full spectrum and extract bands later
-        if isinstance(self.fmin, list) or isinstance(self.fmax, list):
-            # Compute full spectrum from lowest fmin to highest fmax
+        # CRITICAL FIX: For normalized power, MUST compute full spectrum (1-45 Hz)
+        # to match NICE behavior (normalizes by total power across all frequencies)
+        if self.normalize:
+            # Always compute full spectrum for normalization
+            # Do NOT use max_freq here as it's band-specific! Use Nyquist directly.
+            psd_fmin = 1.0  # NICE uses 1 Hz minimum
+            psd_fmax = min(
+                45.0, sfreq / 2 - 1
+            )  # NICE uses 45 Hz maximum, limited by Nyquist
+        elif isinstance(self.fmin, list) or isinstance(self.fmax, list):
+            # For multi-band analysis, compute full spectrum and extract bands later
             fmin_vals = (
                 self.fmin if isinstance(self.fmin, list) else [self.fmin]
             )
@@ -274,22 +292,15 @@ class SpectralPower(BaseMarker):
 
         # Compute PSD for all epochs at once - MUCH faster!
         if hasattr(data_obj, "events"):
-            # CRITICAL FIX: Crop epochs to 0.6s time window to match NICE exactly
-            # This was the key to achieving perfect 0.00% error alignment
-            print(
-                "NICE ALIGNMENT: Cropping epochs to 0.6s time window (tmin=0, tmax=0.6)"
-            )
-            cropped_epochs = data_obj.copy().crop(tmin=0, tmax=0.6)
+            # CRITICAL FIX: NICE uses tmin=None, tmax=0.6 which keeps baseline period!
+            # tmin=None means "keep from start of epoch" which includes baseline (-0.2 to 0.6s)
+            # NOT tmin=0 which would exclude baseline!
+            cropped_epochs = data_obj.copy().crop(tmin=None, tmax=0.6)
             # Use the cropped Epochs object for PSD computation
             psd = cropped_epochs.compute_psd(**psd_params)
             psds, freqs = psd.get_data(
                 return_freqs=True
             )  # Shape: (n_epochs, n_channels, n_freqs)
-            print(f"    DEBUG: PSD shape after computation: {psds.shape}")
-            print(
-                f"    DEBUG: Cropped epochs info: {len(cropped_epochs)} epochs, {len(cropped_epochs.ch_names)} channels"
-            )
-            print(f"    DEBUG: PSD ch_names length: {len(psd.ch_names)}")
         else:
             # For Raw data, create temporary raw and compute PSD
             import mne
@@ -316,12 +327,30 @@ class SpectralPower(BaseMarker):
             actual_ch_names = psd.ch_names[
                 :actual_n_channels
             ]  # Use only channels with data
-            print(
-                f"    DEBUG: Using {actual_n_channels} channels from PSD data (was {len(psd.ch_names)} in ch_names)"
-            )
         else:
             # For Raw object, use the original channel names
             actual_ch_names = ch_names
+
+        # CRITICAL FIX: NICE normalizes PSD BEFORE summing across frequencies
+        # This is different from normalizing the summed band power!
+        # Apply normalization if requested (relative power)
+        if self.normalize:
+            # NICE approach: normalize PSD spectrum, then sum
+            # data_norm = data / data.sum(axis=-1, keepdims=True)
+            # Then extract band and sum
+            total_power_per_epoch_channel = np.sum(
+                psds, axis=-1, keepdims=True
+            )  # Shape: (n_epochs, n_channels, 1)
+
+            # Avoid division by zero
+            total_power_per_epoch_channel = np.maximum(
+                total_power_per_epoch_channel, 1e-12
+            )
+
+            # Normalize each frequency bin by total power
+            psds_normalized = psds / total_power_per_epoch_channel
+        else:
+            psds_normalized = psds
 
         # Compute band powers for all epochs and channels at once
         all_band_powers = {}
@@ -336,43 +365,30 @@ class SpectralPower(BaseMarker):
 
             if np.any(freq_mask):
                 # Vectorized integration across frequency band for all epochs/channels
-                # psds shape: (n_epochs, n_channels, n_freqs)
-                # Extract frequencies and PSDs for this band
-                band_psds = psds[:, :, freq_mask]
+                # Use normalized PSD if normalization is requested
+                band_psds = psds_normalized[:, :, freq_mask]
 
-                # NICE applies np.mean across ALL axes (epochs, channels, frequency)
-                band_powers = np.mean(band_psds, axis=-1)
+                # CRITICAL FIX: NICE uses different aggregations
+                if self.entropy:
+                    # Spectral entropy: -sum(p * log(p)) / log(n_bins)
+                    # This matches NICE's summary_se marker
+                    n_bins = band_psds.shape[-1]
+                    # Handle zeros by replacing with small value
+                    band_psds_safe = np.where(band_psds > 0, band_psds, 1e-12)
+                    band_powers = -np.sum(
+                        band_psds_safe * np.log(band_psds_safe), axis=-1
+                    ) / np.log(n_bins)
+                else:
+                    # Sum across frequency (standard band power)
+                    band_powers = np.sum(band_psds, axis=-1)
+
                 all_band_powers[band_name] = band_powers
             else:
                 all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
 
-        # Apply normalization if requested (relative power)
-        # PERFORMANCE OPTIMIZATION: Vectorized normalization instead of nested loops
-        if self.normalize:
-            # Stack all band powers into a single array for vectorized operations
-            # Shape: (n_bands, n_epochs, n_channels)
-            band_names = list(bands.keys())
-            stacked_powers = np.stack(
-                [all_band_powers[band] for band in band_names], axis=0
-            )
-
-            # Calculate total power across bands for each epoch/channel
-            # Shape: (n_epochs, n_channels)
-            total_powers = np.sum(stacked_powers, axis=0)
-
-            # Avoid division by zero
-            total_powers = np.maximum(total_powers, 1e-12)
-
-            # Vectorized normalization: divide each band by total power
-            # Broadcasting: (n_bands, n_epochs, n_channels) / (n_epochs, n_channels)
-            normalized_powers = stacked_powers / total_powers[np.newaxis, :, :]
-
-            # Update all_band_powers with normalized values
-            for i, band_name in enumerate(band_names):
-                all_band_powers[band_name] = normalized_powers[i]
-
         # Apply dB conversion if requested (matches NICE behavior)
-        # NICE applies dB conversion AFTER normalization and frequency integration
+        # NICE applies dB conversion AFTER frequency integration (sum) and normalization,
+        # but BEFORE averaging across trials. This is critical for correct scaling.
         # CRITICAL FIX: Only apply dB conversion when explicitly requested (dB=True)
         if self.dB:
             for band_name in bands.keys():
@@ -406,20 +422,6 @@ class SpectralPower(BaseMarker):
                         col_names.append(
                             f"{band_name}_{ch_name}_epoch_{epoch_idx:04d}"
                         )
-
-            # Debug: Print actual shape before returning
-            print(
-                f"    DEBUG Junifer: all_bands combined, total_values={len(all_values)}"
-            )
-            print(
-                f"    DEBUG Junifer: n_epochs={n_epochs}, n_channels_original={len(ch_names)}, n_channels_actual={len(actual_ch_names)}, n_bands={len(all_band_powers)}"
-            )
-            print(
-                f"    DEBUG Junifer: expected_col_names={n_epochs * len(actual_ch_names) * len(all_band_powers)}, actual_col_names={len(col_names)}"
-            )
-            print(
-                f"    DEBUG Junifer: values min/max = {np.min(all_values):.2e}/{np.max(all_values):.2e}"
-            )
 
             return {
                 "spectralpower": {

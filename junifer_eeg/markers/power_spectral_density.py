@@ -322,11 +322,16 @@ class PowerSpectralDensitySummary(BaseMarker):
         dict
             Computed PSD summary statistics.
         """
-        import mne.io
+        import mne
         from mne.utils import _time_mask
+
+        from .utils import filter_to_eeg_channels
 
         # Get the MNE data object
         data_obj = input["data"]
+
+        # Filter to EEG channels to match PowerSpectralDensityEstimator behavior
+        data_obj, eeg_ch_names, _ = filter_to_eeg_channels(data_obj)
 
         # Handle both Raw and Epochs data
         if hasattr(data_obj, "events"):  # This is Epochs
@@ -334,25 +339,48 @@ class PowerSpectralDensitySummary(BaseMarker):
 
             # Crop to time window if specified
             if self.tmin is not None or self.tmax is not None:
-                epochs_cropped = epochs.copy().crop(
-                    tmin=self.tmin, tmax=self.tmax
-                )
-            else:
-                epochs_cropped = epochs
+                epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
-            # Get epochs data directly
-            epochs_data = (
-                epochs_cropped.get_data()
-            )  # Shape: (n_epochs, n_channels, n_samples)
+            fmax = (
+                self.fmax
+                if self.fmax is not None
+                else epochs.info["sfreq"] / 2
+            )
+
+            # Prepare MNE parameters
+            mne_params = {}
+            if self.n_per_seg is not None:
+                mne_params["n_per_seg"] = self.n_per_seg
+            if self.n_overlap is not None:
+                mne_params["n_overlap"] = self.n_overlap
+            if self.n_fft is not None:
+                mne_params["n_fft"] = self.n_fft
+
+            # Compute PSD once for all epochs
+            spectrum = epochs.compute_psd(
+                method="welch",
+                fmin=self.fmin,
+                fmax=fmax,
+                **mne_params,
+            )
+            psd = spectrum.get_data().astype(
+                np.float64, copy=False
+            )  # (n_epochs, n_channels, n_freqs)
+            freqs = spectrum.freqs
             ch_names = epochs.ch_names
 
         else:  # Raw data
             raw = data_obj
 
+            # Crop to time window if specified
+            if self.tmin is not None or self.tmax is not None:
+                raw = raw.copy().crop(tmin=self.tmin, tmax=self.tmax)
+
             # Create epochs from continuous data if needed
             if self.trial_aggregation_method is not None:
-                epochs_data = self._create_epochs_from_continuous(raw)
-                # epochs_data shape: (n_epochs, n_channels, n_samples)
+                epochs_data = self._create_epochs_from_continuous(
+                    raw
+                )  # (n_epochs, n_channels, n_samples)
             else:
                 # Single "epoch" from continuous data
                 data = raw.get_data()  # Shape: (n_channels, n_times)
@@ -360,140 +388,44 @@ class PowerSpectralDensitySummary(BaseMarker):
                     time_mask = _time_mask(raw.times, self.tmin, self.tmax)
                     data = data[:, time_mask]
                 epochs_data = data[
-                    np.newaxis,
-                    :,
-                    :,
-                ]  # Shape: (1, n_channels, n_samples)
+                    np.newaxis, :, :
+                ]  # (1, n_channels, n_samples)
 
-            ch_names = raw.ch_names
-
-        n_epochs, n_channels_raw, n_samples = epochs_data.shape
-
-        # We will determine the actual number of PSD channels dynamically from the first epoch
-        psd_summary_values: np.ndarray | None = None
-
-        for epoch_idx in range(n_epochs):
-            epoch_data = epochs_data[
-                epoch_idx
-            ]  # Shape: (n_channels, n_samples)
-
-            # Create a temporary Raw object for this epoch
-            if hasattr(data_obj, "events"):  # Epochs
-                temp_info = epochs.info.copy()
-            else:  # Raw
-                temp_info = raw.info.copy()
-
-            temp_raw = mne.io.RawArray(epoch_data, temp_info, verbose=False)
-
-            # Use the PowerSpectralDensityEstimator to get PSD data for this epoch
-            estimator = PowerSpectralDensityEstimator(
-                tmin=None,  # Already segmented
-                tmax=None,  # Already segmented
-                fmin=self.fmin,
-                fmax=self.fmax,
-                psd_method=self.psd_method,
-                n_per_seg=self.n_per_seg,
-                n_overlap=self.n_overlap,
-                n_fft=self.n_fft,
+            # Wrap as EpochsArray and compute PSD once for all epochs
+            info_copy = raw.info.copy()
+            epochs_like = mne.EpochsArray(
+                epochs_data, info_copy, verbose=False
             )
 
-            psd_result = estimator.compute({"data": temp_raw}, extra_input)
-            psd_data = psd_result["psd_data"][
-                "data"
-            ]  # Shape: (n_psd_ch, n_freqs)
-            freqs = psd_result["psd_freqs"][
-                "data"
-            ].flatten()  # Get frequencies from the same result
+            fmax = (
+                self.fmax if self.fmax is not None else info_copy["sfreq"] / 2
+            )
 
-            n_psd_ch = psd_data.shape[0]
-            # allocate storage on first epoch
-            if psd_summary_values is None:
-                psd_summary_values = np.zeros(
-                    (n_epochs, n_psd_ch), dtype=np.float64
-                )
+            # Prepare MNE parameters
+            mne_params = {}
+            if self.n_per_seg is not None:
+                mne_params["n_per_seg"] = self.n_per_seg
+            if self.n_overlap is not None:
+                mne_params["n_overlap"] = self.n_overlap
+            if self.n_fft is not None:
+                mne_params["n_fft"] = self.n_fft
 
-            # CRITICAL FIX: Compute Spectral Edge Frequency (SEF) and Median Spectral Frequency (MSF)
-            # These should return FREQUENCY VALUES (Hz), not power percentiles
-            if psd_data.ndim == 2 and psd_data.shape[1] > 1:
-                # Compute SEF/MSF for each channel
-                for ch_idx in range(psd_data.shape[0]):
-                    ch_psd = psd_data[
-                        ch_idx, :
-                    ]  # Power spectrum for this channel
+            spectrum = epochs_like.compute_psd(
+                method="welch",
+                fmin=self.fmin,
+                fmax=fmax,
+                **mne_params,
+            )
+            psd = spectrum.get_data().astype(
+                np.float64, copy=False
+            )  # (n_epochs, n_channels, n_freqs)
+            freqs = spectrum.freqs
+            ch_names = epochs_like.ch_names
 
-                    # Compute cumulative power distribution
-                    cumulative_power = np.cumsum(ch_psd)
-                    total_power = cumulative_power[-1]
-
-                    if total_power > 0:
-                        # Normalize to get cumulative percentage
-                        cumulative_percentage = (
-                            cumulative_power / total_power
-                        ) * 100
-
-                        # Find frequency where cumulative power reaches the target percentile
-                        target_idx = np.searchsorted(
-                            cumulative_percentage, self.percentile
-                        )
-
-                        # Handle edge cases
-                        if target_idx >= len(freqs):
-                            target_idx = len(freqs) - 1
-                        elif target_idx == 0:
-                            target_idx = 1
-
-                        # Interpolate for more accurate frequency estimate
-                        if target_idx < len(freqs) - 1:
-                            # Linear interpolation between adjacent frequency bins
-                            f1, f2 = freqs[target_idx - 1], freqs[target_idx]
-                            p1, p2 = (
-                                cumulative_percentage[target_idx - 1],
-                                cumulative_percentage[target_idx],
-                            )
-
-                            if p2 != p1:  # Avoid division by zero
-                                sef_freq = f1 + (f2 - f1) * (
-                                    self.percentile - p1
-                                ) / (p2 - p1)
-                            else:
-                                sef_freq = f1
-                        else:
-                            sef_freq = freqs[target_idx]
-
-                        # Ensure sef_freq is a scalar
-                        if hasattr(sef_freq, "__len__"):
-                            if len(sef_freq) == 1:
-                                sef_freq = sef_freq[0]
-                            else:
-                                sef_freq = (
-                                    float(sef_freq[0])
-                                    if len(sef_freq) > 0
-                                    else 0.0
-                                )
-                        elif hasattr(sef_freq, "item") and sef_freq.size == 1:
-                            sef_freq = sef_freq.item()
-                        else:
-                            sef_freq = float(sef_freq)
-
-                        psd_summary_values[epoch_idx, ch_idx] = sef_freq
-                    else:
-                        # No power - set to minimum frequency
-                        psd_summary_values[epoch_idx, ch_idx] = (
-                            freqs[0] if len(freqs) > 0 else 0.0
-                        )
-            else:
-                # Single frequency bin - return the frequency value
-                freq_result = estimator.compute(
-                    {"data": temp_raw}, extra_input
-                )
-                freqs = freq_result["psd_freqs"]["data"]
-                if len(freqs) > 0:
-                    psd_summary_values[epoch_idx, :] = freqs[0]
-                else:
-                    psd_summary_values[epoch_idx, :] = 0.0
+        n_epochs, n_channels, n_freqs = psd.shape
 
         # Check if we have any valid epochs
-        if psd_summary_values is None or n_epochs == 0:
+        if n_epochs == 0 or n_channels == 0 or n_freqs == 0:
             # Return empty results for empty epochs
             if self.rois is not None:
                 roi_data = {
@@ -501,126 +433,147 @@ class PowerSpectralDensitySummary(BaseMarker):
                 }
             else:
                 roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
+
+            return apply_roi_trial_aggregation(
+                roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="psdsummary",
+            )
+
+        # Vectorized SEF/MSF computation
+        # Compute Spectral Edge Frequency (SEF) where cumulative power reaches percentile
+        if n_freqs > 1:
+            # Compute cumulative power for all epochs and channels at once
+            cum = np.cumsum(psd, axis=-1)  # (n_epochs, n_channels, n_freqs)
+            total = cum[..., -1:]  # (n_epochs, n_channels, 1)
+
+            # Threshold for percentile
+            # percentile is already a fraction (0-1), not a percentage (0-100)
+            thresh = total * self.percentile  # (n_epochs, n_channels, 1)
+
+            # Find first index where cumulative power >= threshold
+            ge = cum >= thresh  # (n_epochs, n_channels, n_freqs)
+            idx = np.argmax(ge, axis=-1)  # (n_epochs, n_channels)
+
+            # Handle edge cases
+            none_true = ~np.any(ge, axis=-1)  # (n_epochs, n_channels)
+            nonzero = total.squeeze(-1) > 0  # (n_epochs, n_channels)
+
+            # Map indices to frequency values
+            sef = freqs[idx]  # (n_epochs, n_channels)
+
+            # Rows with no power -> minimum frequency
+            sef[~nonzero] = freqs[0]
+
+            # Rows with some power but percentile never reached -> last frequency
+            sef[none_true & nonzero] = freqs[-1]
+
+            psd_summary_values = sef  # (n_epochs, n_channels)
         else:
-            # Handle ROI selection and aggregation logic
-            if self.rois is not None:
-                # Extract data for specified ROIs
-                roi_data = get_data_for_rois(
-                    psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
-                    ch_names,
-                    self.rois,
-                )
-                # Apply standard aggregation for ROI-based analysis
+            # Single frequency bin - return the frequency value
+            psd_summary_values = np.full(
+                (n_epochs, n_channels), freqs[0] if len(freqs) > 0 else 0.0
+            )
+
+        # Handle ROI selection and aggregation logic
+        if self.rois is not None:
+            # Extract data for specified ROIs
+            roi_data = get_data_for_rois(
+                psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
+                ch_names,
+                self.rois,
+            )
+            # Apply standard aggregation for ROI-based analysis
+            results = apply_roi_trial_aggregation(
+                roi_data,
+                roi_aggregation_methods=self.roi_aggregation_method,
+                trial_aggregation_methods=self.trial_aggregation_method,
+                marker_name="psdsummary",
+            )
+        else:
+            # SPECIAL HANDLING for PowerSpectralDensitySummary:
+            # Clinical literature requires computing percentiles per channel, then aggregating
+            # (not combining channels before computing percentiles)
+            if (
+                self.roi_aggregation_method is not None
+                and self.trial_aggregation_method is not None
+            ):
+                # Both ROI and trial aggregation: compute single scalar value
+                from .utils import aggregate_data
+
+                # Step 1: Trial aggregation per channel (if multiple epochs)
+                if psd_summary_values.shape[0] > 1:  # Multiple epochs
+                    trial_agg_method = self.trial_aggregation_method[0]
+                    channel_values = np.array(
+                        [
+                            aggregate_data(
+                                psd_summary_values[:, ch_idx],
+                                trial_agg_method,
+                            )
+                            for ch_idx in range(psd_summary_values.shape[1])
+                        ]
+                    )
+                else:
+                    # Single epoch: use values directly
+                    channel_values = psd_summary_values[0, :]
+
+                # Step 2: ROI aggregation across channels
+                roi_agg_method = self.roi_aggregation_method[0]
+                final_value = aggregate_data(channel_values, roi_agg_method)
+
+                # Return single scalar result
+                agg_name = f"trial_{trial_agg_method}_roi_{roi_agg_method}"
+                results = {
+                    "psdsummary": {
+                        "data": np.array([[final_value]], dtype=np.float64),
+                        "col_names": [f"all_channels_{agg_name}"],
+                    }
+                }
+            else:
+                # Fallback to standard aggregation for other cases
+                if self.roi_aggregation_method is not None:
+                    # ROI aggregation requested: treat all channels as one ROI
+                    roi_data = {
+                        "all_channels": psd_summary_values.T
+                    }  # Shape: (n_channels, n_epochs)
+                else:
+                    # No ROI aggregation: use each channel as individual ROI
+                    roi_data = {
+                        ch: psd_summary_values[:, i : i + 1].T
+                        for i, ch in enumerate(ch_names)
+                    }
+
+                # Apply standard aggregation
                 results = apply_roi_trial_aggregation(
                     roi_data,
                     roi_aggregation_methods=self.roi_aggregation_method,
                     trial_aggregation_methods=self.trial_aggregation_method,
                     marker_name="psdsummary",
                 )
-            else:
-                # SPECIAL HANDLING for PowerSpectralDensitySummary:
-                # Clinical literature requires computing percentiles per channel, then aggregating
-                # (not combining channels before computing percentiles)
-
-                print(
-                    f"DEBUG: roi_aggregation_method = {self.roi_aggregation_method}"
-                )
-                print(
-                    f"DEBUG: trial_aggregation_method = {self.trial_aggregation_method}"
-                )
-
-                if (
-                    self.roi_aggregation_method is not None
-                    and self.trial_aggregation_method is not None
-                ):
-                    # Both ROI and trial aggregation: compute single scalar value
-                    print(
-                        "DEBUG: Using special PowerSpectralDensitySummary aggregation logic"
-                    )
-
-                    # Step 1: Trial aggregation per channel (if multiple epochs)
-                    if psd_summary_values.shape[0] > 1:  # Multiple epochs
-                        from .utils import aggregate_data
-
-                        trial_agg_method = self.trial_aggregation_method[
-                            0
-                        ]  # Use first method
-                        channel_values = np.array(
-                            [
-                                aggregate_data(
-                                    psd_summary_values[:, ch_idx],
-                                    trial_agg_method,
-                                )
-                                for ch_idx in range(
-                                    psd_summary_values.shape[1]
-                                )
-                            ]
-                        )
-                    else:
-                        # Single epoch: use values directly
-                        channel_values = psd_summary_values[
-                            0, :
-                        ]  # Shape: (n_channels,)
-
-                    # Step 2: ROI aggregation across channels
-                    roi_agg_method = self.roi_aggregation_method[
-                        0
-                    ]  # Use first method
-                    final_value = aggregate_data(
-                        channel_values, roi_agg_method
-                    )
-
-                    # Return single scalar result
-                    agg_name = f"trial_{trial_agg_method}_roi_{roi_agg_method}"
-                    results = {
-                        "psdsummary": {
-                            "data": np.array(
-                                [[final_value]]
-                            ),  # Ensure it's a 2D array
-                            "col_names": [f"all_channels_{agg_name}"],
-                        }
-                    }
-
-                else:
-                    # Fallback to standard aggregation for other cases
-                    if self.roi_aggregation_method is not None:
-                        # ROI aggregation requested: treat all channels as one ROI
-                        roi_data = {
-                            "all_channels": psd_summary_values.T  # Shape: (n_channels, n_epochs)
-                        }
-                    else:
-                        # No ROI aggregation: use each channel as individual ROI
-                        roi_data = {
-                            ch: psd_summary_values[:, i : i + 1].T
-                            for i, ch in enumerate(ch_names)
-                        }
-
-                    # Apply standard aggregation
-                    results = apply_roi_trial_aggregation(
-                        roi_data,
-                        roi_aggregation_methods=self.roi_aggregation_method,
-                        trial_aggregation_methods=self.trial_aggregation_method,
-                        marker_name="psdsummary",
-                    )
 
         return results
 
+    def _create_epochs_from_continuous(self, raw):
+        """Create epochs from continuous data.
 
-def _create_epochs_from_continuous(self, raw):
-    """Create epochs from continuous data."""
-    # Get data
-    data = raw.get_data()  # Shape: (n_channels, n_times)
+        Parameters
+        ----------
+        raw : mne.io.Raw
+            Raw data object.
 
-    # Apply time mask if specified
-    if self.tmin is not None or self.tmax is not None:
+        Returns
+        -------
+        np.ndarray
+            Epochs data with shape (n_epochs, n_channels, epoch_samples).
+        """
         from mne.utils import _time_mask
 
+        # Get data
         data = raw.get_data()  # Shape: (n_channels, n_times)
 
         # Apply time mask if specified
         if self.tmin is not None or self.tmax is not None:
-            from mne.utils import _time_mask
-
             time_mask = _time_mask(raw.times, self.tmin, self.tmax)
             data = data[:, time_mask]
 
@@ -630,13 +583,15 @@ def _create_epochs_from_continuous(self, raw):
         # Calculate epoch parameters
         epoch_samples = int(self.epoch_length * sfreq)
         overlap_samples = int(self.overlap * epoch_samples)
-        step_samples = epoch_samples - overlap_samples
+        step_samples = max(1, epoch_samples - overlap_samples)
 
         # Calculate number of epochs
         n_epochs = max(1, (n_samples - epoch_samples) // step_samples + 1)
 
-        # Create epochs
-        epochs_data = np.zeros((n_epochs, n_channels, epoch_samples))
+        # Create epochs array
+        epochs_data = np.zeros(
+            (n_epochs, n_channels, epoch_samples), dtype=data.dtype
+        )
 
         for epoch_idx in range(n_epochs):
             start_sample = epoch_idx * step_samples
@@ -647,11 +602,16 @@ def _create_epochs_from_continuous(self, raw):
             else:
                 # Pad with last available samples if needed
                 available_samples = n_samples - start_sample
-                epochs_data[epoch_idx, :, :available_samples] = data[
-                    :,
-                    start_sample:,
-                ]
-                # Pad with zeros or repeat last sample
-                epochs_data[epoch_idx, :, available_samples:] = data[:, -1:]
+                if available_samples > 0:
+                    epochs_data[epoch_idx, :, :available_samples] = data[
+                        :, start_sample:
+                    ]
+                    # Pad with last sample
+                    epochs_data[epoch_idx, :, available_samples:] = data[
+                        :, -1:
+                    ]
+                else:
+                    # Degenerate case: all padding
+                    epochs_data[epoch_idx, :, :] = data[:, -1:]
 
         return epochs_data

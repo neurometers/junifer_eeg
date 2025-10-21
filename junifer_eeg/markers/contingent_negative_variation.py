@@ -88,8 +88,6 @@ class ContingentNegativeVariation(BaseMarker):
         dict
             Computed CNV slope and intercept features.
         """
-        from mne._fiff.pick import _picks_by_type
-        from mne.defaults import _handle_default
         from mne.utils import _time_mask
         from scipy import linalg
 
@@ -235,21 +233,21 @@ class ContingentNegativeVariation(BaseMarker):
                 times[fit_range] - tmin,
             ]
 
-            # Get scaling factors using MNE's defaults
-            scales = np.ones(n_channels)
-            try:
-                info_obj = data_obj.info if hasattr(data_obj, "info") else None
-                if info_obj:
-                    for this_type, this_picks in _picks_by_type(info_obj):
-                        if len(this_picks) > 0:
-                            scale_factor = _handle_default("scalings").get(
-                                this_type,
-                                1.0,
-                            )
-                            scales[this_picks] = scale_factor
-            except (KeyError, AttributeError):
-                # If scaling fails, use unity scaling
-                pass
+            # Get scaling factors using MNE's defaults (match NICE implementation)
+            from mne._fiff.pick import _picks_by_type, pick_info
+            from mne.defaults import _handle_default
+
+            scales = np.zeros(n_channels)
+
+            # Get all picks and compute scales by channel type
+            if hasattr(data_obj, "info"):
+                picks = np.arange(n_channels)
+                info_ = pick_info(data_obj.info, picks)
+                for this_type, this_picks in _picks_by_type(info_):
+                    scales[this_picks] = _handle_default("scalings")[this_type]
+            else:
+                # Default scaling for EEG (1e-6 to convert V to µV)
+                scales[:] = 1e-6
 
             # Estimate single trial regression over time samples
             for ch in range(n_channels):

@@ -1,6 +1,6 @@
 """Permutation Entropy marker for junifer_eeg."""
 
-from itertools import permutations
+import math
 from typing import Any, ClassVar
 
 import numpy as np
@@ -8,6 +8,165 @@ from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
 from .utils import apply_roi_trial_aggregation, get_data_for_rois
+
+# Try to import numba for acceleration
+try:
+    from numba import njit
+
+    _HAVE_NUMBA = True
+except ImportError:
+    _HAVE_NUMBA = False
+
+
+def _pe_numpy(
+    signal: np.ndarray, kernel: int, tau: int, fact: np.ndarray
+) -> float:
+    """Vectorized NumPy implementation of permutation entropy.
+
+    Uses Lehmer code ranking instead of string operations for significant speedup
+    while producing identical results.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input signal (1D array).
+    kernel : int
+        Length of ordinal patterns.
+    tau : int
+        Time delay for ordinal patterns.
+    fact : np.ndarray
+        Precomputed factorials for kernel.
+
+    Returns
+    -------
+    float
+        Normalized permutation entropy.
+    """
+    # Length of ordinal windows
+    L = signal.size - tau * (kernel - 1)
+    if L <= 0:
+        return np.nan
+
+    # Build all window indices at once: shape (L, kernel)
+    base = np.arange(L)[:, None]
+    offs = (np.arange(kernel) * tau)[None, :]
+    idx = base + offs  # (L, kernel)
+    X = signal[idx]  # (L, kernel)
+
+    # Get permutations for each row: argsort gives positions of ascending order
+    # Use default quicksort (unstable) to match NICE's behavior
+    P = np.argsort(X, axis=1)  # (L, kernel)
+
+    # Compute Lehmer code row-wise
+    # Lehmer code c[j] = number of elements to the right of position j
+    # that are smaller than P[j]
+    Lc = np.zeros((L, kernel), dtype=np.int64)
+    for j in range(kernel - 1):
+        pj = P[:, j][:, None]  # (L, 1)
+        right = P[:, j + 1 :]  # (L, kernel-1-j)
+        Lc[:, j] = np.sum(right < pj, axis=1)
+
+    # Ranks from Lehmer code: sum c[j] * (k-1-j)!
+    # factorials precomputed in `fact`
+    weights = fact[kernel - 1 : 0 : -1]  # [(k-1)!, (k-2)!, ..., 1!]
+    ranks = (Lc[:, :-1] * weights).sum(axis=1)
+
+    # Histogram of pattern ranks
+    n_symbols = fact[kernel]
+    count = np.bincount(ranks, minlength=n_symbols).astype(np.float64)
+    count /= L
+
+    # Compute entropy (natural log) and normalize by log(n_symbols)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        logp = np.where(count > 0, np.log(count), 0.0)
+        pe = -np.sum(count * logp)
+
+    return pe / np.log(n_symbols)
+
+
+if _HAVE_NUMBA:
+
+    @njit(cache=True, fastmath=False)
+    def _pe_numba(
+        signal: np.ndarray, kernel: int, tau: int, fact: np.ndarray
+    ) -> float:
+        """Numba-accelerated implementation of permutation entropy.
+
+        Uses JIT compilation for maximum performance while maintaining
+        identical results to the NumPy implementation.
+
+        Parameters
+        ----------
+        signal : np.ndarray
+            Input signal (1D array).
+        kernel : int
+            Length of ordinal patterns.
+        tau : int
+            Time delay for ordinal patterns.
+        fact : np.ndarray
+            Precomputed factorials for kernel.
+
+        Returns
+        -------
+        float
+            Normalized permutation entropy.
+        """
+        L = signal.size - tau * (kernel - 1)
+        if L <= 0:
+            return np.nan
+
+        # Initialize histogram
+        n_symbols = fact[kernel]
+        counts = np.zeros(n_symbols, dtype=np.int64)
+
+        # Process each window
+        for start in range(L):
+            # Collect window values
+            vals = np.empty(kernel, dtype=np.float64)
+            for j in range(kernel):
+                vals[j] = signal[start + j * tau]
+
+            # Compute permutation via stable sort (insertion sort)
+            idxs = np.empty(kernel, dtype=np.int64)
+            for j in range(kernel):
+                idxs[j] = j
+
+            # Insertion sort to get stable ordering
+            for i in range(1, kernel):
+                key_idx = idxs[i]
+                key_val = vals[key_idx]
+                j = i - 1
+                while j >= 0 and vals[idxs[j]] > key_val:
+                    idxs[j + 1] = idxs[j]
+                    j -= 1
+                idxs[j + 1] = key_idx
+
+            # Compute Lehmer code and convert to rank
+            rank = 0
+            for j in range(kernel - 1):
+                cj = 0
+                pj = idxs[j]
+                for i in range(j + 1, kernel):
+                    if idxs[i] < pj:
+                        cj += 1
+                rank += cj * fact[kernel - 1 - j]
+
+            counts[rank] += 1
+
+        # Compute entropy
+        total = float(L)
+        pe = 0.0
+        for i in range(counts.size):
+            if counts[i] > 0:
+                p = counts[i] / total
+                pe -= p * math.log(p)
+
+        return pe / math.log(n_symbols)
+else:
+    # Dummy function if numba is not available
+    def _pe_numba(signal, kernel, tau, fact):
+        """Placeholder function when Numba is not available."""
+        raise RuntimeError("Numba not available")
 
 
 @register_marker
@@ -93,6 +252,13 @@ class PermutationEntropy(BaseMarker):
         self.trial_aggregation_method = trial_aggregation_method
         self.epoch_length = epoch_length
         self.overlap = overlap
+
+        # Cache factorials for Lehmer code ranking
+        self._fact = np.array(
+            [math.factorial(i) for i in range(self.kernel + 1)],
+            dtype=np.int64,
+        )
+
         super().__init__(on=on, name=name)
 
     def compute(
@@ -153,12 +319,19 @@ class PermutationEntropy(BaseMarker):
         ch_names = data_obj.ch_names
         sfreq = data_obj.info["sfreq"]
 
+        # Store original times for later time masking (like NICE does)
+        # NICE applies time_mask AFTER filtering, not before
+        original_times = data_obj.times
+
         n_epochs, n_channels, n_samples = epochs_data.shape
 
-        # Apply frequency filtering based on parameters (matching WSMI approach)
+        # Apply frequency filtering based on parameters
+        # CRITICAL FIX: For frequency-specific PE, use ONLY bandpass (no additional lowpass)
+        # The bandpass itself limits frequency content appropriately for PE computation
         if self.fmin is not None and self.fmax is not None:
-            # Bandpass filtering using fmin/fmax parameters (like WSMI)
             nyquist = sfreq / 2.0
+
+            # Bandpass filter to isolate the frequency band
             low = self.fmin / nyquist
             high = self.fmax / nyquist
             b, a = butter(self.filter_order, [low, high], btype="band")
@@ -168,7 +341,7 @@ class PermutationEntropy(BaseMarker):
                 epochs_data
             )  # Shape: (n_channels, total_time)
 
-            # Filter concatenated data
+            # Apply bandpass filter
             for ch_idx in range(n_channels):
                 data_concat[ch_idx, :] = filtfilt(b, a, data_concat[ch_idx, :])
 
@@ -176,10 +349,20 @@ class PermutationEntropy(BaseMarker):
             fdata = np.transpose(
                 np.array(np.split(data_concat, n_epochs, axis=1)), [1, 2, 0]
             )
+
+            # CRITICAL FIX: Apply time mask AFTER filtering (like NICE does)
+            # NICE: time_mask = _time_mask(epochs.times, tmin, tmax); fdata = fdata[:, time_mask, :]
+            from mne.utils import _time_mask
+
+            time_mask = _time_mask(original_times, self.tmin, self.tmax)
+            fdata = fdata[:, time_mask, :]
+
         elif self.filter_freq is not None:
-            # Low-pass filtering using filter_freq parameter
+            # Low-pass filtering using filter_freq parameter (match NICE's order=6)
             nyquist = sfreq / 2.0
-            b, a = butter(4, self.filter_freq / nyquist, btype="low")
+            b, a = butter(
+                self.filter_order, self.filter_freq / nyquist, btype="low"
+            )
 
             # NICE-style filtering: concatenate epochs horizontally, filter, then split back
             data_concat = np.hstack(
@@ -204,50 +387,61 @@ class PermutationEntropy(BaseMarker):
                 epochs_data
             )  # Shape: (n_channels, total_time)
 
-            # Filter concatenated data
-            for ch_idx in range(n_channels):
-                data_concat[ch_idx, :] = filtfilt(b, a, data_concat[ch_idx, :])
+            # CRITICAL: Filter EXACTLY like NICE - apply filtfilt to entire array at once
+            # filtfilt filters along last axis by default, which is what we want
+            filtered_data = filtfilt(b, a, data_concat)
 
             # Split back and transpose exactly like NICE: [1, 2, 0]
             fdata = np.transpose(
-                np.array(np.split(data_concat, n_epochs, axis=1)), [1, 2, 0]
+                np.array(np.split(filtered_data, n_epochs, axis=1)), [1, 2, 0]
             )
 
-        # Apply time mask AFTER filtering (like NICE)
-        from mne.utils import _time_mask
+            # CRITICAL FIX: Apply time mask AFTER filtering (like NICE does)
+            from mne.utils import _time_mask
 
-        time_mask = _time_mask(data_obj.times, self.tmin, self.tmax)
-        fdata = fdata[:, time_mask, :]
+            time_mask = _time_mask(original_times, self.tmin, self.tmax)
+            fdata = fdata[:, time_mask, :]
 
-        # Convert back to (n_epochs, n_channels, n_samples) for our processing
-        epochs_data = np.transpose(fdata, [2, 0, 1])
+        # NICE approach: Compute PE on concatenated signal
+        # fdata shape after time mask: (n_channels, n_times_cropped, n_epochs)
+        # We need to concatenate along time dimension: (n_channels, total_time)
+        # Optimize concatenation: transpose and reshape instead of Python loops
+        # This produces identical layout to np.hstack([fdata[:,:,epoch] for epoch in range(n_epochs)])
+        concatenated_data = (
+            np.ascontiguousarray(fdata)
+            .transpose(0, 2, 1)
+            .reshape(n_channels, -1)
+        )
+        # Result shape: (n_channels, total_time) where total_time = n_times_cropped * n_epochs
 
-        # Compute permutation entropy for each epoch and channel
-        pe_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
+        # Compute permutation entropy on concatenated signal (like NICE)
+        pe_values = np.zeros(n_channels, dtype=np.float64)
 
-        for epoch_idx in range(n_epochs):
-            for ch_idx in range(n_channels):
-                signal = epochs_data[epoch_idx, ch_idx, :]
-                pe_values[epoch_idx, ch_idx] = (
-                    self._compute_permutation_entropy(
-                        signal,
-                        self.kernel,
-                        self.tau,
-                    )
-                )
+        for ch_idx in range(n_channels):
+            signal = concatenated_data[ch_idx, :]
+            pe_values[ch_idx] = self._compute_permutation_entropy(
+                signal,
+                self.kernel,
+                self.tau,
+            )
+
+        # Convert to expected output format: (n_epochs, n_channels) with same value repeated
+        # Since we computed on concatenated signal, all epochs get the same PE value per channel
+        pe_values_expanded = np.tile(pe_values, (n_epochs, 1))
 
         # Handle ROI selection
         if self.rois is not None:
             # Extract data for specified ROIs
             roi_data = get_data_for_rois(
-                pe_values.T,  # Transpose to (n_channels, n_epochs)
+                pe_values_expanded.T,  # Transpose to (n_channels, n_epochs)
                 list(ch_names),
                 self.rois,
             )
         else:
             # Use all channels as individual ROIs
             roi_data = {
-                ch: pe_values[:, i : i + 1].T for i, ch in enumerate(ch_names)
+                ch: pe_values_expanded[:, i : i + 1].T
+                for i, ch in enumerate(ch_names)
             }
 
         # Check if we should return per-epoch data without aggregation
@@ -296,53 +490,15 @@ class PermutationEntropy(BaseMarker):
         return results
 
     def _compute_permutation_entropy(self, signal, kernel, tau):
-        """Compute permutation entropy for a single filtered signal."""
-        # Symbolic transformation
-        symbols = self._define_symbols(kernel)
+        """Compute permutation entropy for a single filtered signal.
 
-        # Calculate signal_sym shape
-        signal_sym_length = len(signal) - tau * (kernel - 1)
-        if signal_sym_length <= 0:
-            # Return NaN for too short signals
-            return np.nan
-
-        signal_sym = np.zeros(signal_sym_length, dtype=np.int32)
-
-        # Create ordinal patterns
-        for k in range(signal_sym_length):
-            subsamples = range(k, k + kernel * tau, tau)
-            subsample_vals = signal[subsamples]
-            ind = np.argsort(subsample_vals)
-            pattern_str = "".join(map(str, ind))
-            signal_sym[k] = symbols.index(pattern_str)
-
-        # Count ordinal patterns
-        n_symbols = len(symbols)
-        count = np.bincount(signal_sym, minlength=n_symbols)
-        count = count.astype(np.float64) / signal_sym_length
-
-        # Compute permutation entropy
-        with np.errstate(divide="ignore", invalid="ignore"):
-            log_count = np.where(count > 0, np.log(count), 0)
-            pe = -np.sum(count * log_count)
-
-        # Normalize by maximum possible entropy
-        return pe / np.log(n_symbols)
-
-    def _define_symbols(self, kernel: int) -> list[str]:
-        """Define symbols for permutation entropy.
-
-        Parameters
-        ----------
-        kernel : int
-            Length of ordinal patterns.
-
-        Returns
-        -------
-        list of str
-            List of ordinal pattern symbols.
+        Uses optimized Numba implementation if available, otherwise falls back
+        to vectorized NumPy implementation. Both produce identical results to
+        the original string-based implementation but are significantly faster.
         """
-        symbols = []
-        for perm in permutations(range(kernel)):
-            symbols.append("".join(map(str, perm)))
-        return symbols
+        signal = np.asarray(signal, dtype=np.float64)
+
+        if _HAVE_NUMBA:
+            return _pe_numba(signal, kernel, tau, self._fact)
+        else:
+            return _pe_numpy(signal, kernel, tau, self._fact)
