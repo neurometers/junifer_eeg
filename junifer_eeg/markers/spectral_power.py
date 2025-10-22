@@ -49,6 +49,8 @@ class SpectralPower(BaseMarker):
         dB: bool = True,
         entropy: bool = False,
         bands: Optional[dict] = None,
+        tmin: Optional[float] = None,
+        tmax: Optional[float] = None,
         epoch_length: float = 2.0,
         overlap: float = 0.0,
         n_fft: Optional[int] = None,
@@ -76,6 +78,10 @@ class SpectralPower(BaseMarker):
             If True, compute spectral entropy instead of band power. Requires normalize=True.
         bands : dict, optional
             Custom frequency bands. If None, use standard bands.
+        tmin : float, optional
+            Start time for analysis in seconds. If None, use start of epoch.
+        tmax : float, optional
+            End time for analysis in seconds. If None, use end of epoch.
         epoch_length : float, default=2.0
             Length of epochs to create from continuous data in seconds.
         overlap : float, default=0.0
@@ -103,6 +109,8 @@ class SpectralPower(BaseMarker):
         self.dB = dB
         self.entropy = entropy
         self.bands = bands
+        self.tmin = tmin
+        self.tmax = tmax
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.n_fft = n_fft
@@ -292,11 +300,14 @@ class SpectralPower(BaseMarker):
 
         # Compute PSD for all epochs at once - MUCH faster!
         if hasattr(data_obj, "events"):
-            # CRITICAL FIX: NICE uses tmin=None, tmax=0.6 which keeps baseline period!
-            # tmin=None means "keep from start of epoch" which includes baseline (-0.2 to 0.6s)
-            # NOT tmin=0 which would exclude baseline!
-            cropped_epochs = data_obj.copy().crop(tmin=None, tmax=0.6)
-            # Use the cropped Epochs object for PSD computation
+            # Crop to time window if specified
+            if self.tmin is not None or self.tmax is not None:
+                cropped_epochs = data_obj.copy().crop(
+                    tmin=self.tmin, tmax=self.tmax
+                )
+            else:
+                cropped_epochs = data_obj
+            # Use the (optionally cropped) Epochs object for PSD computation
             psd = cropped_epochs.compute_psd(**psd_params)
             psds, freqs = psd.get_data(
                 return_freqs=True
