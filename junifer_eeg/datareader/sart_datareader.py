@@ -166,10 +166,14 @@ class SARTDataReader(DefaultDataReader):
             event_desc = code_to_desc.get(event_code, f"Unknown_{event_code}")
 
             annotation = {
-                "epoch_index": i,
+                "epoch_index": int(i),  # Convert to Python int
                 "epoch_id": f"epoch_{i:04d}",
-                "event_time": event_time,
-                "event_code": event_code,
+                "event_time": int(
+                    event_time
+                ),  # Convert numpy int to Python int
+                "event_code": int(
+                    event_code
+                ),  # Convert numpy int to Python int
                 "event_description": event_desc,
                 "original_description": event_desc,
             }
@@ -265,9 +269,15 @@ class SARTDataReader(DefaultDataReader):
                     elif part.isdigit():
                         params["trial_id"] = int(part)
 
-            # Add to behavioral parameters
+            # Add to behavioral parameters (convert numpy int to Python int for JSON serialization)
             for key in behavioral_params.keys():
-                behavioral_params[key].append(params[key])
+                value = params[key]
+                # Convert numpy types to Python native types for JSON serialization
+                if value is not None and hasattr(value, "item"):
+                    value = (
+                        value.item()
+                    )  # Convert numpy scalar to Python scalar
+                behavioral_params[key].append(value)
 
         return behavioral_params
 

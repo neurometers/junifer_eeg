@@ -382,28 +382,18 @@ class ICMAdaptiveArtifactRejection(BasePreprocessor):
         _check_min_events(epochs, self.min_events)
         _check_min_channels(epochs, bad_channels, self.min_channels)
 
-        # Apply average reference (modern MNE approach)
-        # Keep projection=True to add projection to info (will be applied on data access)
+        # Apply average reference
+        # This must be done BEFORE interpolation for correct results
+        # Modern MNE equivalent of: ref_proj = mne.proj.make_eeg_average_ref_proj(epochs.info)
         epochs.set_eeg_reference("average", projection=True)
+        epochs.apply_proj()
 
-        # Interpolate bad channels (but keep the info about which were bad)
-        # Only interpolate if enabled and digitization points are available
+        # Interpolate bad channels
         if self.interpolate_bads and len(epochs.info["bads"]) > 0:
-            has_dig = (
-                epochs.info.get("dig") is not None
-                and len(epochs.info["dig"]) > 0
+            logger.info(
+                f"Interpolating {len(epochs.info['bads'])} bad channels"
             )
-            if has_dig:
-                logger.info(
-                    f"Interpolating {len(epochs.info['bads'])} bad channels"
-                )
-                # Use origin='auto' (modern MNE default, fits from dig points)
-                epochs.interpolate_bads(origin="auto", reset_bads=True)
-            else:
-                logger.warning(
-                    f"Skipping interpolation for {len(epochs.info['bads'])} bad channels: "
-                    "no digitization points available"
-                )
+            epochs.interpolate_bads(reset_bads=True)
         elif not self.interpolate_bads and len(epochs.info["bads"]) > 0:
             logger.info(
                 f"Skipping interpolation for {len(epochs.info['bads'])} bad channels (disabled)"

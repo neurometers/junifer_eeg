@@ -313,9 +313,17 @@ class SymbolicMutualInformation(BaseMarker):
                     epochs_temp.interpolate_bads(reset_bads=True)
 
                 # Compute CSD with same parameters as NICE
-                epochs = compute_current_source_density(
+                epochs_csd = compute_current_source_density(
                     epochs_temp, lambda2=1e-5
                 )
+
+                # Check if CSD actually produced CSD channels (NICE behavior)
+                csd_picks = pick_types(epochs_csd.info, csd=True)
+                if len(csd_picks) > 0:
+                    epochs = epochs_csd
+                else:
+                    # CSD didn't work, use original EEG data
+                    pass  # epochs remains unchanged
 
         # Pick data channels for connectivity computation (matching NICE exactly)
         # MEG, EEG, CSD, SEEG, ECoG are typical data channels. Exclude bads.
@@ -436,6 +444,7 @@ class SymbolicMutualInformation(BaseMarker):
         result = _wsmi_python_jitted(sym, count, wts, self.weighted)
         # result is (n_channels_picked, n_channels_picked, n_epochs)
         # Note: NICE only fills upper triangle, result[i,j] where i < j
+        # Symmetrization is handled later in each branch appropriately
 
         # Check if we should return full connectivity matrix without aggregation
         if (

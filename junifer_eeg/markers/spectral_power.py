@@ -56,6 +56,7 @@ class SpectralPower(BaseMarker):
         n_fft: Optional[int] = None,
         n_per_seg: Optional[int] = None,
         n_overlap: Optional[int] = None,
+        db_threshold: Optional[float] = None,
         rois: Optional[List[str]] = None,
         roi_aggregation_method: Optional[List[str]] = None,
         trial_aggregation_method: Optional[List[str]] = None,
@@ -92,6 +93,11 @@ class SpectralPower(BaseMarker):
             Length of each segment for Welch PSD. If None, uses adaptive sizing.
         n_overlap : int, optional
             Number of points to overlap between segments. If None, uses adaptive sizing.
+        db_threshold : float, optional
+            Minimum threshold for dB conversion to avoid log(0). If None (default),
+            uses adaptive threshold based on data (1% of minimum non-zero power value).
+            For NICE/ICM compatibility, use 1e-12. Lower values (e.g., 1e-15) may be
+            needed for low-amplitude signals. Only used when dB=True.
         rois : list of str, optional
             List of ROI names. If None, use all channels.
         roi_aggregation_method : list of str, optional
@@ -116,6 +122,7 @@ class SpectralPower(BaseMarker):
         self.n_fft = n_fft
         self.n_per_seg = n_per_seg
         self.n_overlap = n_overlap
+        self.db_threshold = db_threshold
         self.rois = rois
         self.roi_aggregation_method = roi_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
@@ -402,13 +409,38 @@ class SpectralPower(BaseMarker):
         # but BEFORE averaging across trials. This is critical for correct scaling.
         # CRITICAL FIX: Only apply dB conversion when explicitly requested (dB=True)
         if self.dB:
+            # Determine threshold: user-specified or adaptive
+            if self.db_threshold is not None:
+                # User specified a threshold (e.g., for NICE/ICM compatibility)
+                threshold = self.db_threshold
+            else:
+                # Use data-adaptive threshold
+                # The threshold should be based on the actual noise floor of the data
+                # Use the minimum non-zero power value across all bands, then go 2 orders of magnitude lower
+                all_nonzero_values = []
+                for band_data in all_band_powers.values():
+                    nonzero = band_data[band_data > 0]
+                    if len(nonzero) > 0:
+                        all_nonzero_values.extend(nonzero)
+
+                if len(all_nonzero_values) > 0:
+                    # Use 1% of the minimum non-zero value as threshold
+                    # This ensures we don't clip real data while still avoiding log(0)
+                    data_min = np.min(all_nonzero_values)
+                    threshold = data_min * 0.01
+                    # But don't go below machine epsilon for float64
+                    threshold = max(threshold, np.finfo(np.float64).eps)
+                else:
+                    # Fallback to a very low threshold
+                    threshold = np.finfo(np.float64).eps
+
             for band_name in bands.keys():
                 # Convert to dB: 10 * log10(power)
                 # Handle zero/negative values by setting a minimum threshold
                 band_data = all_band_powers[band_name]
-                # Set minimum threshold to avoid log(0) or log(negative)
-                min_threshold = 1e-12
-                band_data = np.maximum(band_data, min_threshold)
+
+                # Apply threshold
+                band_data = np.maximum(band_data, threshold)
                 all_band_powers[band_name] = 10 * np.log10(band_data)
 
         # Check if we should return raw PSD data (no aggregation)
