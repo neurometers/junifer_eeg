@@ -1,7 +1,7 @@
 ---
-# ICM Complete Configuration with Individual Markers
-# Replicates ICMReportDataExtractorReviewed using individual junifer markers
-# Based on analysis of icm_report_data_extractor_reviewed.py
+# ICM 34 Validated NICE Markers Configuration
+# Exactly 34 markers validated against NICE ground truth
+# All parameters match validated reference YAML files
 
 with:
   - "junifer_eeg"
@@ -49,34 +49,20 @@ preprocess:
 
 storage:
   kind: HDF5FeatureStorage
-  uri: icm_complete_features.h5
+  uri: icm_34_validated_markers.h5
   single_output: true
 
 markers:
 
   # ========================================
-  # 1. SPECTRAL MARKERS (11 total) 
+  # SPECTRAL MARKERS (11 total)
   # ========================================
   
-  # Per-channel spectral power (no ROI aggregation, trial averaged)
+  # Non-normalized spectral power (5 markers: #1-5)
   - kind: SpectralPower
-    name: per_channel_delta
-    bands:
-      delta: [1.0, 4.0]
-    normalize: false
-    dB: true
-    db_threshold: 1.0e-12
-    n_fft: 4096
-    n_overlap: 100
-    n_per_seg: 128
-    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
-    trial_aggregation_method: ["trim_mean80"]  # Average across trials
-    on: EEG
-
-  - kind: SpectralPower
-    name: per_channel_theta
-    bands:
-      theta: [4.0, 8.0]
+    name: delta_spectralpower
+    fmin: 1.0
+    fmax: 4.0
     normalize: false
     dB: true
     db_threshold: 1.0e-12
@@ -88,9 +74,9 @@ markers:
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_alpha
-    bands:
-      alpha: [8.0, 12.0]
+    name: theta_spectralpower
+    fmin: 4.0
+    fmax: 8.0
     normalize: false
     dB: true
     db_threshold: 1.0e-12
@@ -102,9 +88,9 @@ markers:
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_beta
-    bands:
-      beta: [12.0, 30.0]
+    name: alpha_spectralpower
+    fmin: 8.0
+    fmax: 12.0
     normalize: false
     dB: true
     db_threshold: 1.0e-12
@@ -116,9 +102,9 @@ markers:
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_gamma
-    bands:
-      gamma: [30.0, 45.0]
+    name: beta_spectralpower
+    fmin: 12.0
+    fmax: 30.0
     normalize: false
     dB: true
     db_threshold: 1.0e-12
@@ -129,6 +115,21 @@ markers:
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
+  - kind: SpectralPower
+    name: gamma_spectralpower
+    fmin: 30.0
+    fmax: 45.0
+    normalize: false
+    dB: true
+    db_threshold: 1.0e-12
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    roi_aggregation_method: null
+    trial_aggregation_method: ["trim_mean80"]
+    on: EEG
+
+  # Normalized spectral power (5 markers: #6-10)
   - kind: SpectralPower
     name: deltan_spectralpower
     fmin: 1.0
@@ -194,6 +195,7 @@ markers:
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
+  # Shannon Entropy (1 marker: #11)
   - kind: SpectralPower
     name: summary_se_spectralpower
     fmin: 1.0
@@ -210,9 +212,9 @@ markers:
   # ========================================
   # PSD SUMMARY MARKERS (3 total: #12-14)
   # ========================================
-  # Per-channel spectral summaries
+
   - kind: PowerSpectralDensitySummary
-    name: per_channel_msf
+    name: summary_msf
     percentile: 0.5
     tmin: null
     tmax: 0.6
@@ -221,12 +223,12 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null  # No ROI aggregation
+    roi_aggregation_method: null
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
   - kind: PowerSpectralDensitySummary
-    name: per_channel_sef90
+    name: summary_sef90
     percentile: 0.9
     tmin: null
     tmax: 0.6
@@ -240,7 +242,7 @@ markers:
     on: EEG
 
   - kind: PowerSpectralDensitySummary
-    name: per_channel_sef95
+    name: summary_sef95
     percentile: 0.95
     tmin: null
     tmax: 0.6
@@ -293,14 +295,12 @@ markers:
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
-
-
   # ========================================
   # SYMBOLIC MUTUAL INFORMATION (4 total: #19-22)
   # ========================================
 
   - kind: SymbolicMutualInformation
-    name: wsmi_theta
+    name: smi_weighted_theta
     tmin: null
     tmax: 0.6
     kernel: 3
@@ -312,7 +312,7 @@ markers:
     on: EEG
 
   - kind: SymbolicMutualInformation
-    name: wsmi_alpha
+    name: smi_weighted_alpha
     tmin: null
     tmax: 0.6
     kernel: 3
@@ -324,7 +324,7 @@ markers:
     on: EEG
 
   - kind: SymbolicMutualInformation
-    name: wsmi_beta
+    name: smi_weighted_beta
     tmin: null
     tmax: 0.6
     kernel: 3
@@ -336,7 +336,7 @@ markers:
     on: EEG
 
   - kind: SymbolicMutualInformation
-    name: wsmi_gamma
+    name: smi_weighted_gamma
     tmin: null
     tmax: 0.6
     kernel: 3
@@ -351,35 +351,33 @@ markers:
   # KOLMOGOROV COMPLEXITY (1 total: #23)
   # ========================================
 
-  # Kolmogorov Complexity (broadband)
   - kind: KolmogorovComplexity
     name: kolmogorov_complexity
     tmin: null
-    tmax: 0.6  # ICM standard
+    tmax: 0.6
     nbins: 32
     roi_aggregation_method: null
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
-
   # ========================================
   # CONTINGENT NEGATIVE VARIATION (1 total: #24)
   # ========================================
-  # CNV for detailed analysis (no aggregation)
+
   - kind: ContingentNegativeVariation
-    name: cnv_detailed
-    tmin: -0.004  # EXACT next_icm parameter
-    tmax: 0.596  # EXACT next_icm parameter
-    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
-    trial_aggregation_method: null  # Keep all trials for statistics
+    name: cnv
+    tmin: -0.004
+    tmax: 0.596
+    roi_aggregation_method: null
+    trial_aggregation_method: ["trim_mean80"]
     on: EEG
 
- # ========================================
+  # ========================================
   # TIME-LOCKED TOPOGRAPHY (3 total: #25-27)
   # ========================================
 
   - kind: TimeLockedTopography
-    name: p1_topography
+    name: tlt_p1
     tmin: 0.064
     tmax: 0.112
     roi_aggregation_method: null
@@ -387,7 +385,7 @@ markers:
     on: EEG
 
   - kind: TimeLockedTopography
-    name: p3a_topography
+    name: tlt_p3a
     tmin: 0.876
     tmax: 0.936
     roi_aggregation_method: null
@@ -395,13 +393,12 @@ markers:
     on: EEG
 
   - kind: TimeLockedTopography
-    name: p3b_topography
+    name: tlt_p3b
     tmin: 0.996
     tmax: 1.196
     roi_aggregation_method: null
     trial_aggregation_method: ["trim_mean80"]
     on: EEG
-
 
   # ========================================
   # TIME-LOCKED CONTRAST (7 total: #28-34)
@@ -475,30 +472,4 @@ markers:
     condition_b: ["LSGS", "LDGS"]
     roi_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
-    on: EEG
-
-  # ========================================
-  # WINDOW DECODING (2 total: #35-36)
-  # ========================================
-
-  # Window decoding - Local: 600-967ms
-  - kind: WindowDecoding
-    name: window_decoding_local
-    condition_a: ["LDGS", "LDGD"]  # Local Deviant
-    condition_b: ["LSGS", "LSGD"]  # Local Standard
-    tmin: 0.6  # ICM standard local window
-    tmax: 0.967  # ICM standard local window
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
-    on: EEG
-
-  # Window decoding - Global: 967-1336ms
-  - kind: WindowDecoding
-    name: window_decoding_global
-    condition_a: ["LSGD", "LDGD"]  # Global Deviant
-    condition_b: ["LSGS", "LDGS"]  # Global Standard
-    tmin: 0.967  # ICM standard global window
-    tmax: 1.336  # ICM standard global window
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
     on: EEG

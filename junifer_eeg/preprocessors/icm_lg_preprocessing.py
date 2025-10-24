@@ -584,7 +584,9 @@ class ICMLGEpoching(BasePreprocessor):
         output = input.copy()
         output["data"] = epochs
 
-        # Note: Epoch file saving moved to ICMAdaptiveArtifactRejection
-        # so that projections are included in the saved file
+        # Dump epoched data (step 2)
+        if self.dump_location and self.dump_granularity == "full":
+            element = input.get("element", "unknown_element")
+            _dump_data(output, element, "epoched", 2, self.dump_location)
 
         return output, None
