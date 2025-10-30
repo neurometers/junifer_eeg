@@ -450,27 +450,15 @@ class SpectralPower(BaseMarker):
         ):
             # Return ALL bands without aggregation - this is what users expect
             # when they specify multiple bands and no aggregation
-            all_values = []
-            col_names = []
+            from .utils import create_spectral_band_epoch_column_names
 
-            # Combine all bands into a single flattened result
-            for band_name, band_data in all_band_powers.items():
-                # Flatten band data: (n_epochs, n_channels) -> (n_epochs * n_channels,)
-                flattened_data = band_data.flatten()
-                all_values.extend(flattened_data)
-
-                # Create column names for each epoch-channel combination
-                for epoch_idx in range(n_epochs):
-                    for ch_name in actual_ch_names:
-                        col_names.append(
-                            f"{band_name}_{ch_name}_epoch_{epoch_idx:04d}"
-                        )
+            data_array, col_names = create_spectral_band_epoch_column_names(
+                all_band_powers, actual_ch_names, n_epochs
+            )
 
             return {
                 "spectralpower": {
-                    "data": np.array(all_values).reshape(
-                        1, -1
-                    ),  # Shape: (1, n_total_features)
+                    "data": data_array,  # Shape: (1, n_total_features)
                     "col_names": col_names,
                 }
             }

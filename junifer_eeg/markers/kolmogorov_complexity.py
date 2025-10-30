@@ -96,8 +96,13 @@ class KolmogorovComplexity(BaseMarker):
 
         from mne.utils import _time_mask
 
+        from .utils import filter_to_eeg_channels
+
         # Get the MNE object (can be Raw or Epochs)
         data_obj = input["data"]
+
+        # Filter to only EEG channels (exclude EOG, stim, etc.)
+        data_obj, eeg_ch_names, eeg_indices = filter_to_eeg_channels(data_obj)
 
         # Handle both Raw and Epochs objects
         if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
@@ -163,31 +168,16 @@ class KolmogorovComplexity(BaseMarker):
             and self.trial_aggregation_method is None
         ):
             # Return per-epoch results without any aggregation
-            col_names = []
+            # Use utility function to create standardized column names
+            from .utils import create_per_epoch_column_names
 
-            # Collect column names from all ROIs/channels
-            for roi_name, roi_data_array in roi_data.items():
-                # roi_data_array is (n_channels_in_roi, n_epochs)
-                n_channels_in_roi = roi_data_array.shape[0]
-                for ch_idx in range(n_channels_in_roi):
-                    col_names.append(f"{roi_name}_ch{ch_idx}")
-
-            # Stack data: each row is an epoch, each column is a channel
-            epoch_data = []
-            for epoch_idx in range(n_epochs):
-                epoch_values = []
-                for _, roi_data_array in roi_data.items():
-                    # Extract values for this epoch across all channels in this ROI
-                    for ch_idx in range(roi_data_array.shape[0]):
-                        epoch_values.append(roi_data_array[ch_idx, epoch_idx])
-                epoch_data.append(epoch_values)
-
-            # Convert to numpy array: (n_epochs, n_channels)
-            epoch_data_array = np.array(epoch_data)
+            data_array, col_names = create_per_epoch_column_names(
+                roi_data, n_epochs
+            )
 
             results = {
                 "kolmogorovcomplexity": {
-                    "data": epoch_data_array,
+                    "data": data_array,
                     "col_names": col_names,
                 }
             }

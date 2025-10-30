@@ -732,6 +732,166 @@ def _add_meta_to_result(
     return result_dict
 
 
+def create_per_epoch_column_names(
+    roi_data: Dict[str, np.ndarray],
+    n_epochs: int,
+) -> tuple[np.ndarray, list[str]]:
+    """Create per-epoch column names and flatten data for HDF5 storage.
+
+    Generates column names in the format: channel_epoch_NNNN
+    This matches the spectral marker format and ensures each data point
+    has a unique, traceable identifier.
+
+    Used by: PermutationEntropy, KolmogorovComplexity, TimeLockedTopography
+
+    Parameters
+    ----------
+    roi_data : dict
+        Dictionary mapping ROI/channel names to data arrays.
+        Each array should have shape (n_channels_in_roi, n_epochs).
+    n_epochs : int
+        Number of epochs in the data.
+
+    Returns
+    -------
+    data_array : np.ndarray
+        Flattened data array with shape (n_channels * n_epochs, 1).
+    col_names : list of str
+        Column names for each data point in format: channel_epoch_NNNN.
+
+    Examples
+    --------
+    >>> roi_data = {'Fp1': np.array([[0.1, 0.2]]), 'Fz': np.array([[0.3, 0.4]])}
+    >>> data, names = create_per_epoch_column_names(roi_data, n_epochs=2)
+    >>> names
+    ['Fp1_epoch_0000', 'Fp1_epoch_0001', 'Fz_epoch_0000', 'Fz_epoch_0001']
+    >>> data.shape
+    (4, 1)
+    """
+    col_names = []
+    all_values = []
+
+    # Flatten data: one row per (channel, epoch) combination
+    for roi_name, roi_data_array in roi_data.items():
+        # roi_data_array is (n_channels_in_roi, n_epochs)
+        n_channels_in_roi = roi_data_array.shape[0]
+
+        # For each channel in this ROI
+        for ch_idx in range(n_channels_in_roi):
+            channel_data = roi_data_array[ch_idx, :]  # (n_epochs,)
+
+            # Add each epoch's value with unique header
+            for epoch_idx in range(n_epochs):
+                all_values.append(channel_data[epoch_idx])
+                # Use format matching spectral: channel_epoch_NNNN
+                col_names.append(f"{roi_name}_epoch_{epoch_idx:04d}")
+
+    # Convert to column vector like HDF5 expects
+    data_array = np.array(all_values).reshape(-1, 1)
+
+    return data_array, col_names
+
+
+def create_spectral_band_epoch_column_names(
+    band_data_dict: Dict[str, np.ndarray],
+    channel_names: List[str],
+    n_epochs: int,
+) -> tuple[np.ndarray, list[str]]:
+    """Create spectral band + channel + epoch column names for multi-band data.
+
+    Generates column names in the format: band_channel_epoch_NNNN
+    Used for spectral power markers that compute multiple frequency bands.
+
+    Used by: SpectralPower, PowerSpectralDensity (when applicable)
+
+    Parameters
+    ----------
+    band_data_dict : dict
+        Dictionary mapping band names to data arrays.
+        Each array should have shape (n_epochs, n_channels).
+    channel_names : list of str
+        Names of EEG channels.
+    n_epochs : int
+        Number of epochs in the data.
+
+    Returns
+    -------
+    data_array : np.ndarray
+        Flattened data array with shape (1, n_bands * n_channels * n_epochs).
+    col_names : list of str
+        Column names in format: band_channel_epoch_NNNN.
+
+    Examples
+    --------
+    >>> bands = {'delta': np.array([[0.1, 0.2], [0.3, 0.4]])}  # 2 epochs, 2 channels
+    >>> channels = ['Fp1', 'Fz']
+    >>> data, names = create_spectral_band_epoch_column_names(bands, channels, 2)
+    >>> names
+    ['delta_Fp1_epoch_0000', 'delta_Fz_epoch_0000',
+     'delta_Fp1_epoch_0001', 'delta_Fz_epoch_0001']
+    >>> data.shape
+    (1, 4)
+    """
+    all_values = []
+    col_names = []
+
+    # Combine all bands into a single flattened result
+    for band_name, band_data in band_data_dict.items():
+        # Flatten band data: (n_epochs, n_channels) -> (n_epochs * n_channels,)
+        flattened_data = band_data.flatten()
+        all_values.extend(flattened_data)
+
+        # Create column names for each epoch-channel combination
+        for epoch_idx in range(n_epochs):
+            for ch_name in channel_names:
+                col_names.append(
+                    f"{band_name}_{ch_name}_epoch_{epoch_idx:04d}"
+                )
+
+    # Convert to row vector like HDF5 expects for spectral data
+    data_array = np.array(all_values).reshape(1, -1)
+
+    return data_array, col_names
+
+
+def create_connectivity_pair_column_names(
+    channel_names: List[str],
+) -> list[str]:
+    """Create connectivity pair column names for upper triangular matrix.
+
+    Generates column names in the format: channel1-channel2
+    Used for connectivity markers (SMI, coherence, PLV, etc.).
+
+    Used by: SymbolicMutualInformation, and future connectivity markers
+
+    Parameters
+    ----------
+    channel_names : list of str
+        Names of EEG channels.
+
+    Returns
+    -------
+    col_names : list of str
+        Column names in format: channel1-channel2 for upper triangular pairs.
+
+    Examples
+    --------
+    >>> channels = ['Fp1', 'Fz', 'Cz']
+    >>> names = create_connectivity_pair_column_names(channels)
+    >>> names
+    ['Fp1-Fz', 'Fp1-Cz', 'Fz-Cz']
+    """
+    col_names = []
+    n_channels = len(channel_names)
+
+    # Generate column names for upper triangular pairs only (excluding diagonal)
+    for i in range(n_channels):
+        for j in range(i + 1, n_channels):  # Only upper triangular (j > i)
+            col_names.append(f"{channel_names[i]}-{channel_names[j]}")
+
+    return col_names
+
+
 def apply_roi_trial_aggregation(
     data: Dict[str, np.ndarray],
     roi_aggregation_methods: Optional[List[str]] = None,

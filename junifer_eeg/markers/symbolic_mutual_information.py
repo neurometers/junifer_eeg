@@ -182,8 +182,9 @@ class SymbolicMutualInformation(BaseMarker):
         weighted: bool = True,
         csd: bool = True,
         anti_aliasing: bool = True,
-        average: bool = True,
+        average: bool = False,
         rois: Optional[List[str]] = None,
+        connectivity_aggregation_method: Optional[str | List[str]] = None,
         roi_aggregation_method: Optional[str | List[str]] = None,
         trial_aggregation_method: Optional[str | List[str]] = None,
         equipment: str = "standard",
@@ -199,6 +200,16 @@ class SymbolicMutualInformation(BaseMarker):
 
         Parameters
         ----------
+        connectivity_aggregation_method : str or list of str, optional
+            Method(s) to aggregate across the second connectivity dimension (channels_y).
+            Options: 'median', 'mean', 'std', 'trim_mean80', etc.
+            For NICE compatibility, use 'median'. If None, no aggregation on channels_y.
+        roi_aggregation_method : str or list of str, optional
+            Method(s) to aggregate across channels dimension.
+            For NICE compatibility, use 'mean'. If None, no aggregation on channels.
+        trial_aggregation_method : str or list of str, optional
+            Method(s) to aggregate across epochs dimension.
+            For NICE compatibility, use 'trim_mean80'. If None, no aggregation on epochs.
         csd : bool, optional
             Whether to apply Current Source Density (CSD) preprocessing for weighted SMI.
             Only applied when weighted=True. Default: True (matches NICE behavior).
@@ -218,6 +229,7 @@ class SymbolicMutualInformation(BaseMarker):
         self.anti_aliasing = anti_aliasing
         self.average = average
         self.rois = rois
+        self.connectivity_aggregation_method = connectivity_aggregation_method
         self.roi_aggregation_method = roi_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
@@ -446,11 +458,32 @@ class SymbolicMutualInformation(BaseMarker):
         # Note: NICE only fills upper triangle, result[i,j] where i < j
         # Symmetrization is handled later in each branch appropriately
 
-        # Check if we should return full connectivity matrix without aggregation
+        # Check if we should apply configurable aggregation pipeline
         if (
-            self.roi_aggregation_method is None
-            and self.trial_aggregation_method is None
+            self.connectivity_aggregation_method is not None
+            or self.roi_aggregation_method is not None
+            or self.trial_aggregation_method is not None
         ):
+            # Apply configurable reduction pipeline on RAW asymmetric data
+            # NICE applies reduction to raw upper-triangular connectivity matrix
+            # result shape: (n_channels, n_channels, n_epochs)
+            results = self._apply_configurable_aggregation(
+                result, picked_ch_names
+            )
+
+        elif self.average:
+            # Legacy average mode - symmetrize and average across epochs
+            # CRITICAL FIX: NICE adds the transpose (which doubles upper triangle)
+            result_symmetric = result + result.transpose(1, 0, 2)
+
+            # Average across epochs
+            result_avg = np.mean(result_symmetric, axis=2)
+
+            # Use ROI aggregation to get per-channel values for topographic plotting
+            results = self._aggregate_connectivity_for_rois(
+                result_avg, picked_ch_names
+            )
+        else:
             # Return per-epoch connectivity matrices without any aggregation
             result_epoched = result.transpose(
                 2, 0, 1
@@ -459,16 +492,11 @@ class SymbolicMutualInformation(BaseMarker):
             # Return per-epoch results - each epoch gets its own row
             # Use lower triangular matrix like NICE (excluding diagonal)
             epoch_data = []
-            col_names = []
 
-            # Generate column names for upper triangular pairs only (like NICE)
-            for i in range(n_channels_picked):
-                for j in range(
-                    i + 1, n_channels_picked
-                ):  # Only upper triangular (j > i)
-                    col_names.append(
-                        f"{picked_ch_names[i]}-{picked_ch_names[j]}"
-                    )
+            # Generate column names for upper triangular pairs using utility function
+            from .utils import create_connectivity_pair_column_names
+
+            col_names = create_connectivity_pair_column_names(picked_ch_names)
 
             # Extract upper triangular values for each epoch (like NICE)
             for epoch_idx in range(n_epochs):
@@ -489,84 +517,121 @@ class SymbolicMutualInformation(BaseMarker):
                     "col_names": col_names,
                 }
             }
-        elif self.average:
-            # Average across epochs - EXACT NICE behavior
-            result_epoched = result.transpose(
-                2, 0, 1
-            )  # (n_epochs, n_channels, n_channels)
 
-            # Extract connectivity for specified connections only - EXACT NICE behavior
-            n_cons = len(indices_use[0])
-            result_conn_data = np.zeros(n_cons)
-            indices_list = list(zip(indices_use[0], indices_use[1]))
+        return results
 
-            # Average across epochs first, then extract values
-            result_avg = np.mean(
-                result_epoched, axis=0
-            )  # (n_channels, n_channels)
+    def _apply_configurable_aggregation(
+        self, connectivity_tensor, picked_ch_names
+    ):
+        """Apply configurable aggregation pipeline to connectivity tensor.
 
-            for conn_idx, (i, j) in enumerate(indices_list):
-                # NICE computes upper triangle: result[i,j] where i < j
-                # indices_use gives us (i,j) where i < j, so use directly
-                result_conn_data[conn_idx] = result_avg[i, j]
+        Applies aggregation in the order specified by NICE:
+        1. connectivity_aggregation_method across channels_y dimension (axis=1)
+        2. roi_aggregation_method across channels dimension (axis=0)
+        3. trial_aggregation_method across epochs dimension
 
-            # Create full connectivity matrix for aggregation
-            full_matrix = np.zeros((n_channels_picked, n_channels_picked))
-            # Keep diagonal at 0.0 to match NICE implementation
+        Parameters
+        ----------
+        connectivity_tensor : np.ndarray
+            Shape (n_channels, n_channels, n_epochs)
+        picked_ch_names : list
+            Channel names
 
-            # Fill the lower triangle with computed values
-            for conn_idx, (i, j) in enumerate(indices_list):
-                full_matrix[i, j] = result_conn_data[conn_idx]
-                full_matrix[j, i] = result_conn_data[
-                    conn_idx
-                ]  # Make symmetric
+        Returns
+        -------
+        dict
+            Results dictionary with aggregated data
+        """
+        from .utils import aggregate_data
 
-            # Use ROI aggregation to get per-channel values for topographic plotting
-            results = self._aggregate_connectivity_for_rois(
-                full_matrix, picked_ch_names
+        # Start with raw connectivity tensor: (n_channels, n_channels, n_epochs)
+        current_data = connectivity_tensor
+
+        # Step 1: Aggregate across channels_y (second connectivity dimension, axis=1)
+        if self.connectivity_aggregation_method is not None:
+            conn_methods = (
+                [self.connectivity_aggregation_method]
+                if isinstance(self.connectivity_aggregation_method, str)
+                else self.connectivity_aggregation_method
             )
 
-        else:
-            # Return epoch-wise connectivity
-            # CRITICAL FIX: NICE adds the transpose (which doubles upper triangle)
-            result_symmetric = result + result.transpose(1, 0, 2)
-
-            # For non-averaged case, return trial-averaged matrix for junifer compatibility
-            result_avg = np.mean(result_symmetric, axis=2)
-
-            # Check if we should use ROI aggregation for topographic visualization
-            if (
-                self.roi_aggregation_method is not None
-                or self.trial_aggregation_method is not None
-            ):
-                # Use the symmetric matrix directly for aggregation
-                full_matrix = result_avg.copy()
-
-                # Use ROI aggregation to get per-channel values for topographic plotting
-                results = self._aggregate_connectivity_for_rois(
-                    full_matrix, picked_ch_names
+            for conn_method in conn_methods:
+                # Apply aggregation across axis=1 (channels_y)
+                current_data = aggregate_data(
+                    current_data, conn_method, axis=1
                 )
-            else:
-                # Return full connectivity matrix
-                full_matrix = result_avg.copy()
+                # After first aggregation: (n_channels, n_epochs)
 
-                results = {
-                    "symbolicmutualinformation": {
-                        "data": full_matrix.flatten().reshape(1, -1),
-                        "col_names": [
-                            f"{picked_ch_names[i]}-{picked_ch_names[j]}"
-                            for i in range(n_channels_picked)
-                            for j in range(n_channels_picked)
-                        ],
-                    }
+        # Step 2: Aggregate across channels (first dimension, axis=0)
+        if self.roi_aggregation_method is not None:
+            roi_methods = (
+                [self.roi_aggregation_method]
+                if isinstance(self.roi_aggregation_method, str)
+                else self.roi_aggregation_method
+            )
+
+            for roi_method in roi_methods:
+                # Apply aggregation across axis=0 (channels)
+                current_data = aggregate_data(current_data, roi_method, axis=0)
+                # After aggregation: (n_epochs,) or scalar if already reduced
+
+        # Step 3: Aggregate across epochs (last dimension)
+        if self.trial_aggregation_method is not None:
+            trial_methods = (
+                [self.trial_aggregation_method]
+                if isinstance(self.trial_aggregation_method, str)
+                else self.trial_aggregation_method
+            )
+
+            for trial_method in trial_methods:
+                # If current_data is 1D (n_epochs), aggregate across axis=0
+                # If current_data is already scalar, this won't change it
+                if current_data.ndim > 0:
+                    current_data = aggregate_data(
+                        current_data, trial_method, axis=0
+                    )
+
+        # Format output based on result shape
+        if np.isscalar(current_data) or current_data.size == 1:
+            # Scalar result - fully aggregated
+            scalar_value = (
+                float(current_data)
+                if np.isscalar(current_data)
+                else float(current_data.item())
+            )
+            results = {
+                "symbolicmutualinformation": {
+                    "data": np.array([[scalar_value]]),
+                    "col_names": ["wsmi_aggregated"],
                 }
+            }
+        else:
+            # Vector or matrix result - return as is
+            # Ensure 2D format for junifer compatibility
+            if current_data.ndim == 1:
+                data_2d = current_data.reshape(-1, 1)
+                col_names = [f"E{i + 1}" for i in range(len(current_data))]
+            else:
+                data_2d = current_data.reshape(1, -1)
+                col_names = [f"conn_{i}" for i in range(current_data.size)]
+
+            results = {
+                "symbolicmutualinformation": {
+                    "data": data_2d,
+                    "col_names": col_names,
+                }
+            }
 
         return results
 
     def _aggregate_connectivity_for_rois(
         self, connectivity_matrix, picked_ch_names
     ):
-        """Aggregate connectivity matrix into per-channel values for topographic plotting."""
+        """Aggregate connectivity matrix for ROI-based analysis (legacy method).
+
+        This method is kept for backward compatibility but is not used
+        when following NICE reduction pipeline.
+        """
         from .utils import apply_roi_trial_aggregation, get_data_for_rois
 
         # For connectivity, we need to aggregate each channel's connections
@@ -578,20 +643,26 @@ class SymbolicMutualInformation(BaseMarker):
 
         for i in range(n_channels):
             # Get all connections for channel i (excluding self-connection)
-            connections = np.concatenate(
-                [
-                    connectivity_matrix[
-                        i, :i
-                    ],  # connections to channels 0 to i-1
-                    connectivity_matrix[
-                        i, i + 1 :
-                    ],  # connections to channels i+1 to end
-                ]
+            # Since matrix is symmetric (result + transpose), only use upper triangle
+            # to avoid double-counting. For channel i, use connections to j > i.
+            connections = connectivity_matrix[
+                i, i + 1 :
+            ]  # Upper triangle only
+
+            # Also need connections FROM other channels TO i (lower triangle)
+            # These are in connectivity_matrix[:i, i]
+            connections_from = connectivity_matrix[:i, i]
+
+            # Combine both (these are different connections, not duplicates)
+            all_connections = (
+                np.concatenate([connections_from, connections])
+                if i > 0
+                else connections
             )
+
             # Use mean across connections (excluding diagonal) for per-channel measure
-            # This gives best correlation (r=0.911) with NICE ground truth
             per_channel_values[i] = (
-                np.mean(connections) if len(connections) > 0 else 0.0
+                np.mean(all_connections) if len(all_connections) > 0 else 0.0
             )
 
         # Now use standard ROI aggregation
