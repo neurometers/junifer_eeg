@@ -1,12 +1,12 @@
 """Kolmogorov Complexity marker for junifer_eeg."""
 
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar, List, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import aggregate_data, get_data_for_rois
 
 
 @register_marker
@@ -33,9 +33,10 @@ class KolmogorovComplexity(BaseMarker):
         nbins: int = 16,
         epoch_length: float = 2.0,
         overlap: float = 0.0,
-        rois: Optional[List[str]] = None,
-        roi_aggregation_method: Optional[List[str]] = None,
-        trial_aggregation_method: Optional[List[str]] = None,
+        rois: Union[List[str], List[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -53,12 +54,27 @@ class KolmogorovComplexity(BaseMarker):
             Length of epochs to create from continuous data in seconds.
         overlap : float, default=0.0
             Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
-        rois : list of str, optional
-            List of ROI names. If None, use all channels.
-        roi_aggregation_method : list of str, optional
-            Methods to aggregate across ROI electrodes: ['mean', 'std'].
-        trial_aggregation_method : list of str, optional
-            Methods to aggregate across trials/epochs: ['mean', 'std'].
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1', 'E224') OR semantic ROI (e.g., 'frontal', 'scalp')
+
+            Examples:
+            - [0, 1, 2, ..., 223] - NICE scalp ROI via indices
+            - ['E1', 'E2', ..., 'E224'] - NICE scalp ROI via names
+            - ['scalp'] - Semantic ROI (expands to all scalp channels)
+            - [0, 'E5', 10, 'frontal'] - Mix of types
+
+            If None, uses all channels.
+        channel_aggregation_method : str, optional
+            Methods to aggregate across ROI electrodes/channels: 'mean', 'std',
+            'median', 'trim_mean80', 'trim_mean90', etc.
+        trial_aggregation_method : str, optional
+            Methods to aggregate across trials/epochs: 'mean', 'std',
+            'median', 'trim_mean80', 'trim_mean90', etc.
+        equipment : str, optional
+            Equipment name for named ROIs.
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -70,8 +86,9 @@ class KolmogorovComplexity(BaseMarker):
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
         super().__init__(on=on, name=name)
 
     def compute(
@@ -136,6 +153,29 @@ class KolmogorovComplexity(BaseMarker):
                 ]  # Shape: (1, n_channels, n_samples)
 
         n_epochs, n_channels, n_samples = epochs_data.shape
+        ch_names = list(data_obj.ch_names)
+
+        # Apply ROI filtering BEFORE computation if specified
+        if self.rois is not None:
+            # Transpose to (n_channels, n_epochs, n_samples)
+            data_transposed = epochs_data.transpose(1, 0, 2)
+
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                data_transposed,
+                ch_names,
+                self.rois,
+                self.equipment,
+            )
+
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                data_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_samples)
+                epochs_data = data_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_samples = epochs_data.shape
+                # Preserve the actual ROI channel names
+                ch_names = self.rois
 
         # Compute Kolmogorov complexity for each channel and epoch
         k_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
@@ -147,50 +187,97 @@ class KolmogorovComplexity(BaseMarker):
                     self._compute_kolmogorov_for_signal(signal)
                 )
 
-        # Handle ROI selection
+        # Apply ROI filtering if specified
         if self.rois is not None:
-            # Extract data for specified ROIs
+            # k_values shape: (n_epochs, n_channels)
+            # Transpose to (n_channels, n_epochs) for get_data_for_rois
             roi_data = get_data_for_rois(
-                k_values.T,  # Transpose to (n_channels, n_epochs)
-                list(data_obj.ch_names),
+                k_values.T,
+                list(ch_names),
                 self.rois,
+                self.equipment,
             )
-        else:
-            # Use all channels as individual ROIs
-            roi_data = {
-                ch: k_values[:, i : i + 1].T
-                for i, ch in enumerate(data_obj.ch_names)
-            }
+            # Extract filtered data and transpose back
+            if "selected_channels" in roi_data:
+                k_values = roi_data["selected_channels"].T
+                ch_names = self.rois
 
-        # Check if we should return per-epoch data without aggregation
+        # k_values shape: (n_epochs, n_channels)
+
+        # Check if we should return raw data without aggregation
         if (
-            self.roi_aggregation_method is None
+            self.channel_aggregation_method is None
             and self.trial_aggregation_method is None
         ):
-            # Return per-epoch results without any aggregation
-            # Use utility function to create standardized column names
-            from .utils import create_per_epoch_column_names
-
-            data_array, col_names = create_per_epoch_column_names(
-                roi_data, n_epochs
-            )
-
-            results = {
+            # Return raw per-epoch, per-channel data
+            col_names = [f"{ch}" for ch in ch_names]
+            return {
                 "kolmogorovcomplexity": {
-                    "data": data_array,
+                    "data": k_values,
                     "col_names": col_names,
                 }
             }
-        else:
-            # Apply aggregation
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="KolmogorovComplexity",
-            )
 
-        return results
+        # Apply aggregation
+        result_data = k_values
+
+        # Step 1: Channel aggregation (aggregate across axis=1)
+        if self.channel_aggregation_method is not None:
+            result_data = aggregate_data(
+                result_data,
+                self.channel_aggregation_method,
+                axis=1,
+            )
+            # After channel agg: (n_epochs,)
+
+        # Step 2: Trial aggregation
+        if self.trial_aggregation_method is not None:
+            if result_data.ndim == 1:
+                # Already reduced by channel agg: (n_epochs,)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=None,
+                )
+                # Result: scalar
+            else:
+                # No channel agg yet: (n_epochs, n_channels)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=0,
+                )
+                # Result: (n_channels,)
+
+        # Reshape to 2D for consistent output
+        if result_data.ndim == 0:
+            result_data = np.array([[result_data]])
+        elif result_data.ndim == 1:
+            if self.channel_aggregation_method is not None:
+                result_data = result_data[np.newaxis, :]
+            else:
+                result_data = result_data[np.newaxis, :]
+
+        # Generate column names based on aggregation
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            col_names = ["all_channels_all_trials"]
+        elif self.channel_aggregation_method is not None:
+            n_trials = result_data.shape[1]
+            col_names = [f"trial_{i}" for i in range(n_trials)]
+        elif self.trial_aggregation_method is not None:
+            col_names = [f"{ch}" for ch in ch_names]
+        else:
+            col_names = [f"{ch}" for ch in ch_names]
+
+        return {
+            "kolmogorovcomplexity": {
+                "data": result_data,
+                "col_names": col_names,
+            }
+        }
 
     def _create_epochs_from_continuous(self, raw):
         """Create epochs from continuous data."""

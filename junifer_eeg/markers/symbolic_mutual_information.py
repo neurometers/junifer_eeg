@@ -2,7 +2,7 @@
 
 import math
 from itertools import permutations
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import numba
 import numpy as np
@@ -140,13 +140,6 @@ def _wsmi_python_jitted(data_sym, counts, wts_matrix, weighted=True):
     return result
 
 
-def check_indices(indices):
-    """Simple implementation of check_indices."""
-    if indices is None:
-        return None
-    return (np.array(indices[0]), np.array(indices[1]))
-
-
 @register_marker
 class SymbolicMutualInformation(BaseMarker):
     """Symbolic mutual information marker for connectivity analysis.
@@ -182,12 +175,11 @@ class SymbolicMutualInformation(BaseMarker):
         weighted: bool = True,
         csd: bool = True,
         anti_aliasing: bool = True,
-        average: bool = False,
-        rois: Optional[List[str]] = None,
+        rois: Union[List[str], List[int], None] = None,
         connectivity_aggregation_method: Optional[str | List[str]] = None,
-        roi_aggregation_method: Optional[str | List[str]] = None,
-        trial_aggregation_method: Optional[str | List[str]] = None,
-        equipment: str = "standard",
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         epoch_length: Optional[float] = None,
         overlap: float = 0.0,
         fmin: Optional[float] = None,
@@ -200,14 +192,27 @@ class SymbolicMutualInformation(BaseMarker):
 
         Parameters
         ----------
-        connectivity_aggregation_method : str or list of str, optional
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1', 'E224') OR semantic ROI (e.g., 'scalp')
+
+            Examples:
+            - list(range(224)) - NICE scalp ROI via indices (EGI/256)
+            - ['E1', 'E2', ..., 'E224'] - NICE scalp ROI via names
+            - ['scalp'] - Semantic ROI (expands to all scalp channels)
+
+            **CRITICAL FOR NICE:** Applied BEFORE connectivity computation.
+            Filters BOTH dimensions of the connectivity matrix.
+        connectivity_aggregation_method : str, optional
             Method(s) to aggregate across the second connectivity dimension (channels_y).
             Options: 'median', 'mean', 'std', 'trim_mean80', etc.
             For NICE compatibility, use 'median'. If None, no aggregation on channels_y.
-        roi_aggregation_method : str or list of str, optional
+        channel_aggregation_method : str, optional
             Method(s) to aggregate across channels dimension.
             For NICE compatibility, use 'mean'. If None, no aggregation on channels.
-        trial_aggregation_method : str or list of str, optional
+        trial_aggregation_method : str, optional
             Method(s) to aggregate across epochs dimension.
             For NICE compatibility, use 'trim_mean80'. If None, no aggregation on epochs.
         csd : bool, optional
@@ -227,10 +232,9 @@ class SymbolicMutualInformation(BaseMarker):
         self.weighted = weighted
         self.csd = csd
         self.anti_aliasing = anti_aliasing
-        self.average = average
         self.rois = rois
         self.connectivity_aggregation_method = connectivity_aggregation_method
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
         self.epoch_length = epoch_length
@@ -275,29 +279,15 @@ class SymbolicMutualInformation(BaseMarker):
         # Get the filtered MNE Epochs object
         epochs = data_obj
 
-        # Extract metadata from input to preserve element information
-        meta = input.get("meta", None)
-
         # Check if epochs object is empty
         if len(data_obj) == 0:
             # Return empty results for empty epochs
-            ch_names = data_obj.ch_names
-            if self.rois is not None:
-                roi_data = {
-                    roi: np.array([]).reshape(0, 0) for roi in self.rois
+            return {
+                "symbolicmutualinformation": {
+                    "data": np.array([[]]),
+                    "col_names": [],
                 }
-            else:
-                roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
-
-            from .utils import apply_roi_trial_aggregation
-
-            return apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="symbolicmutualinformation",
-                meta=meta,
-            )
+            }
 
         # Validate parameters (like NICE)
         if self.kernel <= 1:
@@ -362,12 +352,36 @@ class SymbolicMutualInformation(BaseMarker):
         picked_ch_names = [epochs.ch_names[i] for i in picks]
         n_epochs, n_channels_picked, n_times_epoch = data_for_comp.shape
 
+        # Apply ROI filtering BEFORE computation if specified (NICE requirement)
+        if self.rois is not None:
+            from .utils import get_data_for_rois
+
+            # Transpose to (n_channels, n_epochs, n_times)
+            data_transposed = data_for_comp.transpose(1, 0, 2)
+
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                data_transposed,
+                picked_ch_names,
+                self.rois,
+                self.equipment,
+            )
+
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                data_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_times)
+                data_for_comp = data_filtered.transpose(1, 0, 2)
+                n_channels_picked = data_for_comp.shape[1]
+                # Update channel names
+                picked_ch_names = [f"ch_{i}" for i in range(n_channels_picked)]
+
         # Check for insufficient channels for connectivity computation
         if n_channels_picked < 2:
             raise ValueError(
                 f"At least 2 channels are required for connectivity computation, "
                 f"but only {n_channels_picked} channels available after excluding "
-                f"bad channels."
+                f"bad channels and applying ROI filtering."
             )
 
         # Apply filtering using NICE's EXACT approach
@@ -456,32 +470,20 @@ class SymbolicMutualInformation(BaseMarker):
         result = _wsmi_python_jitted(sym, count, wts, self.weighted)
         # result is (n_channels_picked, n_channels_picked, n_epochs)
         # Note: NICE only fills upper triangle, result[i,j] where i < j
-        # Symmetrization is handled later in each branch appropriately
+        # CRITICAL: NICE ALWAYS symmetrizes before any aggregation
+        # This ensures connectivity matrix is symmetric: result[i,j] = result[j,i]
+        result = result + result.transpose(1, 0, 2)
 
         # Check if we should apply configurable aggregation pipeline
         if (
             self.connectivity_aggregation_method is not None
-            or self.roi_aggregation_method is not None
+            or self.channel_aggregation_method is not None
             or self.trial_aggregation_method is not None
         ):
-            # Apply configurable reduction pipeline on RAW asymmetric data
-            # NICE applies reduction to raw upper-triangular connectivity matrix
+            # Apply configurable reduction pipeline on symmetrized data
             # result shape: (n_channels, n_channels, n_epochs)
             results = self._apply_configurable_aggregation(
                 result, picked_ch_names
-            )
-
-        elif self.average:
-            # Legacy average mode - symmetrize and average across epochs
-            # CRITICAL FIX: NICE adds the transpose (which doubles upper triangle)
-            result_symmetric = result + result.transpose(1, 0, 2)
-
-            # Average across epochs
-            result_avg = np.mean(result_symmetric, axis=2)
-
-            # Use ROI aggregation to get per-channel values for topographic plotting
-            results = self._aggregate_connectivity_for_rois(
-                result_avg, picked_ch_names
             )
         else:
             # Return per-epoch connectivity matrices without any aggregation
@@ -527,7 +529,7 @@ class SymbolicMutualInformation(BaseMarker):
 
         Applies aggregation in the order specified by NICE:
         1. connectivity_aggregation_method across channels_y dimension (axis=1)
-        2. roi_aggregation_method across channels dimension (axis=0)
+        2. channel_aggregation_method across channels dimension (axis=0)
         3. trial_aggregation_method across epochs dimension
 
         Parameters
@@ -549,47 +551,47 @@ class SymbolicMutualInformation(BaseMarker):
 
         # Step 1: Aggregate across channels_y (second connectivity dimension, axis=1)
         if self.connectivity_aggregation_method is not None:
-            conn_methods = (
-                [self.connectivity_aggregation_method]
-                if isinstance(self.connectivity_aggregation_method, str)
-                else self.connectivity_aggregation_method
+            current_data = aggregate_data(
+                current_data, self.connectivity_aggregation_method, axis=1
             )
-
-            for conn_method in conn_methods:
-                # Apply aggregation across axis=1 (channels_y)
-                current_data = aggregate_data(
-                    current_data, conn_method, axis=1
-                )
-                # After first aggregation: (n_channels, n_epochs)
+            # After first aggregation: (n_channels, n_epochs)
 
         # Step 2: Aggregate across channels (first dimension, axis=0)
-        if self.roi_aggregation_method is not None:
-            roi_methods = (
-                [self.roi_aggregation_method]
-                if isinstance(self.roi_aggregation_method, str)
-                else self.roi_aggregation_method
+        if self.channel_aggregation_method is not None:
+            current_data = aggregate_data(
+                current_data, self.channel_aggregation_method, axis=0
             )
 
-            for roi_method in roi_methods:
-                # Apply aggregation across axis=0 (channels)
-                current_data = aggregate_data(current_data, roi_method, axis=0)
-                # After aggregation: (n_epochs,) or scalar if already reduced
+        else:
+            # CRITICAL FIX: If roi_aggregation is skipped, after connectivity aggregation
+            # current_data is (n_channels, n_epochs). We need to transpose so epochs
+            # are on axis=0 for trial aggregation to work correctly on epochs (not channels)
+            if current_data.ndim == 2:
+                current_data = current_data.T  # Now (n_epochs, n_channels)
 
-        # Step 3: Aggregate across epochs (last dimension)
+        # Step 3: Aggregate across epochs (axis depends on current shape)
         if self.trial_aggregation_method is not None:
-            trial_methods = (
-                [self.trial_aggregation_method]
-                if isinstance(self.trial_aggregation_method, str)
-                else self.trial_aggregation_method
-            )
+            if current_data.ndim > 0:
+                # Determine correct axis based on shape:
+                # - 3D (n_channels, n_channels, n_epochs): aggregate axis=2 (epochs)
+                # - 2D (n_epochs, n_channels): aggregate axis=0 (epochs)
+                # - 1D (n_epochs,): aggregate axis=0 (epochs)
+                if current_data.ndim == 3:
+                    # Still have 3D connectivity tensor - aggregate across epochs (axis=2)
+                    epoch_axis = 2
+                else:
+                    # Already reduced to 2D or 1D - epochs are on axis=0
+                    epoch_axis = 0
 
-            for trial_method in trial_methods:
-                # If current_data is 1D (n_epochs), aggregate across axis=0
-                # If current_data is already scalar, this won't change it
-                if current_data.ndim > 0:
-                    current_data = aggregate_data(
-                        current_data, trial_method, axis=0
-                    )
+                current_data = aggregate_data(
+                    current_data,
+                    self.trial_aggregation_method,
+                    axis=epoch_axis,
+                )
+                # After aggregation:
+                # - Was 3D: now (n_channels, n_channels)
+                # - Was 2D: now (n_channels,)
+                # - Was 1D: now scalar
 
         # Format output based on result shape
         if np.isscalar(current_data) or current_data.size == 1:
@@ -607,11 +609,41 @@ class SymbolicMutualInformation(BaseMarker):
             }
         else:
             # Vector or matrix result - return as is
-            # Ensure 2D format for junifer compatibility
+            # Ensure proper format for junifer compatibility
             if current_data.ndim == 1:
+                # 1D vector - per-channel aggregated (n_channels,)
                 data_2d = current_data.reshape(-1, 1)
                 col_names = [f"E{i + 1}" for i in range(len(current_data))]
+            elif current_data.ndim == 2:
+                # 2D matrix - could be:
+                # a) (n_epochs, n_channels) - per-epoch per-channel
+                # b) (n_channels, n_channels) - connectivity matrix averaged across epochs
+
+                # Check if square (connectivity matrix) or rectangular (per-epoch)
+                if current_data.shape[0] == current_data.shape[1]:
+                    # Square matrix: (n_channels, n_channels) connectivity
+                    # Flatten to upper triangular for junifer format
+                    from .utils import create_connectivity_pair_column_names
+
+                    col_names = create_connectivity_pair_column_names(
+                        picked_ch_names
+                    )
+
+                    # Extract upper triangular values (excluding diagonal)
+                    n_channels = current_data.shape[0]
+                    indices = np.triu_indices(n_channels, k=1)
+                    upper_tri_values = current_data[indices]
+
+                    # Reshape to (1, n_pairs) for single aggregated connectivity matrix
+                    data_2d = upper_tri_values.reshape(1, -1)
+                else:
+                    # Rectangular matrix: (n_epochs, n_channels) - per-epoch per-channel
+                    data_2d = current_data
+                    col_names = [
+                        f"E{i + 1}" for i in range(current_data.shape[1])
+                    ]
             else:
+                # Higher dimensional - flatten (shouldn't happen with current logic)
                 data_2d = current_data.reshape(1, -1)
                 col_names = [f"conn_{i}" for i in range(current_data.size)]
 
@@ -621,77 +653,5 @@ class SymbolicMutualInformation(BaseMarker):
                     "col_names": col_names,
                 }
             }
-
-        return results
-
-    def _aggregate_connectivity_for_rois(
-        self, connectivity_matrix, picked_ch_names
-    ):
-        """Aggregate connectivity matrix for ROI-based analysis (legacy method).
-
-        This method is kept for backward compatibility but is not used
-        when following NICE reduction pipeline.
-        """
-        from .utils import apply_roi_trial_aggregation, get_data_for_rois
-
-        # For connectivity, we need to aggregate each channel's connections
-        # This creates a per-channel summary suitable for topographic plotting
-        n_channels = connectivity_matrix.shape[0]
-
-        # Calculate per-channel connectivity strength (excluding diagonal)
-        per_channel_values = np.zeros(n_channels)
-
-        for i in range(n_channels):
-            # Get all connections for channel i (excluding self-connection)
-            # Since matrix is symmetric (result + transpose), only use upper triangle
-            # to avoid double-counting. For channel i, use connections to j > i.
-            connections = connectivity_matrix[
-                i, i + 1 :
-            ]  # Upper triangle only
-
-            # Also need connections FROM other channels TO i (lower triangle)
-            # These are in connectivity_matrix[:i, i]
-            connections_from = connectivity_matrix[:i, i]
-
-            # Combine both (these are different connections, not duplicates)
-            all_connections = (
-                np.concatenate([connections_from, connections])
-                if i > 0
-                else connections
-            )
-
-            # Use mean across connections (excluding diagonal) for per-channel measure
-            per_channel_values[i] = (
-                np.mean(all_connections) if len(all_connections) > 0 else 0.0
-            )
-
-        # Now use standard ROI aggregation
-        if self.rois is not None:
-            # Get data for specified ROIs
-            roi_data = get_data_for_rois(
-                per_channel_values.reshape(1, -1),  # Shape: (1, n_channels)
-                picked_ch_names,
-                self.rois,
-            )
-        else:
-            # Use all channels as individual ROIs
-            roi_data = {
-                ch: per_channel_values[i : i + 1].reshape(1, -1)
-                for i, ch in enumerate(picked_ch_names)
-            }
-
-        # Apply aggregation
-        results = apply_roi_trial_aggregation(
-            roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="symbolicmutualinformation",
-        )
-
-        # Fix output format to match expected: transpose from (1, n_channels) to (n_channels, 1)
-        if "symbolicmutualinformation" in results:
-            data = results["symbolicmutualinformation"]["data"]
-            if data.shape[0] == 1 and data.shape[1] > 1:
-                results["symbolicmutualinformation"]["data"] = data.T
 
         return results

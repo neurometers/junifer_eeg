@@ -1,13 +1,13 @@
 """Time-locked topography marker for junifer_eeg."""
 
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar, List, Union
 
 import mne
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import aggregate_data, get_data_for_rois
 
 
 @register_marker
@@ -19,7 +19,7 @@ class TimeLockedTopography(BaseMarker):
 
     Follows next_icm aggregation pattern:
     1. Average across time points (tmin to tmax)
-    2. Aggregate across electrodes (using roi_aggregation_method)
+    2. Aggregate across electrodes (using channel_aggregation_method)
     3. Aggregate across trials (using trial_aggregation_method)
 
     Note: This is adapted from NICE for continuous data. The original NICE
@@ -36,10 +36,10 @@ class TimeLockedTopography(BaseMarker):
         epoch_length: float = 2.0,
         overlap: float = 0.5,
         baseline: tuple[float, float] | None = None,
-        rois: Optional[List[str]] = None,
-        roi_aggregation_method: Optional[List[str]] = None,
-        trial_aggregation_method: Optional[List[str]] = None,
-        equipment: str = "standard",
+        rois: Union[List[str], List[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -57,12 +57,23 @@ class TimeLockedTopography(BaseMarker):
             Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
         baseline : tuple of float, optional
             Baseline correction period (start, end) in seconds.
-        rois : list of str, optional
-            List of ROI names for aggregation.
-        roi_aggregation_method : list of str, optional
-            Methods to aggregate across ROI electrodes: ['mean', 'std'].
-        trial_aggregation_method : list of str, optional
-            Methods to aggregate across trials/epochs: ['mean', 'std'].
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp')
+
+            Examples:
+            - list(range(224)) - NICE scalp ROI via indices
+            - ['scalp'] - Semantic ROI (expands to all scalp channels)
+
+            If None, uses all channels.
+        channel_aggregation_method : str or None, optional
+            Methods to aggregate across channels: 'mean', 'std', 'median',
+            'trim_mean80', 'trim_mean90', etc.
+        trial_aggregation_method : str or None, optional
+            Methods to aggregate across epochs: 'mean', 'std', 'median',
+            'trim_mean80', 'trim_mean90', etc.
         equipment : str, optional
             Equipment type for electrode mapping. Default: 'standard'
         on : str, optional
@@ -76,7 +87,7 @@ class TimeLockedTopography(BaseMarker):
         self.overlap = overlap
         self.baseline = baseline
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
         super().__init__(on=on, name=name)
@@ -160,22 +171,12 @@ class TimeLockedTopography(BaseMarker):
         # Check for empty epochs first
         if len(epochs) == 0:
             # Return empty results for empty epochs
-            ch_names = epochs.ch_names
-            if self.rois is not None:
-                roi_data = {
-                    roi: np.array([]).reshape(0, 0) for roi in self.rois
+            return {
+                "timelockedtopo": {
+                    "data": np.array([[]]),
+                    "col_names": [],
                 }
-            else:
-                roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
-
-            # Apply aggregation to empty data
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="timelockedtopo",
-            )
-            return results
+            }
 
         # Clamp to the available epoch time range to avoid MNE errors
         epoch_min = epochs.tmin
@@ -194,64 +195,137 @@ class TimeLockedTopography(BaseMarker):
         if self.baseline is not None:
             epochs_cropped.apply_baseline(self.baseline)
 
-        # Get the raw time-series data (like NICE implementation)
+        # Get the raw time-series data
         data = (
             epochs_cropped.get_data()
         )  # Shape: (n_epochs, n_channels, n_times)
+        ch_names = list(epochs_cropped.ch_names)
+        n_epochs, n_channels, n_times = data.shape
 
-        # Follow NICE pattern: Apply time window selection first, then average
-        # NICE uses time_mask to select time points, then reduction functions handle averaging
-        # Since we already cropped to the time window, now we average across time
-        # This matches NICE's approach where time averaging happens after time selection
-        time_averaged = np.mean(data, axis=2)  # Shape: (n_epochs, n_channels)
-
-        # Reshape to (n_channels, n_epochs) for aggregation framework
-        time_averaged = time_averaged.T  # Shape: (n_channels, n_epochs)
-
-        # Apply ROI selection
+        # Apply ROI filtering BEFORE time averaging if specified
         if self.rois is not None:
-            roi_data = get_data_for_rois(
-                time_averaged,  # (n_channels, n_epochs)
-                list(epochs.ch_names),
-                self.rois,
-                equipment=self.equipment,
-            )
-        else:
-            # Use all channels as individual ROIs
-            roi_data = {
-                ch: time_averaged[i : i + 1, :]  # (1, n_epochs)
-                for i, ch in enumerate(epochs.ch_names)
-            }
+            # Transpose to (n_channels, n_epochs, n_times)
+            data_transposed = data.transpose(1, 0, 2)
 
-        # Check if we should return per-epoch data without aggregation
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                data_transposed,
+                ch_names,
+                self.rois,
+                self.equipment,
+            )
+
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                data_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_times)
+                data = data_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_times = data.shape
+                # Preserve the actual ROI channel names
+                ch_names = self.rois
+
+        # Check if we should return raw temporal data without aggregation
         if (
-            self.roi_aggregation_method is None
+            self.channel_aggregation_method is None
             and self.trial_aggregation_method is None
         ):
-            # Return per-epoch results without any aggregation
-            # Use utility function to create standardized column names
-            from .utils import create_per_epoch_column_names
-
-            # Get n_epochs from the time_averaged data
-            n_epochs = time_averaged.shape[1]
-
-            data_array, col_names = create_per_epoch_column_names(
-                roi_data, n_epochs
-            )
-
-            results = {
+            # Return raw per-epoch, per-channel, per-time results (matching NICE)
+            # Shape: (n_epochs, n_channels, n_times)
+            return {
                 "timelockedtopo": {
-                    "data": data_array,
+                    "data": data,  # Keep full temporal dimension
+                }
+            }
+
+        # For aggregation, average across time first
+        time_averaged = np.mean(data, axis=2)  # Shape: (n_epochs, n_channels)
+
+        # Apply ROI filtering if specified (second pass for aggregation)
+        if self.rois is not None:
+            # time_averaged shape: (n_epochs, n_channels)
+            # Transpose to (n_channels, n_epochs) for get_data_for_rois
+            roi_data = get_data_for_rois(
+                time_averaged.T,
+                list(ch_names),
+                self.rois,
+                self.equipment,
+            )
+            # Extract filtered data and transpose back
+            if "selected_channels" in roi_data:
+                time_averaged = roi_data["selected_channels"].T
+                ch_names = self.rois
+
+        # Check if we should return raw data without aggregation
+        if (
+            self.channel_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            # Return raw per-epoch, per-channel data
+            col_names = [f"{ch}" for ch in ch_names]
+            return {
+                "timelockedtopo": {
+                    "data": time_averaged,
                     "col_names": col_names,
                 }
             }
-        else:
-            # Apply aggregation to get final clinical values
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="timelockedtopo",
-            )
 
-        return results
+        # Apply aggregation
+        result_data = time_averaged
+
+        # Step 1: Channel aggregation (aggregate across axis=1)
+        if self.channel_aggregation_method is not None:
+            result_data = aggregate_data(
+                result_data,
+                self.channel_aggregation_method,
+                axis=1,
+            )
+            # After channel agg: (n_epochs,)
+
+        # Step 2: Trial aggregation
+        if self.trial_aggregation_method is not None:
+            if result_data.ndim == 1:
+                # Already reduced by channel agg: (n_epochs,)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=None,
+                )
+                # Result: scalar
+            else:
+                # No channel agg yet: (n_epochs, n_channels)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=0,
+                )
+                # Result: (n_channels,)
+
+        # Reshape to 2D for consistent output
+        if result_data.ndim == 0:
+            result_data = np.array([[result_data]])
+        elif result_data.ndim == 1:
+            if self.channel_aggregation_method is not None:
+                result_data = result_data[np.newaxis, :]
+            else:
+                result_data = result_data[np.newaxis, :]
+
+        # Generate column names based on aggregation
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            col_names = ["all_channels_all_trials"]
+        elif self.channel_aggregation_method is not None:
+            n_trials = result_data.shape[1]
+            col_names = [f"trial_{i}" for i in range(n_trials)]
+        elif self.trial_aggregation_method is not None:
+            col_names = [f"{ch}" for ch in ch_names]
+        else:
+            col_names = [f"{ch}" for ch in ch_names]
+
+        return {
+            "timelockedtopo": {
+                "data": result_data,
+                "col_names": col_names,
+            }
+        }

@@ -1,12 +1,10 @@
 """Window decoding marker for EEG analysis."""
 
-from typing import Any, ClassVar, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers.base import BaseMarker
-
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
 
 
 @register_marker
@@ -14,11 +12,11 @@ class WindowDecoding(BaseMarker):
     """Window decoding marker for condition classification.
 
     This marker performs decoding analysis within specified time windows
-    to classify between experimental conditions, following the ICM Local
-    Global paradigm patterns. Essential for analyzing discriminative
-    neural patterns and condition-specific activity.
+    to classify between experimental conditions. Essential for analyzing
+    discriminative neural patterns and condition-specific activity.
 
-    Based on the NICE WindowDecoding implementation.
+    The marker applies optional ROI filtering BEFORE decoding to restrict
+    classification to specific channels (e.g., frontal, parietal regions).
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy", "scikit-learn"}
@@ -39,14 +37,46 @@ class WindowDecoding(BaseMarker):
         scoring: str = "roc_auc",
         random_state: Optional[int] = 42,
         comment: Optional[str] = None,
-        rois: Optional[List[str]] = None,
-        roi_aggregation_method: Optional[str | List[str]] = None,
-        trial_aggregation_method: Optional[str | List[str]] = None,
-        equipment: str = "standard",
+        rois: Union[List[str], List[int], None] = None,
+        equipment: str = "egi256",
         on: Optional[str | List[str]] = None,
         name: Optional[str] = None,
     ) -> None:
-        """Initialize WindowDecoding marker."""
+        """Initialize WindowDecoding marker.
+
+        Parameters
+        ----------
+        condition_a : str or list of str
+            Condition(s) for class A.
+        condition_b : str or list of str
+            Condition(s) for class B.
+        tmin : float
+            Start time for decoding window.
+        tmax : float
+            End time for decoding window.
+        n_splits : int, default=5
+            Number of cross-validation folds.
+        scoring : str, default='roc_auc'
+            Scoring metric ('roc_auc' or 'accuracy').
+        random_state : int, optional
+            Random state for reproducibility.
+        comment : str, optional
+            Label for this decoding analysis.
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE decoding.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp', 'frontal')
+
+            Examples:
+            - ['frontal'] - Decode from frontal channels only
+            - list(range(32)) - Decode from first 32 channels
+            - None - Use all channels (default)
+
+            **NOTE:** ROI filtering restricts which channels contribute to decoding.
+        equipment : str, default='standard'
+            Equipment type for electrode mapping.
+        """
         self.condition_a = (
             condition_a if isinstance(condition_a, list) else [condition_a]
         )
@@ -63,8 +93,6 @@ class WindowDecoding(BaseMarker):
             or f"{'-'.join(self.condition_a)}_vs_{'-'.join(self.condition_b)}_decoding"
         )
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
 
         super().__init__(on=on, name=name)
@@ -74,15 +102,28 @@ class WindowDecoding(BaseMarker):
         input: Dict[str, Any],
         extra_input: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Compute window decoding between conditions."""
-        from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+        """Compute window decoding between conditions.
+
+        Process:
+        1. Filter epochs by condition
+        2. Apply ROI filtering (if specified) to select channels
+        3. Crop to time window
+        4. Flatten: (n_epochs, n_channels * n_times)
+        5. Cross-validated classification
+        6. Return mean score across folds
+        """
         from sklearn.feature_selection import SelectPercentile, f_classif
         from sklearn.model_selection import StratifiedKFold, cross_val_score
         from sklearn.pipeline import Pipeline
         from sklearn.preprocessing import StandardScaler
         from sklearn.svm import SVC
 
+        from .utils import filter_to_eeg_channels, get_data_for_rois
+
         epochs = input["data"]
+
+        # Filter to EEG channels
+        epochs, eeg_ch_names, eeg_indices = filter_to_eeg_channels(epochs)
 
         # Filter epochs by conditions
         epochs_a = (
@@ -96,34 +137,20 @@ class WindowDecoding(BaseMarker):
             else None
         )
 
+        # Check for missing conditions
         if (
             epochs_a is None
             or epochs_b is None
             or len(epochs_a) == 0
             or len(epochs_b) == 0
         ):
-            # Return chance level if conditions not found - use aggregation framework
-            chance_data = np.array([[0.5]])
-
-            if self.rois is not None:
-                # Create dummy data for ROI processing
-                dummy_data = np.full((len(epochs.ch_names), 1), 0.5)
-                roi_data = get_data_for_rois(
-                    dummy_data,
-                    list(epochs.ch_names),
-                    self.rois,
-                    equipment=self.equipment,
-                )
-            else:
-                roi_data = {"all_channels": chance_data.T}
-
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="windowdecoding",
-            )
-            return results
+            # Return chance level (0.5) if conditions not found
+            return {
+                "windowdecoding": {
+                    "data": np.array([[0.5]]),
+                    "col_names": ["score"],
+                }
+            }
 
         # Crop to time window
         epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
@@ -133,22 +160,46 @@ class WindowDecoding(BaseMarker):
         epochs_a.baseline = None
         epochs_b.baseline = None
 
-        # Combine epochs and create labels (following NICE approach)
+        # Combine epochs
         import mne
 
         combined_epochs = mne.concatenate_epochs([epochs_a, epochs_b])
+
+        # Get data: (n_epochs, n_channels, n_times)
+        X = combined_epochs.get_data()
+        ch_names = list(combined_epochs.ch_names)
+        n_epochs, n_channels, n_times = X.shape
+
+        # Apply ROI filtering BEFORE flattening (if specified)
+        if self.rois is not None:
+            # Transpose to (n_channels, n_epochs, n_times)
+            X_transposed = X.transpose(1, 0, 2)
+
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                X_transposed,
+                ch_names,
+                self.rois,
+                self.equipment,
+            )
+
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                X_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_times)
+                X = X_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_times = X.shape
+
+        # Flatten across channels and time: (n_epochs, n_channels * n_times)
+        X_flat = X.reshape(X.shape[0], -1)
+
+        # Create labels
         labels = np.concatenate(
             [
                 np.zeros(len(epochs_a)),  # Label 0 for condition A
                 np.ones(len(epochs_b)),  # Label 1 for condition B
             ],
         )
-
-        # Get data: (n_epochs, n_channels, n_times)
-        X = combined_epochs.get_data()
-
-        # Flatten across time for window decoding: (n_epochs, n_channels * n_times)
-        X_flat = X.reshape(X.shape[0], -1)
 
         # Create classifier pipeline following NICE approach
         if self.scoring == "roc_auc":
@@ -166,11 +217,18 @@ class WindowDecoding(BaseMarker):
             )
         else:
             # Use LDA for accuracy
-            clf = LinearDiscriminantAnalysis()
-            scaler = StandardScaler()
-            X_flat = scaler.fit_transform(X_flat)
+            from sklearn.discriminant_analysis import (
+                LinearDiscriminantAnalysis,
+            )
 
-        # Cross-validation following NICE approach
+            clf = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("lda", LinearDiscriminantAnalysis()),
+                ]
+            )
+
+        # Cross-validation
         cv = StratifiedKFold(
             n_splits=self.n_splits,
             shuffle=True,
@@ -189,26 +247,10 @@ class WindowDecoding(BaseMarker):
         # Mean score across folds
         mean_score = np.mean(scores)
 
-        # Package results using aggregation framework
-        score_data = np.array([[mean_score]])
-
-        if self.rois is not None:
-            # Create dummy data for ROI processing (single value repeated)
-            dummy_data = np.full((len(epochs.ch_names), 1), mean_score)
-            roi_data = get_data_for_rois(
-                dummy_data,
-                list(epochs.ch_names),
-                self.rois,
-                equipment=self.equipment,
-            )
-        else:
-            roi_data = {"all_channels": score_data.T}
-
-        results = apply_roi_trial_aggregation(
-            roi_data,
-            roi_aggregation_methods=self.roi_aggregation_method,
-            trial_aggregation_methods=self.trial_aggregation_method,
-            marker_name="windowdecoding",
-        )
-
-        return results
+        # Return single scalar result
+        return {
+            "windowdecoding": {
+                "data": np.array([[mean_score]]),
+                "col_names": ["score"],
+            }
+        }

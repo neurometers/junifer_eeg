@@ -1,19 +1,15 @@
 """Simple spectral power marker using MNE."""
 
-from typing import Any, ClassVar, List, Optional
+from typing import Any, ClassVar, List, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 from scipy import stats
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
-
 
 def trim_mean80(data, axis=None):
     """Compute trimmed mean removing top and bottom 10% (80% trimmed mean).
-
-    This matches the NICE 'trim_mean80' aggregation method used in ground truth.
 
     Parameters
     ----------
@@ -57,9 +53,10 @@ class SpectralPower(BaseMarker):
         n_per_seg: Optional[int] = None,
         n_overlap: Optional[int] = None,
         db_threshold: Optional[float] = None,
-        rois: Optional[List[str]] = None,
-        roi_aggregation_method: Optional[List[str]] = None,
-        trial_aggregation_method: Optional[List[str]] = None,
+        rois: Union[List[str], List[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -74,7 +71,7 @@ class SpectralPower(BaseMarker):
         normalize : bool, default=False
             If True, normalize power by total power (relative power).
         dB : bool, default=True
-            If True, convert power to decibels (10 * log10). Matches NICE behavior.
+            If True, convert power to decibels (10 * log10).
         entropy : bool, default=False
             If True, compute spectral entropy instead of band power. Requires normalize=True.
         bands : dict, optional
@@ -96,14 +93,19 @@ class SpectralPower(BaseMarker):
         db_threshold : float, optional
             Minimum threshold for dB conversion to avoid log(0). If None (default),
             uses adaptive threshold based on data (1% of minimum non-zero power value).
-            For NICE/ICM compatibility, use 1e-12. Lower values (e.g., 1e-15) may be
-            needed for low-amplitude signals. Only used when dB=True.
-        rois : list of str, optional
-            List of ROI names. If None, use all channels.
-        roi_aggregation_method : list of str, optional
-            Methods to aggregate across ROI electrodes: ['mean', 'std'].
-        trial_aggregation_method : list of str, optional
-            Methods to aggregate across trials/epochs: ['mean', 'std'].
+            Lower values (e.g., 1e-15) may be needed for low-amplitude signals.
+            Only used when dB=True.
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering AFTER PSD computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp')
+
+            If None, uses all channels.
+        channel_aggregation_method : str, optional
+            Methods to aggregate across ROI electrodes: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
+        trial_aggregation_method : str, optional
+            Methods to aggregate across trials/epochs: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -124,8 +126,9 @@ class SpectralPower(BaseMarker):
         self.n_overlap = n_overlap
         self.db_threshold = db_threshold
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
 
         # Validate entropy usage
         if self.entropy and not self.normalize:
@@ -160,32 +163,18 @@ class SpectralPower(BaseMarker):
         # CRITICAL FIX: Filter to only EEG channels (E1-E256), excluding D/DI auxiliary channels
         data_obj, eeg_ch_names, eeg_indices = filter_to_eeg_channels(data_obj)
 
-        # Extract metadata from input to preserve element information
-        meta = input.get("meta", None)
-
         # Handle both Raw and Epochs objects
         if hasattr(data_obj, "events"):
             # This is an Epochs object
             # Check if epochs object is empty
             if len(data_obj) == 0:
                 # Return empty results for empty epochs
-                ch_names = data_obj.ch_names
-                if self.rois is not None:
-                    roi_data = {
-                        roi: np.array([]).reshape(0, 0) for roi in self.rois
+                return {
+                    "spectralpower": {
+                        "data": np.array([[]]),
+                        "col_names": [],
                     }
-                else:
-                    roi_data = {
-                        ch: np.array([]).reshape(0, 0) for ch in ch_names
-                    }
-
-                return apply_roi_trial_aggregation(
-                    roi_data,
-                    roi_aggregation_methods=self.roi_aggregation_method,
-                    trial_aggregation_methods=self.trial_aggregation_method,
-                    marker_name="spectralpower",
-                    meta=meta,
-                )
+                }
             epochs_data = (
                 data_obj.get_data()
             )  # Shape (n_epochs, n_channels, n_times)
@@ -203,7 +192,7 @@ class SpectralPower(BaseMarker):
         n_epochs, n_channels, n_samples = epochs_data.shape
         sfreq = info["sfreq"]
 
-        # Use custom bands or default frequency bands (matching NICE/ICM)
+        # Use custom bands or default frequency bands
         if self.bands is not None:
             bands = self.bands
         else:
@@ -239,7 +228,6 @@ class SpectralPower(BaseMarker):
                 bands = {target_band: standard_bands[target_band]}
             else:
                 # CRITICAL FIX: If fmin/fmax don't match a standard band, create a custom band
-                # This handles cases like 1-45 Hz (full spectrum) for NICE summary_se
                 # Use all standard bands ONLY if this is the default initialization (fmin=1, fmax=45)
                 if abs(self.fmin - 1.0) < 0.1 and abs(self.fmax - 45.0) < 0.1:
                     # Full spectrum request - create single custom band
@@ -270,14 +258,11 @@ class SpectralPower(BaseMarker):
         )
 
         # CRITICAL FIX: For normalized power, MUST compute full spectrum (1-45 Hz)
-        # to match NICE behavior (normalizes by total power across all frequencies)
         if self.normalize:
             # Always compute full spectrum for normalization
             # Do NOT use max_freq here as it's band-specific! Use Nyquist directly.
-            psd_fmin = 1.0  # NICE uses 1 Hz minimum
-            psd_fmax = min(
-                45.0, sfreq / 2 - 1
-            )  # NICE uses 45 Hz maximum, limited by Nyquist
+            psd_fmin = 1.0
+            psd_fmax = min(45.0, sfreq / 2 - 1)
         elif isinstance(self.fmin, list) or isinstance(self.fmax, list):
             # For multi-band analysis, compute full spectrum and extract bands later
             fmin_vals = (
@@ -301,7 +286,6 @@ class SpectralPower(BaseMarker):
             "verbose": False,
         }
 
-        # Add n_fft if specified (for NICE compatibility)
         if self.n_fft is not None:
             psd_params["n_fft"] = self.n_fft
 
@@ -334,26 +318,8 @@ class SpectralPower(BaseMarker):
                 np.newaxis, :, :
             ]  # Shape: (1, n_channels, n_freqs)
 
-        # Get the actual channel names used in the PSD computation
-        # This ensures column names match the actual data shape
-        if hasattr(data_obj, "events"):
-            # CRITICAL FIX: Use only the channels that actually have data in the PSD
-            # MNE's compute_psd() can drop channels but keep them in ch_names
-            actual_n_channels = psds.shape[
-                1
-            ]  # Get actual channel count from data
-            actual_ch_names = psd.ch_names[
-                :actual_n_channels
-            ]  # Use only channels with data
-        else:
-            # For Raw object, use the original channel names
-            actual_ch_names = ch_names
-
-        # CRITICAL FIX: NICE normalizes PSD BEFORE summing across frequencies
-        # This is different from normalizing the summed band power!
         # Apply normalization if requested (relative power)
         if self.normalize:
-            # NICE approach: normalize PSD spectrum, then sum
             # data_norm = data / data.sum(axis=-1, keepdims=True)
             # Then extract band and sum
             total_power_per_epoch_channel = np.sum(
@@ -386,10 +352,8 @@ class SpectralPower(BaseMarker):
                 # Use normalized PSD if normalization is requested
                 band_psds = psds_normalized[:, :, freq_mask]
 
-                # CRITICAL FIX: NICE uses different aggregations
                 if self.entropy:
                     # Spectral entropy: -sum(p * log(p)) / log(n_bins)
-                    # This matches NICE's summary_se marker
                     n_bins = band_psds.shape[-1]
                     # Handle zeros by replacing with small value
                     band_psds_safe = np.where(band_psds > 0, band_psds, 1e-12)
@@ -404,14 +368,9 @@ class SpectralPower(BaseMarker):
             else:
                 all_band_powers[band_name] = np.zeros((n_epochs, n_channels))
 
-        # Apply dB conversion if requested (matches NICE behavior)
-        # NICE applies dB conversion AFTER frequency integration (sum) and normalization,
-        # but BEFORE averaging across trials. This is critical for correct scaling.
-        # CRITICAL FIX: Only apply dB conversion when explicitly requested (dB=True)
         if self.dB:
             # Determine threshold: user-specified or adaptive
             if self.db_threshold is not None:
-                # User specified a threshold (e.g., for NICE/ICM compatibility)
                 threshold = self.db_threshold
             else:
                 # Use data-adaptive threshold
@@ -445,64 +404,94 @@ class SpectralPower(BaseMarker):
 
         # Check if we should return raw PSD data (no aggregation)
         if (
-            self.roi_aggregation_method is None
+            self.channel_aggregation_method is None
             and self.trial_aggregation_method is None
         ):
-            # Return ALL bands without aggregation - this is what users expect
-            # when they specify multiple bands and no aggregation
-            from .utils import create_spectral_band_epoch_column_names
-
-            data_array, col_names = create_spectral_band_epoch_column_names(
-                all_band_powers, actual_ch_names, n_epochs
-            )
-
-            return {
-                "spectralpower": {
-                    "data": data_array,  # Shape: (1, n_total_features)
-                    "col_names": col_names,
+            # Return raw per-epoch, per-channel results without any aggregation
+            # For multiple bands: return dict with each band as (n_epochs, n_channels)
+            if len(all_band_powers) == 1:
+                band_name = next(iter(all_band_powers.keys()))
+                band_data = all_band_powers[band_name]
+                return {
+                    "spectralpower": {
+                        "data": band_data,  # Shape: (n_epochs, n_channels)
+                    }
                 }
-            }
+            else:
+                # Multiple bands - return dict of arrays
+                return {
+                    "spectralpower": {
+                        "data": all_band_powers,  # Dict of (n_epochs, n_channels) arrays
+                    }
+                }
 
         # Remove the single-band debug path to ensure consistent array output format
 
         # Standard aggregation path - combine all bands into single feature set
+        from .utils import aggregate_data, get_data_for_rois
+
         all_values = []
         col_names = []
 
         for band_name, band_data in all_band_powers.items():
-            # Handle ROI selection
+            # Apply ROI filtering if specified
+            band_ch_names = ch_names
             if self.rois is not None:
-                # Extract data for specified ROIs
                 roi_data = get_data_for_rois(
-                    band_data.T,  # Transpose to (n_channels, n_epochs)
+                    band_data.T,
                     list(ch_names),
                     self.rois,
+                    self.equipment,
                 )
-            else:
-                # Use all channels as individual ROIs
-                roi_data = {
-                    ch: band_data[:, i : i + 1].T
-                    for i, ch in enumerate(ch_names)
-                }
+                if "selected_channels" in roi_data:
+                    band_data = roi_data["selected_channels"].T
+                    band_ch_names = self.rois
 
             # Apply aggregation for this band
-            band_results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="spectralpower",
-                meta=meta,
-            )
+            result_data = band_data
 
-            # Extract values and update column names with band info
-            for _feature_name, feature_data in band_results.items():
-                band_values = feature_data["data"].flatten()
+            # Channel aggregation
+            if self.channel_aggregation_method is not None:
+                result_data = aggregate_data(
+                    result_data, self.channel_aggregation_method, axis=1
+                )
+
+            # Trial aggregation
+            if self.trial_aggregation_method is not None:
+                if result_data.ndim == 1:
+                    result_data = aggregate_data(
+                        result_data, self.trial_aggregation_method, axis=None
+                    )
+                else:
+                    result_data = aggregate_data(
+                        result_data, self.trial_aggregation_method, axis=0
+                    )
+
+            # Reshape to 2D
+            if result_data.ndim == 0:
+                result_data = np.array([[result_data]])
+            elif result_data.ndim == 1:
+                result_data = result_data[np.newaxis, :]
+
+            # Generate column names for this band
+            if (
+                self.channel_aggregation_method is not None
+                and self.trial_aggregation_method is not None
+            ):
+                band_col_names = [f"{band_name}_all_channels_all_trials"]
+            elif self.channel_aggregation_method is not None:
+                n_trials = result_data.shape[1]
                 band_col_names = [
-                    f"{band_name}_{col}" for col in feature_data["col_names"]
+                    f"{band_name}_trial_{i}" for i in range(n_trials)
                 ]
+            elif self.trial_aggregation_method is not None:
+                band_col_names = [f"{band_name}_{ch}" for ch in band_ch_names]
+            else:
+                band_col_names = [f"{band_name}_{ch}" for ch in band_ch_names]
 
-                all_values.extend(band_values)
-                col_names.extend(band_col_names)
+            # Flatten and add to combined results
+            all_values.extend(result_data.flatten())
+            col_names.extend(band_col_names)
 
         # Return combined results with proper metadata structure
         return {

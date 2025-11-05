@@ -5,10 +5,6 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-__author__ = "Giovanni Marraffini, Fede Raimondo"
-__email__ = "g.marraffini@neurometers.ai"
-
-
 # Import main modules
 from . import (
     datareader,

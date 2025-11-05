@@ -1,9 +1,11 @@
 """Utility functions for EEG markers."""
 
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from scipy import stats
+
+from ..equipments import get_roi, list_available_rois
 
 
 def filter_to_eeg_channels(data_obj):
@@ -48,565 +50,77 @@ def filter_to_eeg_channels(data_obj):
     return filtered_data, eeg_channel_names, eeg_channel_indices
 
 
-def check_indices(indices):
-    """Check and format connectivity indices.
-
-    Parameters
-    ----------
-    indices : tuple of array_like or None
-        Indices specifying connectivity pairs
-
-    Returns
-    -------
-    tuple of np.ndarray
-        Validated indices as (sources, targets)
-    """
-    if indices is None:
-        return None
-    return (np.array(indices[0]), np.array(indices[1]))
-
-
-def get_roi_mapping() -> Dict[str, List[str]]:
-    """Get mapping of ROI names to electrode names.
-
-    Returns standard 10-20 system ROI definitions and ICM-specific ROIs.
-
-    Returns
-    -------
-    dict
-        Mapping from ROI names to lists of electrode names.
-    """
-    roi_mapping = {
-        # Standard 10-20 system ROIs
-        # Frontal
-        "Fp": ["Fp1", "Fp2"],
-        "F": ["F3", "F4", "F7", "F8"],
-        "FC": ["FC1", "FC2", "FC5", "FC6"],
-        "Fz": ["Fz"],
-        # Central
-        "C": ["C3", "C4"],
-        "CP": ["CP1", "CP2", "CP5", "CP6"],
-        "Cz": ["Cz"],
-        # Parietal
-        "P": ["P3", "P4", "P7", "P8"],
-        "Pz": ["Pz"],
-        "PO": ["PO3", "PO4", "PO7", "PO8"],
-        # Occipital
-        "O": ["O1", "O2"],
-        "Oz": ["Oz"],
-        # Temporal
-        "T": ["T7", "T8"],
-        "TP": ["TP9", "TP10"],
-        # Individual electrodes (for single electrode ROIs)
-        "Fp1": ["Fp1"],
-        "Fp2": ["Fp2"],
-        "F3": ["F3"],
-        "F4": ["F4"],
-        "F7": ["F7"],
-        "F8": ["F8"],
-        "FC1": ["FC1"],
-        "FC2": ["FC2"],
-        "FC5": ["FC5"],
-        "FC6": ["FC6"],
-        "C3": ["C3"],
-        "C4": ["C4"],
-        "CP1": ["CP1"],
-        "CP2": ["CP2"],
-        "CP5": ["CP5"],
-        "CP6": ["CP6"],
-        "P3": ["P3"],
-        "P4": ["P4"],
-        "P7": ["P7"],
-        "P8": ["P8"],
-        "PO3": ["PO3"],
-        "PO4": ["PO4"],
-        "PO7": ["PO7"],
-        "PO8": ["PO8"],
-        "O1": ["O1"],
-        "O2": ["O2"],
-        "T7": ["T7"],
-        "T8": ["T8"],
-        "TP9": ["TP9"],
-        "TP10": ["TP10"],
-    }
-
-    return roi_mapping
-
-
-def get_icm_roi_mapping(equipment: str = "standard") -> Dict[str, List[str]]:
+def get_icm_roi_mapping(equipment: str = "egi256") -> Dict[str, List[str]]:
     """Get ICM-specific ROI mappings for different equipment configurations.
+
+    This function now uses the equipment knowledge base system to retrieve
+    ROI definitions. The hardcoded ROI dictionaries have been replaced with
+    dynamic lookups from the equipment registry.
 
     Parameters
     ----------
     equipment : str
-        Equipment configuration: 'standard', 'egi256', or 'egi128'.
+        Equipment configuration: 'egi/256', 'egi/128', 'egi/64', 'standard', etc.
+        If using old naming ('egi256', 'egi128'), it will be converted automatically.
 
     Returns
     -------
     dict
         Mapping from ICM ROI names to lists of electrode names.
+
+    Notes
+    -----
+    This function retrieves ROI definitions from the equipment knowledge base
+    located in junifer_eeg/equipments/. All ROI definitions are sourced from
+    the NICE pipeline for consistency.
+
+    Examples
+    --------
+    >>> rois = get_icm_roi_mapping("egi/256")
+    >>> scalp_channels = rois["scalp"]  # Returns E1-E224
+    >>> cnv_channels = rois["cnv"]  # Returns frontal-central channels
     """
+    # Convert old naming convention to new format
+    equipment_map = {
+        "egi256": "egi/256",
+        "egi128": "egi/128",
+        "egi64": "egi/64",
+        "standard": "egi/64",  # Map standard to 64-channel system
+    }
+    equipment = equipment_map.get(equipment, equipment)
 
-    if equipment == "egi256":
-        # EGI 256-channel system ROI definitions for ICM Local Global paradigm
-        icm_rois = {
-            # Scalp ROI - all EEG channels excluding bad/reference channels
-            "scalp": [
-                f"E{i}"
-                for i in range(1, 257)
-                if i
-                not in [
-                    17,
-                    128,
-                    126,
-                    127,
-                    132,
-                    133,
-                    134,
-                    135,
-                    136,
-                    137,
-                    138,
-                    139,
-                    140,
-                    141,
-                    142,
-                    143,
-                    144,
-                    145,
-                    146,
-                    147,
-                    148,
-                    149,
-                    150,
-                    151,
-                    152,
-                    153,
-                    154,
-                    155,
-                    156,
-                    157,
-                    158,
-                    159,
-                    160,
-                    161,
-                    162,
-                    163,
-                    164,
-                    165,
-                    166,
-                    167,
-                    168,
-                    169,
-                    170,
-                    171,
-                    172,
-                    173,
-                    174,
-                    175,
-                    176,
-                    177,
-                    178,
-                    179,
-                    180,
-                    181,
-                    182,
-                    183,
-                    184,
-                    185,
-                    186,
-                    187,
-                    188,
-                    189,
-                    190,
-                    191,
-                    192,
-                    193,
-                    194,
-                    195,
-                    196,
-                    197,
-                    198,
-                    199,
-                    200,
-                    201,
-                    202,
-                    203,
-                    204,
-                    205,
-                    206,
-                    207,
-                    208,
-                    209,
-                    210,
-                    211,
-                    212,
-                    213,
-                    214,
-                    215,
-                    216,
-                    217,
-                    218,
-                    219,
-                    220,
-                    221,
-                    222,
-                    223,
-                    224,
-                    225,
-                    226,
-                    227,
-                    228,
-                    229,
-                    230,
-                    231,
-                    232,
-                    233,
-                    234,
-                    235,
-                    236,
-                    237,
-                    238,
-                    239,
-                    240,
-                    241,
-                    242,
-                    243,
-                    244,
-                    245,
-                    246,
-                    247,
-                    248,
-                    249,
-                    250,
-                    251,
-                    252,
-                    253,
-                    254,
-                    255,
-                    256,
-                ]
-            ],
-            # CNV ROI - Frontal midline (Fz region) - matches NICE exactly
-            # From NICE: np.array([6, 7, 14, 15, 16, 22, 23]) - 1 (0-indexed)
-            "cnv": ["E6", "E7", "E14", "E15", "E16", "E22", "E23"],
-            # CNV ROI - central and frontal-central electrodes for CNV analysis
-            "old_cnv": [
-                "E5",
-                "E6",
-                "E11",
-                "E12",
-                "E13",
-                "E16",
-                "E18",
-                "E19",
-                "E20",
-                "E23",
-                "E24",
-                "E25",
-                "E26",
-                "E27",
-                "E28",
-                "E29",
-                "E30",
-                "E31",
-                "E35",
-                "E36",
-                "E37",
-                "E40",
-                "E41",
-                "E42",
-                "E103",
-                "E104",
-                "E105",
-                "E106",
-                "E109",
-                "E110",
-                "E111",
-                "E112",
-                "E115",
-                "E116",
-                "E117",
-                "E118",
-            ],
-            # MMN ROI - fronto-central electrodes for mismatch negativity
-            "mmn": [
-                "E5",
-                "E6",
-                "E7",
-                "E11",
-                "E12",
-                "E13",
-                "E16",
-                "E18",
-                "E19",
-                "E20",
-                "E23",
-                "E24",
-                "E25",
-                "E105",
-                "E106",
-                "E109",
-                "E110",
-                "E111",
-                "E112",
-                "E115",
-                "E116",
-                "E117",
-                "E118",
-            ],
-            # P3a ROI - fronto-central electrodes for P3a component
-            "p3a": [
-                "E5",
-                "E6",
-                "E11",
-                "E12",
-                "E13",
-                "E16",
-                "E18",
-                "E19",
-                "E20",
-                "E23",
-                "E24",
-                "E105",
-                "E106",
-                "E109",
-                "E110",
-                "E111",
-                "E112",
-                "E115",
-                "E116",
-            ],
-            # P3b ROI - centro-parietal electrodes for P3b component
-            "p3b": [
-                "E7",
-                "E31",
-                "E37",
-                "E40",
-                "E41",
-                "E42",
-                "E47",
-                "E53",
-                "E54",
-                "E55",
-                "E60",
-                "E61",
-                "E62",
-                "E67",
-                "E72",
-                "E77",
-                "E78",
-                "E79",
-                "E80",
-                "E85",
-                "E86",
-                "E87",
-                "E106",
-            ],
-        }
+    # Get all available ROI names for this equipment
+    try:
+        roi_names = list_available_rois(equipment)
+    except ValueError as e:
+        # Equipment not found, provide helpful error message
+        from ..equipments import list_available_equipments
 
-    elif equipment == "egi128":
-        # EGI 128-channel system ROI definitions
-        icm_rois = {
-            # Scalp ROI - all EEG channels for 128-channel system
-            "scalp": [
-                f"E{i}"
-                for i in range(1, 129)
-                if i not in [17, 125, 126, 127, 128]
-            ],
-            # CNV ROI - central and frontal-central electrodes
-            "cnv": [
-                "E3",
-                "E4",
-                "E5",
-                "E6",
-                "E9",
-                "E10",
-                "E11",
-                "E12",
-                "E13",
-                "E15",
-                "E16",
-                "E18",
-                "E19",
-                "E20",
-                "E22",
-                "E23",
-                "E24",
-                "E103",
-                "E104",
-                "E105",
-                "E106",
-                "E109",
-                "E110",
-                "E111",
-                "E112",
-            ],
-            # MMN ROI - fronto-central electrodes
-            "mmn": [
-                "E3",
-                "E4",
-                "E5",
-                "E6",
-                "E9",
-                "E10",
-                "E11",
-                "E12",
-                "E13",
-                "E15",
-                "E16",
-                "E103",
-                "E104",
-                "E105",
-                "E106",
-                "E109",
-                "E110",
-                "E111",
-                "E112",
-            ],
-            # P3a ROI - fronto-central electrodes
-            "p3a": [
-                "E3",
-                "E4",
-                "E5",
-                "E6",
-                "E9",
-                "E10",
-                "E11",
-                "E12",
-                "E13",
-                "E103",
-                "E104",
-                "E105",
-                "E106",
-            ],
-            # P3b ROI - centro-parietal electrodes
-            "p3b": [
-                "E7",
-                "E31",
-                "E37",
-                "E40",
-                "E41",
-                "E42",
-                "E47",
-                "E53",
-                "E54",
-                "E55",
-                "E60",
-                "E61",
-                "E62",
-                "E72",
-                "E77",
-                "E78",
-                "E79",
-                "E106",
-            ],
-        }
+        available = list_available_equipments()
+        raise ValueError(
+            f"Equipment '{equipment}' not found in knowledge base. "
+            f"Available equipment: {available}"
+        ) from e
 
-    else:
-        # Standard 10-20 system ICM ROI approximations
-        icm_rois = {
-            # Scalp ROI - all standard electrodes (updated to match actual 64-channel data)
-            "scalp": [
-                "Fp1",
-                "Fpz",
-                "Fp2",
-                "AF7",
-                "AF3",
-                "AFz",
-                "AF4",
-                "AF8",
-                "F7",
-                "F5",
-                "F3",
-                "F1",
-                "Fz",
-                "F2",
-                "F4",
-                "F6",
-                "F8",
-                "FT7",
-                "FC5",
-                "FC3",
-                "FC1",
-                "FCz",
-                "FC2",
-                "FC4",
-                "FC6",
-                "FT8",
-                "T7",
-                "C5",
-                "C3",
-                "C1",
-                "Cz",
-                "C2",
-                "C4",
-                "C6",
-                "T8",
-                "TP7",
-                "CP5",
-                "CP3",
-                "CP1",
-                "CPz",
-                "CP2",
-                "CP4",
-                "CP6",
-                "TP8",
-                "P7",
-                "P5",
-                "P3",
-                "P1",
-                "Pz",
-                "P2",
-                "P4",
-                "P6",
-                "P8",
-                "P9",
-                "P10",
-                "PO7",
-                "PO3",
-                "POz",
-                "PO4",
-                "PO8",
-                "O1",
-                "Iz",
-                "Oz",
-                "O2",
-            ],
-            # CNV ROI - central and frontal-central region (updated for 64-channel)
-            "cnv": ["Fz", "FC1", "FCz", "FC2", "Cz", "C1", "C3", "C2", "C4"],
-            # MMN ROI - fronto-central region for mismatch negativity (updated for 64-channel)
-            "mmn": [
-                "Fz",
-                "F1",
-                "F3",
-                "F2",
-                "F4",
-                "FC1",
-                "FC3",
-                "FCz",
-                "FC2",
-                "FC4",
-                "FC5",
-                "FC6",
-            ],
-            # P3a ROI - fronto-central region (updated for 64-channel)
-            "p3a": ["Fz", "F1", "F3", "F2", "F4", "FC1", "FCz", "FC2", "Cz"],
-            # P3b ROI - centro-parietal region (updated for 64-channel)
-            "p3b": [
-                "Cz",
-                "CP1",
-                "CP3",
-                "CPz",
-                "CP2",
-                "CP4",
-                "Pz",
-                "P1",
-                "P3",
-                "P2",
-                "P4",
-            ],
-        }
+    # Build ROI mapping dictionary
+    # We need channel names, so we'll return indices that can be resolved later
+    # For now, return a mapping that can be used by downstream functions
+    icm_rois = {}
+
+    # Get indices for each ROI
+    for roi_name in roi_names:
+        indices = get_roi(equipment, roi_name)
+        # Convert indices to channel names (E1-based for EGI, assuming sequential)
+        if equipment.startswith("egi/"):
+            # EGI naming: E1, E2, E3, ...
+            if len(indices) > 0:
+                icm_rois[roi_name] = [f"E{i + 1}" for i in indices]
+            else:
+                icm_rois[roi_name] = []
+        else:
+            # For other equipment types, return indices directly
+            # (will need channel names from actual data)
+            icm_rois[roi_name] = indices.tolist() if len(indices) > 0 else []
 
     return icm_rois
 
@@ -614,10 +128,17 @@ def get_icm_roi_mapping(equipment: str = "standard") -> Dict[str, List[str]]:
 def get_data_for_rois(
     data: np.ndarray,
     ch_names: List[str],
-    rois: List[str],
-    equipment: str = "standard",
+    rois: List[str | int],
+    equipment: str = "egi256",
 ) -> Dict[str, np.ndarray]:
-    """Extract data for specified ROIs.
+    """Extract data for specified channels/ROIs.
+
+    Resolves a flat list of channel specifications into actual channel indices.
+    Each item can be:
+    - int: channel index (e.g., 0, 1, 223)
+    - str: channel name (e.g., 'E1', 'E224') OR semantic ROI name (e.g., 'frontal', 'scalp')
+
+    All specifications are resolved to a single flat list of channel indices.
 
     Parameters
     ----------
@@ -625,65 +146,66 @@ def get_data_for_rois(
         Data array with shape (n_channels, ...).
     ch_names : list of str
         Channel names corresponding to first dimension of data.
-    rois : list of str
-        ROI names to extract.
+    rois : list of str or int
+        Flat list of channel specifications. Can mix types:
+        - Integers: channel indices (e.g., [0, 1, 2])
+        - Strings (channel names): (e.g., ['E1', 'E2', 'E224'])
+        - Strings (ROI names): (e.g., ['frontal', 'scalp'])
+        Example: [0, 'E5', 'frontal', 10] - all valid, resolved to channel indices
     equipment : str
         Equipment configuration for ICM-specific ROIs: 'standard', 'egi256', or 'egi128'.
 
     Returns
     -------
     dict
-        Dictionary mapping ROI names to data arrays.
+        Dictionary with single key 'selected_channels' mapping to filtered data array.
     """
-    # Get both standard and ICM-specific ROI mappings
-    standard_roi_mapping = get_roi_mapping()
-    icm_roi_mapping = get_icm_roi_mapping(equipment)
+    if not rois:
+        return {}
 
-    # Combine mappings (ICM ROIs take precedence)
-    roi_mapping = {**standard_roi_mapping, **icm_roi_mapping}
+    # Get ROI mappings for resolving semantic ROI names from equipment knowledge base
+    roi_mapping = get_icm_roi_mapping(equipment)
 
-    roi_data = {}
+    # Collect all channel indices
+    channel_indices = []
 
-    for roi in rois:
-        if roi not in roi_mapping:
-            # If ROI not in mapping, treat as individual electrode
-            if roi in ch_names:
-                roi_idx = ch_names.index(roi)
-                roi_data[roi] = data[roi_idx : roi_idx + 1]  # Keep 2D
+    for item in rois:
+        if isinstance(item, int):
+            # Direct channel index
+            if 0 <= item < len(ch_names):
+                channel_indices.append(item)
             else:
                 raise ValueError(
-                    f"ROI '{roi}' not found in channel names or ROI mapping for equipment '{equipment}'",
+                    f"Channel index {item} out of range (0-{len(ch_names) - 1})"
+                )
+        elif isinstance(item, str):
+            # Check if it's a semantic ROI name first
+            if item in roi_mapping:
+                # Semantic ROI - expand to all channels in that ROI
+                roi_channels = roi_mapping[item]
+                for ch_name in roi_channels:
+                    if ch_name in ch_names:
+                        channel_indices.append(ch_names.index(ch_name))
+            # Check if it's a direct channel name
+            elif item in ch_names:
+                channel_indices.append(ch_names.index(item))
+            else:
+                raise ValueError(
+                    f"'{item}' not found as channel name or ROI in equipment '{equipment}'"
                 )
         else:
-            # Get electrodes for this ROI
-            roi_electrodes = roi_mapping[roi]
-            roi_indices = []
+            raise TypeError(f"ROI item must be int or str, got {type(item)}")
 
-            for electrode in roi_electrodes:
-                if electrode in ch_names:
-                    roi_indices.append(ch_names.index(electrode))
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_indices = []
+    for idx in channel_indices:
+        if idx not in seen:
+            seen.add(idx)
+            unique_indices.append(idx)
 
-            if not roi_indices:
-                # Attempt fallback to other equipment configurations
-                for alt_equipment in ("egi256", "egi128"):
-                    if alt_equipment == equipment:
-                        continue
-                    alt_mapping = get_icm_roi_mapping(alt_equipment)
-                    if roi in alt_mapping:
-                        for electrode in alt_mapping[roi]:
-                            if electrode in ch_names:
-                                roi_indices.append(ch_names.index(electrode))
-                        if roi_indices:
-                            break
-
-            if not roi_indices:
-                raise ValueError(
-                    f"No electrodes found for ROI '{roi}' in channel names for any supported equipment (tried '{equipment}', 'egi256', 'egi128')",
-                )
-
-            roi_data[roi] = data[roi_indices]
-
-    return roi_data
+    # Return single ROI with all selected channels
+    return {"selected_channels": data[unique_indices]}
 
 
 def aggregate_data(
@@ -693,12 +215,15 @@ def aggregate_data(
 ) -> np.ndarray:
     """Aggregate data using specified method.
 
+    Supports NICE-compatible aggregation methods including trimmed means.
+
     Parameters
     ----------
     data : np.ndarray
         Data to aggregate.
     method : str
-        Aggregation method: 'mean', 'std', 'median', 'min', 'max', 'trim_mean80'.
+        Aggregation method: 'mean', 'std', 'median', 'min', 'max',
+        'trim_mean80', 'trim_mean90', or 'sum'.
     axis : int, optional
         Axis along which to aggregate. If None, aggregate over all.
 
@@ -706,6 +231,13 @@ def aggregate_data(
     -------
     np.ndarray
         Aggregated data.
+
+    Notes
+    -----
+    NICE aggregation functions:
+    - 'trim_mean80': Removes top/bottom 10% (uses 80% of center data)
+    - 'trim_mean90': Removes top/bottom 5% (uses 90% of center data)
+    - 'median': Used for connectivity matrix channels_y dimension in WSMI
     """
     if method == "mean":
         return np.mean(data, axis=axis)
@@ -717,141 +249,15 @@ def aggregate_data(
         return np.min(data, axis=axis)
     if method == "max":
         return np.max(data, axis=axis)
+    if method == "sum":
+        return np.sum(data, axis=axis)
     if method == "trim_mean80":
         # NICE-compatible trimmed mean: remove top/bottom 10% (use 80% of data)
         return stats.trim_mean(data, proportiontocut=0.1, axis=axis)
+    if method == "trim_mean90":
+        # NICE-compatible trimmed mean: remove top/bottom 5% (use 90% of data)
+        return stats.trim_mean(data, proportiontocut=0.05, axis=axis)
     raise ValueError(f"Unknown aggregation method: {method}")
-
-
-def _add_meta_to_result(
-    result_dict: Dict[str, Any], meta: Optional[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Add meta field to result dictionary if provided."""
-    if meta is not None:
-        result_dict["meta"] = meta
-    return result_dict
-
-
-def create_per_epoch_column_names(
-    roi_data: Dict[str, np.ndarray],
-    n_epochs: int,
-) -> tuple[np.ndarray, list[str]]:
-    """Create per-epoch column names and flatten data for HDF5 storage.
-
-    Generates column names in the format: channel_epoch_NNNN
-    This matches the spectral marker format and ensures each data point
-    has a unique, traceable identifier.
-
-    Used by: PermutationEntropy, KolmogorovComplexity, TimeLockedTopography
-
-    Parameters
-    ----------
-    roi_data : dict
-        Dictionary mapping ROI/channel names to data arrays.
-        Each array should have shape (n_channels_in_roi, n_epochs).
-    n_epochs : int
-        Number of epochs in the data.
-
-    Returns
-    -------
-    data_array : np.ndarray
-        Flattened data array with shape (n_channels * n_epochs, 1).
-    col_names : list of str
-        Column names for each data point in format: channel_epoch_NNNN.
-
-    Examples
-    --------
-    >>> roi_data = {'Fp1': np.array([[0.1, 0.2]]), 'Fz': np.array([[0.3, 0.4]])}
-    >>> data, names = create_per_epoch_column_names(roi_data, n_epochs=2)
-    >>> names
-    ['Fp1_epoch_0000', 'Fp1_epoch_0001', 'Fz_epoch_0000', 'Fz_epoch_0001']
-    >>> data.shape
-    (4, 1)
-    """
-    col_names = []
-    all_values = []
-
-    # Flatten data: one row per (channel, epoch) combination
-    for roi_name, roi_data_array in roi_data.items():
-        # roi_data_array is (n_channels_in_roi, n_epochs)
-        n_channels_in_roi = roi_data_array.shape[0]
-
-        # For each channel in this ROI
-        for ch_idx in range(n_channels_in_roi):
-            channel_data = roi_data_array[ch_idx, :]  # (n_epochs,)
-
-            # Add each epoch's value with unique header
-            for epoch_idx in range(n_epochs):
-                all_values.append(channel_data[epoch_idx])
-                # Use format matching spectral: channel_epoch_NNNN
-                col_names.append(f"{roi_name}_epoch_{epoch_idx:04d}")
-
-    # Convert to column vector like HDF5 expects
-    data_array = np.array(all_values).reshape(-1, 1)
-
-    return data_array, col_names
-
-
-def create_spectral_band_epoch_column_names(
-    band_data_dict: Dict[str, np.ndarray],
-    channel_names: List[str],
-    n_epochs: int,
-) -> tuple[np.ndarray, list[str]]:
-    """Create spectral band + channel + epoch column names for multi-band data.
-
-    Generates column names in the format: band_channel_epoch_NNNN
-    Used for spectral power markers that compute multiple frequency bands.
-
-    Used by: SpectralPower, PowerSpectralDensity (when applicable)
-
-    Parameters
-    ----------
-    band_data_dict : dict
-        Dictionary mapping band names to data arrays.
-        Each array should have shape (n_epochs, n_channels).
-    channel_names : list of str
-        Names of EEG channels.
-    n_epochs : int
-        Number of epochs in the data.
-
-    Returns
-    -------
-    data_array : np.ndarray
-        Flattened data array with shape (1, n_bands * n_channels * n_epochs).
-    col_names : list of str
-        Column names in format: band_channel_epoch_NNNN.
-
-    Examples
-    --------
-    >>> bands = {'delta': np.array([[0.1, 0.2], [0.3, 0.4]])}  # 2 epochs, 2 channels
-    >>> channels = ['Fp1', 'Fz']
-    >>> data, names = create_spectral_band_epoch_column_names(bands, channels, 2)
-    >>> names
-    ['delta_Fp1_epoch_0000', 'delta_Fz_epoch_0000',
-     'delta_Fp1_epoch_0001', 'delta_Fz_epoch_0001']
-    >>> data.shape
-    (1, 4)
-    """
-    all_values = []
-    col_names = []
-
-    # Combine all bands into a single flattened result
-    for band_name, band_data in band_data_dict.items():
-        # Flatten band data: (n_epochs, n_channels) -> (n_epochs * n_channels,)
-        flattened_data = band_data.flatten()
-        all_values.extend(flattened_data)
-
-        # Create column names for each epoch-channel combination
-        for epoch_idx in range(n_epochs):
-            for ch_name in channel_names:
-                col_names.append(
-                    f"{band_name}_{ch_name}_epoch_{epoch_idx:04d}"
-                )
-
-    # Convert to row vector like HDF5 expects for spectral data
-    data_array = np.array(all_values).reshape(1, -1)
-
-    return data_array, col_names
 
 
 def create_connectivity_pair_column_names(
@@ -890,195 +296,3 @@ def create_connectivity_pair_column_names(
             col_names.append(f"{channel_names[i]}-{channel_names[j]}")
 
     return col_names
-
-
-def apply_roi_trial_aggregation(
-    data: Dict[str, np.ndarray],
-    roi_aggregation_methods: Optional[List[str]] = None,
-    trial_aggregation_methods: Optional[List[str]] = None,
-    marker_name: str = "marker",
-    meta: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Apply ROI and trial aggregation to marker data.
-
-    Parameters
-    ----------
-    data : dict
-        Dictionary mapping ROI names to data arrays of shape (n_electrodes, n_trials).
-    roi_aggregation_methods : list of str, optional
-        Methods to aggregate across ROI electrodes.
-    trial_aggregation_methods : list of str, optional
-        Methods to aggregate across trials.
-    marker_name : str
-        Base name for the marker.
-
-    Returns
-    -------
-    dict
-        Dictionary with aggregated results in junifer format.
-    """
-    results = {}
-
-    # Use a single base output name that junifer recognizes
-    base_output_name = (
-        marker_name.lower().replace("spectralpower_", "").replace("_", "")
-    )
-
-    # Default aggregation if none specified
-    if roi_aggregation_methods is None and trial_aggregation_methods is None:
-        # Return per-electrode, per-trial data - NO AGGREGATION
-        all_values = []
-        col_names = []
-
-        for roi_name, roi_data in data.items():
-            if roi_data.ndim == 1:
-                # Single trial case
-                for i in range(len(roi_data)):
-                    all_values.append(roi_data[i])
-                    col_names.append(f"{roi_name}_elec_{i}")
-            else:
-                # Multiple trials - keep all trials, don't average
-                n_electrodes, n_trials = roi_data.shape
-                # Flatten to (n_electrodes * n_trials,) to preserve all trial data
-                flattened_data = roi_data.flatten(
-                    order="F"
-                )  # Column-major order (trials vary fastest)
-                for trial_idx in range(n_trials):
-                    for elec_idx in range(n_electrodes):
-                        idx = trial_idx * n_electrodes + elec_idx
-                        all_values.append(flattened_data[idx])
-                        col_names.append(
-                            f"{roi_name}_trial_{trial_idx}_elec_{elec_idx}"
-                        )
-
-        # Handle data reshaping based on marker type and data structure
-        if len(all_values) > 0:
-            # Determine structure from first ROI
-            first_roi_data = next(iter(data.values()))
-            if first_roi_data.ndim > 1 and marker_name in [
-                "cnvslope",
-                "cnvintercept",
-            ]:
-                # CNV-specific: reshape to (n_trials, n_electrodes) to preserve trial structure
-                n_electrodes, n_trials = first_roi_data.shape
-                result_data = np.array(all_values).reshape(
-                    n_trials, n_electrodes
-                )
-            else:
-                # Default behavior for other markers: flatten to (1, n_features)
-                result_data = np.array(all_values).reshape(1, -1)
-        else:
-            result_data = np.array([]).reshape(0, 0)
-
-        result_dict = {
-            "data": result_data,
-            "col_names": col_names,
-        }
-        if meta is not None:
-            result_dict["meta"] = meta
-        results[base_output_name] = result_dict
-        return results
-
-    # Handle case with no ROI aggregation but trial aggregation
-    if roi_aggregation_methods is None:
-        for trial_agg in trial_aggregation_methods:
-            all_values = []
-            col_names = []
-
-            for roi_name, roi_data in data.items():
-                if roi_data.ndim == 1:
-                    # Single trial
-                    roi_values = roi_data
-                else:
-                    # Multiple trials
-                    roi_values = aggregate_data(roi_data, trial_agg, axis=1)
-
-                # Each electrode in ROI gets its own column
-                for i in range(len(roi_values)):
-                    col_names.append(f"{roi_name}_trial_{trial_agg}_elec_{i}")
-                    all_values.append(roi_values[i])
-
-            results[base_output_name] = {
-                "data": np.array(all_values).reshape(1, -1),
-                "col_names": col_names,
-            }
-        return results
-
-    # Handle case with no trial aggregation but ROI aggregation
-    if trial_aggregation_methods is None:
-        for roi_agg in roi_aggregation_methods:
-            all_values = []
-            col_names = []
-
-            for roi_name, roi_data in data.items():
-                if roi_data.ndim == 1:
-                    # Single trial
-                    roi_value = aggregate_data(roi_data, roi_agg)
-                    col_names.append(f"{roi_name}_roi_{roi_agg}")
-                    all_values.append(roi_value)
-                else:
-                    # Multiple trials - aggregate across ROI for each trial separately
-                    for trial_idx in range(roi_data.shape[1]):
-                        trial_data = roi_data[
-                            :, trial_idx
-                        ]  # Shape: (n_channels,)
-                        roi_value = aggregate_data(trial_data, roi_agg)
-                        col_names.append(
-                            f"{roi_name}_trial_{trial_idx}_roi_{roi_agg}"
-                        )
-                        all_values.append(roi_value)
-
-            results[base_output_name] = {
-                "data": np.array(all_values).reshape(1, -1),
-                "col_names": col_names,
-            }
-        return results
-
-    # Full case with both ROI and trial aggregation
-    all_values = []
-    col_names = []
-
-    for trial_agg in trial_aggregation_methods:
-        for roi_agg in roi_aggregation_methods:
-            # Combine all ROIs/channels into one for aggregation
-            all_roi_data = []
-
-            for _, roi_data in data.items():
-                if roi_data.ndim == 1:
-                    # Single trial - add to combined data
-                    all_roi_data.append(roi_data)
-                else:
-                    # Multiple trials - add to combined data
-                    all_roi_data.append(roi_data)
-
-            # Concatenate all ROI data along channel axis
-            if all_roi_data[0].ndim == 1:
-                # Single trial case
-                combined_data = np.concatenate(
-                    all_roi_data, axis=0
-                )  # Shape: (all_channels,)
-                roi_value = aggregate_data(combined_data, roi_agg)
-            else:
-                # Multiple trials case
-                combined_data = np.concatenate(
-                    all_roi_data, axis=0
-                )  # Shape: (all_channels, n_trials)
-                # IMPORTANT: Apply ROI aggregation FIRST, then trial aggregation
-                # This matches NICE's order: channels first, then epochs
-                roi_aggregated = aggregate_data(
-                    combined_data, roi_agg, axis=0
-                )  # Shape: (n_trials,) - mean across channels
-                roi_value = aggregate_data(
-                    roi_aggregated, trial_agg
-                )  # Shape: scalar - trim_mean80 across trials
-
-            col_names.append(f"all_channels_trial_{trial_agg}_roi_{roi_agg}")
-            all_values.append(roi_value)
-
-    result_dict = {
-        "data": np.array(all_values).reshape(1, -1),
-        "col_names": col_names,
-    }
-    results[base_output_name] = _add_meta_to_result(result_dict, meta)
-
-    return results

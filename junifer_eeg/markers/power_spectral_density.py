@@ -1,12 +1,12 @@
 """Enhanced Power Spectral Density markers for junifer_eeg."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import get_data_for_rois
 
 
 @register_marker
@@ -242,9 +242,10 @@ class PowerSpectralDensitySummary(BaseMarker):
         n_per_seg: int | None = None,
         n_overlap: int | None = None,
         n_fft: int | None = None,
-        rois: list[str] | None = None,
-        roi_aggregation_method: list[str] | None = None,
-        trial_aggregation_method: list[str] | None = None,
+        rois: Union[List[str], List[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         epoch_length: float = 2.0,
         overlap: float = 0.0,
         on: str | None = None,
@@ -272,12 +273,17 @@ class PowerSpectralDensitySummary(BaseMarker):
             Number of points to overlap between segments.
         n_fft : int, optional
             Length of the FFT used.
-        rois : list of str, optional
-            List of ROI names or electrode names to aggregate.
-        roi_aggregation_method : list of str, optional
-            List of aggregation methods for ROIs ('mean', 'std', 'median', 'min', 'max').
-        trial_aggregation_method : list of str, optional
-            List of aggregation methods for trials ('mean', 'std', 'median', 'min', 'max').
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering AFTER PSD computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp')
+
+            If None, uses all channels.
+        channel_aggregation_method : str, optional
+            Aggregation method for ROIs ('mean', 'std', 'median', 'min', 'max').
+        trial_aggregation_method : str, optional
+            Aggregation method for trials ('mean', 'std', 'median', 'min', 'max').
         epoch_length : float, default=2.0
             Length of epochs in seconds for trial aggregation.
         overlap : float, default=0.0
@@ -297,8 +303,9 @@ class PowerSpectralDensitySummary(BaseMarker):
         self.n_overlap = n_overlap
         self.n_fft = n_fft
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
         self.epoch_length = epoch_length
         self.overlap = overlap
         super().__init__(on=on, name=name)
@@ -427,19 +434,12 @@ class PowerSpectralDensitySummary(BaseMarker):
         # Check if we have any valid epochs
         if n_epochs == 0 or n_channels == 0 or n_freqs == 0:
             # Return empty results for empty epochs
-            if self.rois is not None:
-                roi_data = {
-                    roi: np.array([]).reshape(0, 0) for roi in self.rois
+            return {
+                "psdsummary": {
+                    "data": np.array([[]]),
+                    "col_names": [],
                 }
-            else:
-                roi_data = {ch: np.array([]).reshape(0, 0) for ch in ch_names}
-
-            return apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="psdsummary",
-            )
+            }
 
         # Vectorized SEF/MSF computation
         # Compute Spectral Edge Frequency (SEF) where cumulative power reaches percentile
@@ -476,81 +476,134 @@ class PowerSpectralDensitySummary(BaseMarker):
                 (n_epochs, n_channels), freqs[0] if len(freqs) > 0 else 0.0
             )
 
-        # Handle ROI selection and aggregation logic
+        # Apply ROI filtering BEFORE aggregation if specified
         if self.rois is not None:
-            # Extract data for specified ROIs
-            roi_data = get_data_for_rois(
+            roi_data_dict = get_data_for_rois(
                 psd_summary_values.T,  # Transpose to (n_channels, n_epochs)
                 ch_names,
                 self.rois,
+                self.equipment,
             )
-            # Apply standard aggregation for ROI-based analysis
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="psdsummary",
+            # Extract filtered data and transpose back to (n_epochs, n_channels)
+            if "selected_channels" in roi_data_dict:
+                psd_summary_values = roi_data_dict["selected_channels"].T
+                ch_names = self.rois
+
+        # SPECIAL HANDLING for PowerSpectralDensitySummary:
+        # Clinical literature requires computing percentiles per channel, then aggregating
+        # (not combining channels before computing percentiles)
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            # Both channel and trial aggregation: compute single scalar value
+            from .utils import aggregate_data
+
+            # Step 1: Trial aggregation per channel
+            if psd_summary_values.shape[0] > 1:  # Multiple epochs
+                channel_values = np.array(
+                    [
+                        aggregate_data(
+                            psd_summary_values[:, ch_idx],
+                            self.trial_aggregation_method,
+                        )
+                        for ch_idx in range(psd_summary_values.shape[1])
+                    ]
+                )
+            else:
+                # Single epoch: use values directly
+                channel_values = psd_summary_values[0, :]
+
+            # Step 2: Channel aggregation across all channels
+            final_value = aggregate_data(
+                channel_values, self.channel_aggregation_method
             )
+
+            # Return single scalar result
+            agg_name = f"trial_{self.trial_aggregation_method}_roi_{self.channel_aggregation_method}"
+            results = {
+                "psdsummary": {
+                    "data": np.array([[final_value]], dtype=np.float64),
+                    "col_names": [f"all_channels_{agg_name}"],
+                }
+            }
         else:
-            # SPECIAL HANDLING for PowerSpectralDensitySummary:
-            # Clinical literature requires computing percentiles per channel, then aggregating
-            # (not combining channels before computing percentiles)
+            # Standard aggregation: apply ROI filtering and aggregation manually
+            # Apply ROI filtering if specified
+            if self.rois is not None:
+                roi_data = get_data_for_rois(
+                    psd_summary_values.T,
+                    list(ch_names),
+                    self.rois,
+                    self.equipment,
+                )
+                if "selected_channels" in roi_data:
+                    psd_summary_values = roi_data["selected_channels"].T
+                    ch_names = self.rois
+
+            # Check for no aggregation
             if (
-                self.roi_aggregation_method is not None
-                and self.trial_aggregation_method is not None
+                self.channel_aggregation_method is None
+                and self.trial_aggregation_method is None
             ):
-                # Both ROI and trial aggregation: compute single scalar value
-                from .utils import aggregate_data
-
-                # Step 1: Trial aggregation per channel (if multiple epochs)
-                if psd_summary_values.shape[0] > 1:  # Multiple epochs
-                    trial_agg_method = self.trial_aggregation_method[0]
-                    channel_values = np.array(
-                        [
-                            aggregate_data(
-                                psd_summary_values[:, ch_idx],
-                                trial_agg_method,
-                            )
-                            for ch_idx in range(psd_summary_values.shape[1])
-                        ]
-                    )
-                else:
-                    # Single epoch: use values directly
-                    channel_values = psd_summary_values[0, :]
-
-                # Step 2: ROI aggregation across channels
-                roi_agg_method = self.roi_aggregation_method[0]
-                final_value = aggregate_data(channel_values, roi_agg_method)
-
-                # Return single scalar result
-                agg_name = f"trial_{trial_agg_method}_roi_{roi_agg_method}"
+                col_names = [f"{ch}" for ch in ch_names]
                 results = {
                     "psdsummary": {
-                        "data": np.array([[final_value]], dtype=np.float64),
-                        "col_names": [f"all_channels_{agg_name}"],
+                        "data": psd_summary_values,
+                        "col_names": col_names,
                     }
                 }
             else:
-                # Fallback to standard aggregation for other cases
-                if self.roi_aggregation_method is not None:
-                    # ROI aggregation requested: treat all channels as one ROI
-                    roi_data = {
-                        "all_channels": psd_summary_values.T
-                    }  # Shape: (n_channels, n_epochs)
-                else:
-                    # No ROI aggregation: use each channel as individual ROI
-                    roi_data = {
-                        ch: psd_summary_values[:, i : i + 1].T
-                        for i, ch in enumerate(ch_names)
-                    }
+                # Apply aggregation
+                from .utils import aggregate_data
 
-                # Apply standard aggregation
-                results = apply_roi_trial_aggregation(
-                    roi_data,
-                    roi_aggregation_methods=self.roi_aggregation_method,
-                    trial_aggregation_methods=self.trial_aggregation_method,
-                    marker_name="psdsummary",
-                )
+                result_data = psd_summary_values
+
+                # Channel aggregation
+                if self.channel_aggregation_method is not None:
+                    result_data = aggregate_data(
+                        result_data, self.channel_aggregation_method, axis=1
+                    )
+
+                # Trial aggregation
+                if self.trial_aggregation_method is not None:
+                    if result_data.ndim == 1:
+                        result_data = aggregate_data(
+                            result_data,
+                            self.trial_aggregation_method,
+                            axis=None,
+                        )
+                    else:
+                        result_data = aggregate_data(
+                            result_data, self.trial_aggregation_method, axis=0
+                        )
+
+                # Reshape to 2D
+                if result_data.ndim == 0:
+                    result_data = np.array([[result_data]])
+                elif result_data.ndim == 1:
+                    result_data = result_data[np.newaxis, :]
+
+                # Generate column names
+                if (
+                    self.channel_aggregation_method is not None
+                    and self.trial_aggregation_method is not None
+                ):
+                    col_names = ["all_channels_all_trials"]
+                elif self.channel_aggregation_method is not None:
+                    n_trials = result_data.shape[1]
+                    col_names = [f"trial_{i}" for i in range(n_trials)]
+                elif self.trial_aggregation_method is not None:
+                    col_names = [f"{ch}" for ch in ch_names]
+                else:
+                    col_names = [f"{ch}" for ch in ch_names]
+
+                results = {
+                    "psdsummary": {
+                        "data": result_data,
+                        "col_names": col_names,
+                    }
+                }
 
         return results
 

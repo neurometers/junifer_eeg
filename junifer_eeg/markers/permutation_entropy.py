@@ -1,13 +1,13 @@
 """Permutation Entropy marker for junifer_eeg."""
 
 import math
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import aggregate_data, get_data_for_rois
 
 # Try to import numba for acceleration
 try:
@@ -196,9 +196,10 @@ class PermutationEntropy(BaseMarker):
         fmin: float | None = None,
         fmax: float | None = None,
         filter_order: int = 6,
-        rois: list[str] | None = None,
-        roi_aggregation_method: list[str] | None = None,
-        trial_aggregation_method: list[str] | None = None,
+        rois: Union[list[str], list[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         epoch_length: float = 2.0,
         overlap: float = 0.0,
         on: str | None = None,
@@ -224,12 +225,26 @@ class PermutationEntropy(BaseMarker):
             Upper frequency bound for band-pass filtering. If None, no filtering is applied.
         filter_order : int, optional
             Order of the Butterworth filter. Default: 6 (matches NICE implementation).
-        rois : list of str, optional
-            List of ROI names or electrode names to aggregate.
-        roi_aggregation_method : list of str, optional
-            List of aggregation methods for ROIs ('mean', 'std', 'median', 'min', 'max').
-        trial_aggregation_method : list of str, optional
-            List of aggregation methods for trials ('mean', 'std', 'median', 'min', 'max').
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE computation.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1', 'E224') OR semantic ROI (e.g., 'scalp')
+
+            Examples:
+            - list(range(224)) - NICE scalp ROI via indices
+            - ['E1', 'E2', ..., 'E224'] - NICE scalp ROI via names
+            - ['scalp'] - Semantic ROI (expands to all scalp channels)
+
+            If None, uses all channels.
+        channel_aggregation_method : str, optional
+            Aggregation method for ROIs/channels: 'mean', 'std', 'median',
+            'min', 'max', 'trim_mean80', 'trim_mean90', etc.
+        trial_aggregation_method : str, optional
+            Aggregation method for trials/epochs: 'mean', 'std', 'median',
+            'min', 'max', 'trim_mean80', 'trim_mean90', etc.
+        equipment : str, default='egi256'
+            Equipment type for ROI selection (e.g., 'egi256', 'egi64').
         epoch_length : float, default=2.0
             Length of epochs in seconds for trial aggregation.
         overlap : float, default=0.0
@@ -248,8 +263,9 @@ class PermutationEntropy(BaseMarker):
         self.fmax = fmax
         self.filter_order = filter_order
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
         self.epoch_length = epoch_length
         self.overlap = overlap
 
@@ -296,22 +312,12 @@ class PermutationEntropy(BaseMarker):
             # Check if epochs object is empty
             if len(data_obj) == 0:
                 # Return empty results for empty epochs
-                ch_names = data_obj.ch_names
-                if self.rois is not None:
-                    roi_data = {
-                        roi: np.array([]).reshape(0, 0) for roi in self.rois
+                return {
+                    "permutationentropy": {
+                        "data": np.array([[]]),
+                        "col_names": [],
                     }
-                else:
-                    roi_data = {
-                        ch: np.array([]).reshape(0, 0) for ch in ch_names
-                    }
-
-                return apply_roi_trial_aggregation(
-                    roi_data,
-                    roi_aggregation_methods=self.roi_aggregation_method,
-                    trial_aggregation_methods=self.trial_aggregation_method,
-                    marker_name="permutationentropy",
-                )
+                }
             epochs_data = (
                 data_obj.get_data()
             )  # Shape: (n_epochs, n_channels, n_times)
@@ -407,77 +413,134 @@ class PermutationEntropy(BaseMarker):
             time_mask = _time_mask(original_times, self.tmin, self.tmax)
             fdata = fdata[:, time_mask, :]
 
-        # NICE approach: Compute PE on concatenated signal
+        # NICE approach: Compute PE on 3D array respecting epoch boundaries
         # fdata shape after time mask: (n_channels, n_times_cropped, n_epochs)
-        # We need to concatenate along time dimension: (n_channels, total_time)
-        # Optimize concatenation: transpose and reshape instead of Python loops
-        # This produces identical layout to np.hstack([fdata[:,:,epoch] for epoch in range(n_epochs)])
-        concatenated_data = (
-            np.ascontiguousarray(fdata)
-            .transpose(0, 2, 1)
-            .reshape(n_channels, -1)
-        )
-        # Result shape: (n_channels, total_time) where total_time = n_times_cropped * n_epochs
+        # Compute ordinal patterns within each epoch separately (like NICE)
 
-        # Compute permutation entropy on concatenated signal (like NICE)
-        pe_values = np.zeros(n_channels, dtype=np.float64)
+        # Pre-allocate result array: (n_epochs, n_channels)
+        pe_values_expanded = np.zeros((n_epochs, n_channels), dtype=np.float64)
 
-        for ch_idx in range(n_channels):
-            signal = concatenated_data[ch_idx, :]
-            pe_values[ch_idx] = self._compute_permutation_entropy(
-                signal,
-                self.kernel,
-                self.tau,
-            )
+        # Compute PE for each epoch separately (respecting epoch boundaries)
+        for epoch_idx in range(n_epochs):
+            # Extract data for this epoch: (n_channels, n_times_cropped)
+            epoch_data = fdata[:, :, epoch_idx]
 
-        # Convert to expected output format: (n_epochs, n_channels) with same value repeated
-        # Since we computed on concatenated signal, all epochs get the same PE value per channel
-        pe_values_expanded = np.tile(pe_values, (n_epochs, 1))
+            # Compute PE for each channel in this epoch
+            for ch_idx in range(n_channels):
+                # Extract signal for this channel and epoch
+                signal = epoch_data[ch_idx, :]
 
-        # Handle ROI selection
+                # Compute permutation entropy on this epoch's signal
+                pe_values_expanded[epoch_idx, ch_idx] = (
+                    self._compute_permutation_entropy(
+                        signal,
+                        self.kernel,
+                        self.tau,
+                    )
+                )
+
+        # Apply ROI filtering if specified
         if self.rois is not None:
-            # Extract data for specified ROIs
+            # pe_values_expanded shape: (n_epochs, n_channels)
+            # Transpose to (n_channels, n_epochs) for get_data_for_rois
             roi_data = get_data_for_rois(
-                pe_values_expanded.T,  # Transpose to (n_channels, n_epochs)
+                pe_values_expanded.T,
                 list(ch_names),
                 self.rois,
+                self.equipment,
             )
-        else:
-            # Use all channels as individual ROIs
-            roi_data = {
-                ch: pe_values_expanded[:, i : i + 1].T
-                for i, ch in enumerate(ch_names)
-            }
+            # Extract filtered data and transpose back
+            if "selected_channels" in roi_data:
+                pe_values_expanded = roi_data["selected_channels"].T
+                ch_names = self.rois
 
-        # Check if we should return per-epoch data without aggregation
+        # Apply aggregation independently
+        # pe_values_expanded shape: (n_epochs, n_channels)
+
+        # Check if we should return raw data without aggregation
         if (
-            self.roi_aggregation_method is None
+            self.channel_aggregation_method is None
             and self.trial_aggregation_method is None
         ):
-            # Return per-epoch results without any aggregation
-            # Use utility function to create standardized column names
-            from .utils import create_per_epoch_column_names
-
-            data_array, col_names = create_per_epoch_column_names(
-                roi_data, n_epochs
-            )
-
-            results = {
+            # Return raw per-epoch, per-channel data
+            col_names = [f"{ch}" for ch in ch_names]
+            return {
                 "permutationentropy": {
-                    "data": data_array,
+                    "data": pe_values_expanded,
                     "col_names": col_names,
                 }
             }
-        else:
-            # Apply aggregation
-            results = apply_roi_trial_aggregation(
-                roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="permutationentropy",
-            )
 
-        return results
+        # Apply aggregation
+        result_data = pe_values_expanded
+        # result_data shape: (n_epochs, n_channels)
+
+        # Step 1: Channel aggregation (aggregate across axis=1)
+        if self.channel_aggregation_method is not None:
+            result_data = aggregate_data(
+                result_data,
+                self.channel_aggregation_method,
+                axis=1,
+            )
+            # After channel agg: (n_epochs,)
+
+        # Step 2: Trial aggregation
+        if self.trial_aggregation_method is not None:
+            # Aggregate across epochs (axis=0 if 2D, or entire array if 1D)
+            if result_data.ndim == 1:
+                # Already reduced by channel agg: (n_epochs,)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=None,  # Aggregate entire array
+                )
+                # Result: scalar
+            else:
+                # No channel agg yet: (n_epochs, n_channels)
+                result_data = aggregate_data(
+                    result_data,
+                    self.trial_aggregation_method,
+                    axis=0,
+                )
+                # Result: (n_channels,)
+
+        # Reshape to 2D for consistent output
+        if result_data.ndim == 0:
+            # Scalar: (1, 1)
+            result_data = np.array([[result_data]])
+        elif result_data.ndim == 1:
+            if self.channel_aggregation_method is not None:
+                # Channel agg was applied: shape is (n_epochs,) -> (1, n_epochs)
+                result_data = result_data[np.newaxis, :]
+            else:
+                # Trial agg was applied: shape is (n_channels,) -> (1, n_channels)
+                result_data = result_data[np.newaxis, :]
+
+        # Generate column names based on aggregation
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            # Both aggregations: single scalar
+            col_names = ["all_channels_all_trials"]
+        elif self.channel_aggregation_method is not None:
+            # Channel aggregation only: one value per trial
+            # result_data shape: (1, n_trials)
+            n_trials = result_data.shape[1]
+            col_names = [f"trial_{i}" for i in range(n_trials)]
+        elif self.trial_aggregation_method is not None:
+            # Trial aggregation only: one value per channel
+            col_names = [f"{ch}" for ch in ch_names]
+        else:
+            # No aggregation (already handled above)
+            col_names = [f"{ch}" for ch in ch_names]
+
+        return {
+            "permutationentropy": {
+                "data": result_data,
+                "col_names": col_names,
+            }
+        }
 
     def _compute_permutation_entropy(self, signal, kernel, tau):
         """Compute permutation entropy for a single filtered signal.

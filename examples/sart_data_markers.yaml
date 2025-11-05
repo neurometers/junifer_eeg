@@ -45,7 +45,7 @@ markers:
     n_fft: 2048
     n_overlap: 50
     n_per_seg: 256
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -65,7 +65,7 @@ markers:
     n_fft: 2048
     n_overlap: 50
     n_per_seg: 256
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -79,7 +79,7 @@ markers:
     kernel: 3
     tau: 8
     weighted: false
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -93,7 +93,7 @@ markers:
     kernel: 3
     tau: 8
     weighted: true
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -104,7 +104,7 @@ markers:
     name: permutation_entropy
     kernel: 3
     tau: 8
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -113,7 +113,7 @@ markers:
   # ========================================
   - kind: KolmogorovComplexity
     name: kolmogorov_complexity
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -126,7 +126,7 @@ markers:
     name: erp_early_100ms
     tmin: 0.080
     tmax: 0.120
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -135,7 +135,7 @@ markers:
     name: erp_mid_150ms
     tmin: 0.130
     tmax: 0.170
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -144,7 +144,7 @@ markers:
     name: erp_late_300ms
     tmin: 0.250
     tmax: 0.350
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
@@ -153,6 +153,6 @@ markers:
     name: erp_very_late_500ms
     tmin: 0.450
     tmax: 0.550
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG

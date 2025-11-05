@@ -1,94 +1,116 @@
-"""Time decoding marker for junifer_eeg."""
+"""Time decoding marker for EEG analysis."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
-from junifer.markers import BaseMarker
+from junifer.markers.base import BaseMarker
 
 
 @register_marker
 class TimeDecoding(BaseMarker):
-    """Time decoding marker using MNE-Python's SlidingEstimator.
+    """Time decoding marker for temporal classification analysis.
 
-    This marker performs temporal decoding analysis by creating epochs from
-    continuous data and using temporal segments as conditions for classification.
+    This marker performs decoding analysis across time using MNE's Sliding
+    Estimator to classify between experimental conditions at each time point.
+    Essential for analyzing the temporal dynamics of discriminative neural
+    patterns.
 
-    Note: Adapted from NICE for continuous data. Uses temporal segments or
-    frequency content as conditions for decoding.
+    The marker applies optional ROI filtering BEFORE decoding to restrict
+    classification to specific channels.
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy", "scikit-learn"}
-    _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"time_decoding_scores": "vector"},
+
+    _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
+        "EEG": {
+            "timedecoding": "vector",
+        },
     }
 
     def __init__(
         self,
-        tmin: float = -0.2,
-        tmax: float = 0.8,
-        epoch_length: float = 2.0,
-        overlap: float = 0.0,
-        condition_method: str = "temporal_halves",
+        condition_a: str | List[str],
+        condition_b: str | List[str],
+        tmin: Optional[float] = None,
+        tmax: Optional[float] = None,
         n_splits: int = 5,
         scoring: str = "roc_auc",
-        random_state: int = 42,
-        on: str | None = None,
-        name: str | None = None,
+        random_state: Optional[int] = 42,
+        comment: Optional[str] = None,
+        rois: Union[List[str], List[int], None] = None,
+        equipment: str = "egi256",
+        on: Optional[str | List[str]] = None,
+        name: Optional[str] = None,
     ) -> None:
-        """Initialize the TimeDecoding marker.
+        """Initialize TimeDecoding marker.
 
         Parameters
         ----------
-        tmin : float, default=-0.2
-            Start time for decoding window in seconds.
-        tmax : float, default=0.8
-            End time for decoding window in seconds.
-        epoch_length : float, default=2.0
-            Length of epochs to create from continuous data.
-        overlap : float, default=0.0
-            Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
-        condition_method : str, default="temporal_halves"
-            Method to create conditions: "temporal_halves", "alpha_beta", "spectral_power".
+        condition_a : str or list of str
+            Condition(s) for class A.
+        condition_b : str or list of str
+            Condition(s) for class B.
+        tmin : float, optional
+            Start time for decoding window.
+        tmax : float, optional
+            End time for decoding window.
         n_splits : int, default=5
-            Number of cross-validation splits.
-        scoring : str, default="roc_auc"
-            Scoring metric for classification.
-        random_state : int, default=42
+            Number of cross-validation folds.
+        scoring : str, default='roc_auc'
+            Scoring metric ('roc_auc' or 'accuracy').
+        random_state : int, optional
             Random state for reproducibility.
-        on : str, optional
-            Data type to compute on.
-        name : str, optional
-            Name of the marker.
+        comment : str, optional
+            Label for this decoding analysis.
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE decoding.
+            Each item can be:
+            - int: channel index (e.g., 0, 1, 223)
+            - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp', 'frontal')
+
+            Examples:
+            - ['frontal'] - Decode from frontal channels only
+            - list(range(32)) - Decode from first 32 channels
+            - None - Use all channels (default)
+
+            **NOTE:** ROI filtering restricts which channels contribute to decoding.
+        equipment : str, default='standard'
+            Equipment type for electrode mapping.
         """
+        self.condition_a = (
+            condition_a if isinstance(condition_a, list) else [condition_a]
+        )
+        self.condition_b = (
+            condition_b if isinstance(condition_b, list) else [condition_b]
+        )
         self.tmin = tmin
         self.tmax = tmax
-        self.epoch_length = epoch_length
-        self.overlap = overlap
-        self.condition_method = condition_method
         self.n_splits = n_splits
         self.scoring = scoring
         self.random_state = random_state
+        self.comment = (
+            comment
+            or f"{'-'.join(self.condition_a)}_vs_{'-'.join(self.condition_b)}_time_decoding"
+        )
+        self.rois = rois
+        self.equipment = equipment
+
         super().__init__(on=on, name=name)
 
     def compute(
         self,
-        input: dict[str, Any],
-        extra_input: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Compute time decoding.
+        input: Dict[str, Any],
+        extra_input: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Compute time decoding between conditions.
 
-        Parameters
-        ----------
-        input : dict
-            Input data containing 'data' with MNE Raw object.
-        extra_input : dict, optional
-            Additional input data.
-
-        Returns
-        -------
-        dict
-            Computed time decoding scores.
+        Process:
+        1. Filter epochs by condition
+        2. Apply ROI filtering (if specified) to select channels
+        3. Crop to time window (if specified)
+        4. Use SlidingEstimator to classify at each time point
+        5. Return time series of scores (one per time point), averaged across folds
         """
         from mne.decoding import SlidingEstimator, cross_val_multiscore
         from sklearn.feature_selection import SelectPercentile, f_classif
@@ -97,222 +119,136 @@ class TimeDecoding(BaseMarker):
         from sklearn.preprocessing import StandardScaler
         from sklearn.svm import SVC
 
-        # Get the MNE data object (Raw or Epochs)
-        data = input["data"]
-        # Handle both Raw and Epochs input
-        if hasattr(data, "get_data") and hasattr(data, "events"):
-            # This is Epochs data
-            epochs = data
-            # Apply time cropping if specified
-            if self.tmin is not None or self.tmax is not None:
-                epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
-        else:
-            # This is Raw data - create epochs from continuous data
-            raw = data
-            epochs = self._create_epochs(raw)
+        from .utils import filter_to_eeg_channels, get_data_for_rois
 
-        # Create conditions based on chosen method
-        X, y = self._create_conditions(epochs)
+        epochs = input["data"]
 
-        if len(np.unique(y)) < 2:
-            raise ValueError(
-                "Not enough conditions created for classification",
+        # Filter to EEG channels
+        epochs, eeg_ch_names, eeg_indices = filter_to_eeg_channels(epochs)
+
+        # Filter epochs by conditions
+        epochs_a = (
+            epochs[self.condition_a]
+            if any(cond in epochs.event_id for cond in self.condition_a)
+            else None
+        )
+        epochs_b = (
+            epochs[self.condition_b]
+            if any(cond in epochs.event_id for cond in self.condition_b)
+            else None
+        )
+
+        # Check for missing conditions
+        if (
+            epochs_a is None
+            or epochs_b is None
+            or len(epochs_a) == 0
+            or len(epochs_b) == 0
+        ):
+            # Return chance level (0.5) time series if conditions not found
+            # Use a reasonable default length (e.g., 100 time points)
+            n_times = 100
+            return {
+                "timedecoding": {
+                    "data": np.full((1, n_times), 0.5),
+                    "col_names": [f"t_{i}" for i in range(n_times)],
+                }
+            }
+
+        # Crop to time window if specified
+        if self.tmin is not None or self.tmax is not None:
+            epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
+            epochs_b = epochs_b.copy().crop(tmin=self.tmin, tmax=self.tmax)
+
+        # Combine epochs
+        import mne
+
+        combined_epochs = mne.concatenate_epochs([epochs_a, epochs_b])
+
+        # Get data: (n_epochs, n_channels, n_times)
+        X = combined_epochs.get_data()
+        ch_names = list(combined_epochs.ch_names)
+        n_epochs, n_channels, n_times = X.shape
+
+        # Apply ROI filtering BEFORE decoding (if specified)
+        if self.rois is not None:
+            # Transpose to (n_channels, n_epochs, n_times)
+            X_transposed = X.transpose(1, 0, 2)
+
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                X_transposed,
+                ch_names,
+                self.rois,
+                self.equipment,
             )
 
-        # Set up classifier pipeline
-        scaler = StandardScaler()
-        feature_select = SelectPercentile(f_classif, percentile=10)
-        svc = SVC(
-            C=1,
-            kernel="linear",
-            probability=True,
-            random_state=self.random_state,
-        )
-        clf = Pipeline(
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                X_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_times)
+                X = X_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_times = X.shape
+
+        # Create labels
+        y = np.concatenate(
             [
-                ("scaler", scaler),
-                ("feature_select", feature_select),
-                ("svc", svc),
+                np.zeros(len(epochs_a)),  # Label 0 for condition A
+                np.ones(len(epochs_b)),  # Label 1 for condition B
             ],
         )
 
-        # Set up cross-validation
+        # Create classifier pipeline following NICE approach
+        if self.scoring == "roc_auc":
+            # Use SVM with probability for ROC AUC
+            scaler = StandardScaler()
+            transform = SelectPercentile(f_classif, percentile=10)
+            svc = SVC(
+                C=1,
+                kernel="linear",
+                probability=True,
+                random_state=self.random_state,
+            )
+            clf = Pipeline(
+                [("scaler", scaler), ("anova", transform), ("svc", svc)],
+            )
+        else:
+            # Use LDA for accuracy
+            from sklearn.discriminant_analysis import (
+                LinearDiscriminantAnalysis,
+            )
+
+            clf = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("lda", LinearDiscriminantAnalysis()),
+                ]
+            )
+
+        # Cross-validation
         cv = StratifiedKFold(
-            n_splits=min(self.n_splits, len(y) // 2),
+            n_splits=self.n_splits,
             shuffle=True,
             random_state=self.random_state,
         )
 
-        # Create SlidingEstimator
-        time_decoder = SlidingEstimator(clf, scoring=self.scoring, n_jobs=1)
-
-        # Perform cross-validation
-        try:
-            scores = cross_val_multiscore(time_decoder, X, y, cv=cv, n_jobs=1)
-            # Average across CV folds
-            mean_scores = np.mean(scores, axis=0)
-        except Exception:
-            # If decoding fails, return zeros
-            n_times = X.shape[2]
-            mean_scores = np.zeros(n_times)
-
-        # Create time labels
-        times = epochs.times
-        time_labels = [f"decode_t_{t:.3f}s" for t in times]
-
-        # Return data in junifer format
-        return {
-            "time_decoding_scores": {
-                "data": mean_scores.reshape(1, -1),  # Shape: (1, n_times)
-                "col_names": time_labels,
-            },
-        }
-
-    def _create_epochs(self, raw):
-        """Create epochs from continuous data."""
-        import mne
-
-        # Create epochs from continuous data
-        duration = self.epoch_length
-        overlap_samples = int(self.overlap * duration * raw.info["sfreq"])
-
-        # Create events at regular intervals
-        sfreq = raw.info["sfreq"]
-        duration_samples = int(duration * sfreq)
-        step_samples = duration_samples - overlap_samples
-
-        # Calculate the number of epochs we can create
-        n_samples = raw.n_times
-        n_epochs = max(1, (n_samples - duration_samples) // step_samples + 1)
-
-        # Create event array
-        events = np.zeros((n_epochs, 3), dtype=int)
-        for i in range(n_epochs):
-            events[i, 0] = i * step_samples + duration_samples // 2
-            events[i, 2] = 1  # Event ID
-
-        # Make sure events don't exceed data length
-        valid_events = events[events[:, 0] < n_samples - duration_samples // 2]
-
-        if len(valid_events) == 0:
-            raise ValueError("Data too short to create any epochs")
-
-        # Create epochs
-        epochs = mne.Epochs(
-            raw,
-            valid_events,
-            event_id={"epoch": 1},
-            tmin=-duration / 2,
-            tmax=duration / 2,
-            baseline=None,
-            preload=True,
-            verbose=False,
+        # Create SlidingEstimator for time-resolved decoding
+        time_decoder = SlidingEstimator(
+            clf,
+            scoring=self.scoring,
+            n_jobs=1,  # Single job for consistency
         )
 
-        # Crop to analysis window if specified
-        if self.tmin is not None or self.tmax is not None:
-            epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
+        # Perform cross-validation (returns: n_folds x n_times)
+        scores = cross_val_multiscore(time_decoder, X, y, cv=cv, n_jobs=1)
 
-        return epochs
+        # Mean across folds: (n_times,)
+        mean_scores = np.mean(scores, axis=0)
 
-    def _create_conditions(self, epochs):
-        """Create conditions for classification based on the chosen method."""
-        X = epochs.get_data()  # Shape: (n_epochs, n_channels, n_times)
-        n_epochs = X.shape[0]
-
-        if self.condition_method == "temporal_halves":
-            # Split epochs into first and second half based on their temporal order
-            y = np.zeros(n_epochs, dtype=int)
-            y[n_epochs // 2 :] = 1
-
-        elif self.condition_method == "alpha_beta":
-            # Create conditions based on alpha vs beta power
-            from scipy.signal import welch
-
-            sfreq = epochs.info["sfreq"]
-            alpha_power = []
-            beta_power = []
-
-            for epoch_data in X:
-                # Compute power for each epoch
-                epoch_alpha = 0
-                epoch_beta = 0
-
-                for ch_data in epoch_data:
-                    # Use shorter nperseg for short data
-                    nperseg = min(64, len(ch_data) // 2, len(ch_data))
-                    if nperseg < 4:
-                        nperseg = len(ch_data)
-
-                    freqs, psd = welch(ch_data, fs=sfreq, nperseg=nperseg)
-                    alpha_mask = (freqs >= 8) & (freqs <= 13)
-                    beta_mask = (freqs >= 13) & (freqs <= 30)
-
-                    if np.any(alpha_mask):
-                        epoch_alpha += np.mean(psd[alpha_mask])
-                    if np.any(beta_mask):
-                        epoch_beta += np.mean(psd[beta_mask])
-
-                alpha_power.append(epoch_alpha)
-                beta_power.append(epoch_beta)
-
-            # Create binary labels based on alpha/beta ratio
-            alpha_power = np.array(alpha_power)
-            beta_power = np.array(beta_power)
-
-            # Handle edge cases
-            if np.all(alpha_power == 0) and np.all(beta_power == 0):
-                # Fallback to temporal halves if no frequency content
-                y = np.zeros(n_epochs, dtype=int)
-                y[n_epochs // 2 :] = 1
-            else:
-                alpha_beta_ratio = alpha_power / (beta_power + 1e-10)
-                # Use median split, but ensure we have at least one of each class
-                median_ratio = np.median(alpha_beta_ratio)
-                y = (alpha_beta_ratio > median_ratio).astype(int)
-
-                # Ensure we have both classes
-                if len(np.unique(y)) < 2:
-                    # Fallback to temporal halves
-                    y = np.zeros(n_epochs, dtype=int)
-                    y[n_epochs // 2 :] = 1
-
-        elif self.condition_method == "spectral_power":
-            # Create conditions based on overall spectral power
-            power_per_epoch = np.mean(
-                np.var(X, axis=2),
-                axis=1,
-            )  # Power per epoch
-            y = (power_per_epoch > np.median(power_per_epoch)).astype(int)
-
-        elif self.condition_method == "explicit_conditions":
-            # Use existing condition labels from epochs
-            if hasattr(epochs, "events") and hasattr(epochs, "event_id"):
-                # Extract labels from epochs events
-                event_ids = epochs.events[
-                    :, 2
-                ]  # Third column contains event IDs
-                unique_ids = np.unique(event_ids)
-                if len(unique_ids) >= 2:
-                    # Use first two unique event IDs as binary conditions
-                    y = (event_ids == unique_ids[1]).astype(int)
-                else:
-                    # Fallback to temporal halves if only one condition
-                    y = np.zeros(n_epochs, dtype=int)
-                    y[n_epochs // 2 :] = 1
-            else:
-                # Fallback to temporal halves if no event info
-                y = np.zeros(n_epochs, dtype=int)
-                y[n_epochs // 2 :] = 1
-
-        else:
-            raise ValueError(
-                f"Unknown condition method: {self.condition_method}",
-            )
-
-        # Final check to ensure we have both classes
-        if len(np.unique(y)) < 2:
-            # Ultimate fallback: alternate labels
-            y = np.arange(n_epochs) % 2
-
-        return X, y
+        # Return as row vector: (1, n_times)
+        return {
+            "timedecoding": {
+                "data": mean_scores.reshape(1, -1),
+                "col_names": [f"t_{i}" for i in range(len(mean_scores))],
+            }
+        }

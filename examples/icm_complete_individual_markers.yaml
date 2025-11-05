@@ -69,8 +69,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
-    trial_aggregation_method: ["trim_mean80"]  # Average across trials
+    channel_aggregation_method: null  # No ROI aggregation - keep per-channel
+    trial_aggregation_method: "trim_mean80"  # Average across trials
     on: EEG
 
   - kind: SpectralPower
@@ -83,8 +83,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -97,8 +97,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -111,8 +111,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -125,8 +125,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -138,8 +138,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -151,8 +151,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -164,8 +164,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -177,8 +177,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -190,8 +190,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SpectralPower
@@ -203,8 +203,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   # ========================================
@@ -221,8 +221,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null  # No ROI aggregation
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null  # No ROI aggregation
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: PowerSpectralDensitySummary
@@ -235,8 +235,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: PowerSpectralDensitySummary
@@ -249,8 +249,8 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   # ========================================
@@ -262,8 +262,8 @@ markers:
     tmin: null
     tmax: 0.6
     tau: 8
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: PermutationEntropy
@@ -271,8 +271,8 @@ markers:
     tmin: null
     tmax: 0.6
     tau: 4
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: PermutationEntropy
@@ -280,8 +280,8 @@ markers:
     tmin: null
     tmax: 0.6
     tau: 2
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: PermutationEntropy
@@ -289,8 +289,8 @@ markers:
     tmin: null
     tmax: 0.6
     tau: 1
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
 
@@ -307,8 +307,8 @@ markers:
     tau: 8
     weighted: true
     csd: true
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -319,8 +319,8 @@ markers:
     tau: 4
     weighted: true
     csd: true
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -331,8 +331,8 @@ markers:
     tau: 2
     weighted: true
     csd: true
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -343,8 +343,8 @@ markers:
     tau: 1
     weighted: true
     csd: true
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   # ========================================
@@ -357,8 +357,8 @@ markers:
     tmin: null
     tmax: 0.6  # ICM standard
     nbins: 32
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
 
@@ -370,7 +370,7 @@ markers:
     name: cnv_detailed
     tmin: -0.004  # EXACT next_icm parameter
     tmax: 0.596  # EXACT next_icm parameter
-    roi_aggregation_method: null  # No ROI aggregation - keep per-channel
+    channel_aggregation_method: null  # No ROI aggregation - keep per-channel
     trial_aggregation_method: null  # Keep all trials for statistics
     on: EEG
 
@@ -382,24 +382,24 @@ markers:
     name: p1_topography
     tmin: 0.064
     tmax: 0.112
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: TimeLockedTopography
     name: p3a_topography
     tmin: 0.876
     tmax: 0.936
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
   - kind: TimeLockedTopography
     name: p3b_topography
     tmin: 0.996
     tmax: 1.196
-    roi_aggregation_method: null
-    trial_aggregation_method: ["trim_mean80"]
+    channel_aggregation_method: null
+    trial_aggregation_method: "trim_mean80"
     on: EEG
 
 
@@ -413,7 +413,7 @@ markers:
     tmax: null
     condition_a: ["LSGS"]
     condition_b: ["LDGD"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -423,7 +423,7 @@ markers:
     tmax: null
     condition_a: ["LSGD"]
     condition_b: ["LDGS"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -433,7 +433,7 @@ markers:
     tmax: null
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -443,7 +443,7 @@ markers:
     tmax: 0.788
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -453,7 +453,7 @@ markers:
     tmax: 0.936
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -463,7 +463,7 @@ markers:
     tmax: null
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -473,7 +473,7 @@ markers:
     tmax: 1.196
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
-    roi_aggregation_method: null
+    channel_aggregation_method: null
     trial_aggregation_method: "trim_mean80"
     on: EEG
 
@@ -488,8 +488,8 @@ markers:
     condition_b: ["LSGS", "LSGD"]  # Local Standard
     tmin: 0.6  # ICM standard local window
     tmax: 0.967  # ICM standard local window
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
+    channel_aggregation_method: "trim_mean80"
+    trial_aggregation_method: "mean"
     on: EEG
 
   # Window decoding - Global: 967-1336ms
@@ -499,6 +499,6 @@ markers:
     condition_b: ["LSGS", "LDGS"]  # Global Standard
     tmin: 0.967  # ICM standard global window
     tmax: 1.336  # ICM standard global window
-    roi_aggregation_method: ["trim_mean80"]
-    trial_aggregation_method: ["mean"]
+    channel_aggregation_method: "trim_mean80"
+    trial_aggregation_method: "mean"
     on: EEG

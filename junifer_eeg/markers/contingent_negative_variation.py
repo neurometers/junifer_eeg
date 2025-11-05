@@ -1,12 +1,12 @@
 """Contingent Negative Variation marker for junifer_eeg."""
 
-from typing import Any, ClassVar
+from typing import Any, ClassVar, List, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import apply_roi_trial_aggregation, get_data_for_rois
+from .utils import aggregate_data, get_data_for_rois
 
 
 @register_marker
@@ -29,9 +29,10 @@ class ContingentNegativeVariation(BaseMarker):
         self,
         tmin: float | None = None,
         tmax: float | None = None,
-        rois: list[str] | None = None,
-        roi_aggregation_method: list[str] | None = None,
-        trial_aggregation_method: list[str] | None = None,
+        rois: Union[List[str], List[int], None] = None,
+        channel_aggregation_method: str | None = None,
+        trial_aggregation_method: str | None = None,
+        equipment: str = "egi256",
         epoch_length: float = 2.0,
         overlap: float = 0.0,
         on: str | None = None,
@@ -45,12 +46,23 @@ class ContingentNegativeVariation(BaseMarker):
             Start time for analysis in seconds.
         tmax : float, optional
             End time for analysis in seconds.
-        rois : list of str, optional
-            List of ROI names or electrode names to aggregate.
-        roi_aggregation_method : list of str, optional
-            List of aggregation methods for ROIs ('mean', 'std', 'median', 'min', 'max').
-        trial_aggregation_method : list of str, optional
-            List of aggregation methods for trials ('mean', 'std', 'median', 'min', 'max').
+        rois : list of str or int, optional
+            Flat list of channel specifications for filtering BEFORE computation.
+            Each item can be:
+            - int: channel index (e.g., 6, 7, 14)
+            - str: channel name (e.g., 'E7', 'E15') OR semantic ROI (e.g., 'cnv_roi')
+
+            Examples:
+            - [6, 7, 14, 15, 16, 22, 23] - NICE CNV ROI via indices (EGI/256)
+            - ['cnv_roi'] - Semantic task-specific ROI
+
+            **NOTE:** NICE uses task-specific 'cnv_roi', NOT 'scalp' ROI.
+        channel_aggregation_method : str, optional
+            Methods to aggregate across channels: 'mean', 'std', 'median',
+            'trim_mean80', 'trim_mean90', etc.
+        trial_aggregation_method : str, optional
+            Methods to aggregate across epochs: 'mean', 'std', 'median',
+            'trim_mean80', 'trim_mean90', etc.
         epoch_length : float, default=2.0
             Length of epochs in seconds for trial aggregation.
         overlap : float, default=0.0
@@ -63,8 +75,9 @@ class ContingentNegativeVariation(BaseMarker):
         self.tmin = tmin
         self.tmax = tmax
         self.rois = rois
-        self.roi_aggregation_method = roi_aggregation_method
+        self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
+        self.equipment = equipment
         self.epoch_length = epoch_length
         self.overlap = overlap
         super().__init__(on=on, name=name)
@@ -100,35 +113,10 @@ class ContingentNegativeVariation(BaseMarker):
             # Check for empty epochs first
             if len(data_obj) == 0:
                 # Return empty results for empty epochs
-                ch_names = data_obj.ch_names
-                if self.rois is not None:
-                    roi_data = {
-                        roi: np.array([]).reshape(0, 0) for roi in self.rois
-                    }
-                else:
-                    roi_data = {
-                        ch: np.array([]).reshape(0, 0) for ch in ch_names
-                    }
-
-                # Apply aggregation to empty data for both slope and intercept
-                slope_results = apply_roi_trial_aggregation(
-                    roi_data,
-                    roi_aggregation_methods=self.roi_aggregation_method,
-                    trial_aggregation_methods=self.trial_aggregation_method,
-                    marker_name="cnvslope",
-                )
-                intercept_results = apply_roi_trial_aggregation(
-                    roi_data,
-                    roi_aggregation_methods=self.roi_aggregation_method,
-                    trial_aggregation_methods=self.trial_aggregation_method,
-                    marker_name="cnvintercept",
-                )
-
-                # Combine the results
-                result = {}
-                result.update(slope_results)
-                result.update(intercept_results)
-                return result
+                return {
+                    "cnvslope": {"data": np.array([[]]), "col_names": []},
+                    "cnvintercept": {"data": np.array([[]]), "col_names": []},
+                }
 
             epochs_data = (
                 data_obj.get_data()
@@ -175,6 +163,33 @@ class ContingentNegativeVariation(BaseMarker):
             epochs_data = epochs_data[np.newaxis, :, :]
 
         n_epochs, n_channels, n_samples = epochs_data.shape
+        ch_names = (
+            list(data_obj.ch_names)
+            if hasattr(data_obj, "ch_names")
+            else [f"ch_{i}" for i in range(n_channels)]
+        )
+
+        # Apply ROI filtering BEFORE computation if specified
+        if self.rois is not None:
+            # Transpose to (n_channels, n_epochs, n_samples)
+            data_transposed = epochs_data.transpose(1, 0, 2)
+
+            # Get ROI-filtered data
+            roi_data_dict = get_data_for_rois(
+                data_transposed,
+                ch_names,
+                self.rois,
+                self.equipment,
+            )
+
+            # Extract the filtered data (returns {"selected_channels": data})
+            if "selected_channels" in roi_data_dict:
+                data_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_samples)
+                epochs_data = data_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_samples = epochs_data.shape
+                # Preserve the actual ROI channel names (self.rois contains the channel names we filtered to)
+                ch_names = self.rois
 
         # Compute CNV slopes and intercepts for each channel and epoch
         slope_values = np.zeros((n_epochs, n_channels), dtype=np.float64)
@@ -266,81 +281,78 @@ class ContingentNegativeVariation(BaseMarker):
                     intercept_values[epoch_idx, ch] = np.nan
                     slope_values[epoch_idx, ch] = np.nan
 
-        # Handle ROI selection for slopes
-        ch_names = (
-            list(data_obj.ch_names)
-            if hasattr(data_obj, "ch_names")
-            else [f"ch_{i}" for i in range(n_channels)]
+        # Helper function to aggregate CNV data (slope or intercept)
+        def aggregate_cnv_output(data, ch_names, prefix):
+            # Apply ROI filtering if specified
+            if self.rois is not None:
+                roi_data = get_data_for_rois(
+                    data.T, list(ch_names), self.rois, self.equipment
+                )
+                if "selected_channels" in roi_data:
+                    data = roi_data["selected_channels"].T
+                    ch_names = self.rois
+
+            # Check for no aggregation
+            if (
+                self.channel_aggregation_method is None
+                and self.trial_aggregation_method is None
+            ):
+                col_names = [f"{prefix}_{ch}" for ch in ch_names]
+                return {"data": data, "col_names": col_names}
+
+            # Apply aggregation
+            result_data = data
+
+            # Channel aggregation
+            if self.channel_aggregation_method is not None:
+                result_data = aggregate_data(
+                    result_data, self.channel_aggregation_method, axis=1
+                )
+
+            # Trial aggregation
+            if self.trial_aggregation_method is not None:
+                if result_data.ndim == 1:
+                    result_data = aggregate_data(
+                        result_data, self.trial_aggregation_method, axis=None
+                    )
+                else:
+                    result_data = aggregate_data(
+                        result_data, self.trial_aggregation_method, axis=0
+                    )
+
+            # Reshape to 2D
+            if result_data.ndim == 0:
+                result_data = np.array([[result_data]])
+            elif result_data.ndim == 1:
+                result_data = result_data[np.newaxis, :]
+
+            # Generate column names
+            if (
+                self.channel_aggregation_method is not None
+                and self.trial_aggregation_method is not None
+            ):
+                col_names = [f"{prefix}_all_channels_all_trials"]
+            elif self.channel_aggregation_method is not None:
+                n_trials = result_data.shape[1]
+                col_names = [f"{prefix}_trial_{i}" for i in range(n_trials)]
+            elif self.trial_aggregation_method is not None:
+                col_names = [f"{prefix}_{ch}" for ch in ch_names]
+            else:
+                col_names = [f"{prefix}_{ch}" for ch in ch_names]
+
+            return {"data": result_data, "col_names": col_names}
+
+        # Apply aggregation for slopes and intercepts
+        slope_output = aggregate_cnv_output(slope_values, ch_names, "slope")
+        intercept_output = aggregate_cnv_output(
+            intercept_values, ch_names, "intercept"
         )
 
-        if self.rois is not None and len(self.rois) > 0:
-            slope_roi_data = get_data_for_rois(
-                slope_values.T,  # Transpose to (n_channels, n_epochs)
-                ch_names,
-                self.rois,
-            )
-            intercept_roi_data = get_data_for_rois(
-                intercept_values.T,  # Transpose to (n_channels, n_epochs)
-                ch_names,
-                self.rois,
-            )
-        else:
-            # Use all channels as individual ROIs - this preserves spatial information for topoplots
-            slope_roi_data = {
-                ch: slope_values[:, i : i + 1].T
-                for i, ch in enumerate(ch_names)
-            }
-            intercept_roi_data = {
-                ch: intercept_values[:, i : i + 1].T
-                for i, ch in enumerate(ch_names)
-            }
-
-        # Apply aggregation for slopes - bypass if both aggregation methods are None
-        if (
-            self.roi_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
-            # Return raw per-trial, per-channel data for CNV plotting
-            slope_results = {
-                "cnvslope": {
-                    "data": slope_values,  # Shape: (n_epochs, n_channels)
-                    "col_names": [f"slope_{ch}" for ch in ch_names],
-                }
-            }
-        else:
-            slope_results = apply_roi_trial_aggregation(
-                slope_roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="cnvslope",
-            )
-
-        # Apply aggregation for intercepts - bypass if both aggregation methods are None
-        if (
-            self.roi_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
-            # Return raw per-trial, per-channel data for CNV plotting
-            intercept_results = {
-                "cnvintercept": {
-                    "data": intercept_values,  # Shape: (n_epochs, n_channels)
-                    "col_names": [f"intercept_{ch}" for ch in ch_names],
-                }
-            }
-        else:
-            intercept_results = apply_roi_trial_aggregation(
-                intercept_roi_data,
-                roi_aggregation_methods=self.roi_aggregation_method,
-                trial_aggregation_methods=self.trial_aggregation_method,
-                marker_name="cnvintercept",
-            )
-
-        # Combine the results
-        result = {}
-        result.update(slope_results)
-        result.update(intercept_results)
-
-        return result
+        # Combine results
+        return {
+            "cnvslope": slope_output,
+            "cnvintercept": intercept_output,
+        }
 
     def _create_epochs_from_continuous(self, raw):
         """Create epochs from continuous data."""
