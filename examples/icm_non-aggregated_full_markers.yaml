@@ -49,7 +49,7 @@ preprocess:
 
 storage:
   kind: HDF5FeatureStorage
-  uri: icm_complete_features.h5
+  uri: icm_complete_non-aggregated.h5
   single_output: true
 
 markers:
@@ -58,9 +58,9 @@ markers:
   # 1. SPECTRAL MARKERS (11 total) 
   # ========================================
   
-  # Per-channel spectral power (no ROI aggregation, trial averaged)
+  # Per-channel spectral power
   - kind: SpectralPower
-    name: per_channel_delta
+    name: delta_power
     bands:
       delta: [1.0, 4.0]
     normalize: false
@@ -69,12 +69,12 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    channel_aggregation_method: null  # No ROI aggregation - keep per-channel
-    trial_aggregation_method: "trim_mean80"  # Average across trials
+    channel_aggregation_method: null
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_theta
+    name: theta_power
     bands:
       theta: [4.0, 8.0]
     normalize: false
@@ -84,11 +84,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_alpha
+    name: alpha_power
     bands:
       alpha: [8.0, 12.0]
     normalize: false
@@ -98,11 +98,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_beta
+    name: beta_power
     bands:
       beta: [12.0, 30.0]
     normalize: false
@@ -112,11 +112,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: per_channel_gamma
+    name: gamma_power
     bands:
       gamma: [30.0, 45.0]
     normalize: false
@@ -126,11 +126,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: deltan_spectralpower
+    name: delta_relative
     fmin: 1.0
     fmax: 4.0
     normalize: true
@@ -139,11 +139,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: thetan_spectralpower
+    name: theta_relative
     fmin: 4.0
     fmax: 8.0
     normalize: true
@@ -152,11 +152,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: alphan_spectralpower
+    name: alpha_relative
     fmin: 8.0
     fmax: 12.0
     normalize: true
@@ -165,11 +165,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: betan_spectralpower
+    name: beta_relative
     fmin: 12.0
     fmax: 30.0
     normalize: true
@@ -178,11 +178,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: gamman_spectralpower
+    name: gamma_relative
     fmin: 30.0
     fmax: 45.0
     normalize: true
@@ -191,11 +191,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SpectralPower
-    name: summary_se_spectralpower
+    name: spectral_entropy
     fmin: 1.0
     fmax: 45.0
     normalize: true
@@ -204,7 +204,7 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   # ========================================
@@ -212,7 +212,7 @@ markers:
   # ========================================
   # Per-channel spectral summaries
   - kind: PowerSpectralDensitySummary
-    name: per_channel_msf
+    name: msf
     percentile: 0.5
     tmin: null
     tmax: 0.6
@@ -221,12 +221,12 @@ markers:
     n_fft: 4096
     n_overlap: 100
     n_per_seg: 128
-    channel_aggregation_method: null  # No ROI aggregation
-    trial_aggregation_method: "trim_mean80"
+    channel_aggregation_method: null
+    trial_aggregation_method: null
     on: EEG
 
   - kind: PowerSpectralDensitySummary
-    name: per_channel_sef90
+    name: sef90
     percentile: 0.9
     tmin: null
     tmax: 0.6
@@ -236,11 +236,11 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: PowerSpectralDensitySummary
-    name: per_channel_sef95
+    name: sef95
     percentile: 0.95
     tmin: null
     tmax: 0.6
@@ -250,7 +250,7 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   # ========================================
@@ -263,7 +263,7 @@ markers:
     tmax: 0.6
     tau: 8
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: PermutationEntropy
@@ -272,7 +272,7 @@ markers:
     tmax: 0.6
     tau: 4
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: PermutationEntropy
@@ -281,7 +281,7 @@ markers:
     tmax: 0.6
     tau: 2
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: PermutationEntropy
@@ -290,7 +290,7 @@ markers:
     tmax: 0.6
     tau: 1
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
 
@@ -308,7 +308,7 @@ markers:
     weighted: true
     csd: true
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -320,7 +320,7 @@ markers:
     weighted: true
     csd: true
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -332,7 +332,7 @@ markers:
     weighted: true
     csd: true
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: SymbolicMutualInformation
@@ -344,7 +344,7 @@ markers:
     weighted: true
     csd: true
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   # ========================================
@@ -358,7 +358,7 @@ markers:
     tmax: 0.6  # ICM standard
     nbins: 32
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
 
@@ -370,8 +370,8 @@ markers:
     name: cnv_detailed
     tmin: -0.004  # EXACT next_icm parameter
     tmax: 0.596  # EXACT next_icm parameter
-    channel_aggregation_method: null  # No ROI aggregation - keep per-channel
-    trial_aggregation_method: null  # Keep all trials for statistics
+    channel_aggregation_method: null
+    trial_aggregation_method: null
     on: EEG
 
  # ========================================
@@ -383,7 +383,7 @@ markers:
     tmin: 0.064
     tmax: 0.112
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedTopography
@@ -391,7 +391,7 @@ markers:
     tmin: 0.876
     tmax: 0.936
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedTopography
@@ -399,7 +399,7 @@ markers:
     tmin: 0.996
     tmax: 1.196
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
 
@@ -408,73 +408,80 @@ markers:
   # ========================================
 
   - kind: TimeLockedContrast
-    name: tlc_lsgs_ldgd
+    name: timelockedcontrast_lsgs_ldgd
     tmin: null
     tmax: null
+    rois : ["scalp"]
     condition_a: ["LSGS"]
     condition_b: ["LDGD"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_lsgd_ldgs
+    name: timelockedcontrast_lsgd_ldgs
     tmin: null
     tmax: null
+    rois : ["scalp"]
     condition_a: ["LSGD"]
     condition_b: ["LDGS"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_ld_ls
+    name: timelockedcontrast_ld_ls
     tmin: null
     tmax: null
+    rois : ["scalp"]
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_mmn
+    name: timelockedcontrast_mmn
     tmin: 0.736
     tmax: 0.788
+    rois : ["mmn"]
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_p3a
+    name: timelockedcontrast_p3a
     tmin: 0.876
     tmax: 0.936
+    rois : ["p3a"]
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_gd_gs
+    name: timelockedcontrast_gd_gs
     tmin: null
     tmax: null
+    rois : ["scalp"]
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   - kind: TimeLockedContrast
-    name: tlc_p3b
+    name: timelockedcontrast_p3b
     tmin: 0.996
     tmax: 1.196
+    rois : ["p3b"]
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
     channel_aggregation_method: null
-    trial_aggregation_method: "trim_mean80"
+    trial_aggregation_method: null
     on: EEG
 
   # ========================================
