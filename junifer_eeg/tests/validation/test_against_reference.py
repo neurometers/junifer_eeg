@@ -54,25 +54,33 @@ def check_shapes_and_compare(
     print(f"{'=' * 80}")
 
     print("\nShape comparison:")
-    print(f"  NICE:    {nice_data.shape}")
-    print(f"  Junifer: {junifer_data.shape}")
+    print(
+        f"  NICE:    {nice_data.shape if hasattr(nice_data, 'shape') else 'scalar'}"
+    )
+    print(
+        f"  Junifer: {junifer_data.shape if hasattr(junifer_data, 'shape') else 'scalar'}"
+    )
 
-    if nice_data.shape != junifer_data.shape:
+    # Convert scalars to arrays for consistent handling
+    nice_arr = np.atleast_1d(nice_data)
+    junifer_arr = np.atleast_1d(junifer_data)
+
+    if nice_arr.shape != junifer_arr.shape:
         print("  ❌ SHAPE MISMATCH!")
         return False
 
     print("  ✅ Shapes match!")
 
     # Compare values
-    abs_diff = np.abs(nice_data - junifer_data)
-    rel_diff = abs_diff / (np.abs(nice_data) + 1e-12)
+    abs_diff = np.abs(nice_arr - junifer_arr)
+    rel_diff = abs_diff / (np.abs(nice_arr) + 1e-12)
 
     max_rel_error = np.max(rel_diff) * 100
     mean_rel_error = np.mean(rel_diff) * 100
 
     print("\nValue comparison:")
-    print(f"  NICE mean:    {np.mean(nice_data):.6e}")
-    print(f"  Junifer mean: {np.mean(junifer_data):.6e}")
+    print(f"  NICE mean:    {np.mean(nice_arr):.6e}")
+    print(f"  Junifer mean: {np.mean(junifer_arr):.6e}")
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
@@ -89,12 +97,18 @@ def check_shapes_and_compare(
     else:
         print(f"\n❌ MISMATCH: {marker_name} ({max_rel_error:.4f}% error)")
 
-        # Find worst case
-        worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
-        print(f"\nWorst case at index {worst_idx}:")
-        print(f"  NICE value:    {nice_data[worst_idx]:.6e}")
-        print(f"  Junifer value: {junifer_data[worst_idx]:.6e}")
-        print(f"  Relative diff: {rel_diff[worst_idx] * 100:.4f}%")
+        # Find worst case (only if not scalar)
+        if nice_arr.size > 1:
+            worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
+            print(f"\nWorst case at index {worst_idx}:")
+            print(f"  NICE value:    {nice_arr[worst_idx]:.6e}")
+            print(f"  Junifer value: {junifer_arr[worst_idx]:.6e}")
+            print(f"  Relative diff: {rel_diff[worst_idx] * 100:.4f}%")
+        else:
+            print("\nScalar comparison:")
+            print(f"  NICE value:    {nice_arr[0]:.6e}")
+            print(f"  Junifer value: {junifer_arr[0]:.6e}")
+            print(f"  Relative diff: {rel_diff[0] * 100:.4f}%")
 
         return False
 
@@ -1305,8 +1319,8 @@ class TestTimeLockedContrastLSGS_LDGD:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        # TLC with aggregation returns scalar in [0, 0]
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        # TLC with aggregation returns scalar (natural shape)
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1355,7 +1369,7 @@ class TestTimeLockedContrastLSGD_LDGS:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1404,7 +1418,7 @@ class TestTimeLockedContrastLD_LS:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1453,7 +1467,7 @@ class TestTimeLockedContrastMMN:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1502,7 +1516,7 @@ class TestTimeLockedContrastP3a:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1551,7 +1565,7 @@ class TestTimeLockedContrastGD_GS:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1600,7 +1614,7 @@ class TestTimeLockedContrastP3b:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_output = junifer_result["timelockedcontrast"]["data"][0, 0]
+        junifer_output = junifer_result["timelockedcontrast"]["data"]
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(

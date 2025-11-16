@@ -320,22 +320,23 @@ class ContingentNegativeVariation(BaseMarker):
                         result_data, self.trial_aggregation_method, axis=0
                     )
 
-            # Reshape to 2D
-            if result_data.ndim == 0:
-                result_data = np.array([[result_data]])
-            elif result_data.ndim == 1:
-                result_data = result_data[np.newaxis, :]
+            # Return result data without unnecessary reshaping - preserve tensor structure
+            # Scalar: keep as scalar
+            # 1D array: keep as 1D (n_trials) or (n_channels)
+            # 2D array: keep as 2D (n_trials, n_channels)
 
-            # Generate column names
+            # Generate column names based on result shape and aggregation
             if (
                 self.channel_aggregation_method is not None
                 and self.trial_aggregation_method is not None
             ):
                 col_names = [f"{prefix}_all_channels_all_trials"]
             elif self.channel_aggregation_method is not None:
-                n_trials = result_data.shape[1]
+                # result_data shape: (n_trials,) after channel aggregation
+                n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
                 col_names = [f"{prefix}_trial_{i}" for i in range(n_trials)]
             elif self.trial_aggregation_method is not None:
+                # result_data shape: (n_channels,) after trial aggregation
                 col_names = [f"{prefix}_{ch}" for ch in ch_names]
             else:
                 col_names = [f"{prefix}_{ch}" for ch in ch_names]

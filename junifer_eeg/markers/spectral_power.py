@@ -427,15 +427,14 @@ class SpectralPower(BaseMarker):
 
         # Remove the single-band debug path to ensure consistent array output format
 
-        # Standard aggregation path - combine all bands into single feature set
+        # Standard aggregation path - preserve tensor structure
         from .utils import aggregate_data, get_data_for_rois
 
-        all_values = []
-        col_names = []
+        # Initialize storage for structured results
+        band_results = {}
 
         for band_name, band_data in all_band_powers.items():
             # Apply ROI filtering if specified
-            band_ch_names = ch_names
             if self.rois is not None:
                 roi_data = get_data_for_rois(
                     band_data.T,
@@ -445,7 +444,6 @@ class SpectralPower(BaseMarker):
                 )
                 if "selected_channels" in roi_data:
                     band_data = roi_data["selected_channels"].T
-                    band_ch_names = self.rois
 
             # Apply aggregation for this band
             result_data = band_data
@@ -467,36 +465,24 @@ class SpectralPower(BaseMarker):
                         result_data, self.trial_aggregation_method, axis=0
                     )
 
-            # Reshape to 2D
-            if result_data.ndim == 0:
-                result_data = np.array([[result_data]])
-            elif result_data.ndim == 1:
-                result_data = result_data[np.newaxis, :]
+            # Store result with proper structure - NO FLATTENING
+            band_results[band_name] = result_data
 
-            # Generate column names for this band
-            if (
-                self.channel_aggregation_method is not None
-                and self.trial_aggregation_method is not None
-            ):
-                band_col_names = [f"{band_name}_all_channels_all_trials"]
-            elif self.channel_aggregation_method is not None:
-                n_trials = result_data.shape[1]
-                band_col_names = [
-                    f"{band_name}_trial_{i}" for i in range(n_trials)
-                ]
-            elif self.trial_aggregation_method is not None:
-                band_col_names = [f"{band_name}_{ch}" for ch in band_ch_names]
-            else:
-                band_col_names = [f"{band_name}_{ch}" for ch in band_ch_names]
-
-            # Flatten and add to combined results
-            all_values.extend(result_data.flatten())
-            col_names.extend(band_col_names)
-
-        # Return combined results with proper metadata structure
-        return {
-            "spectralpower": {
-                "data": np.array(all_values).reshape(1, -1),
-                "col_names": col_names,
-            },
-        }
+        # Return structured results preserving tensor dimensions
+        if len(band_results) == 1:
+            # Single band - return the tensor directly
+            band_name = next(iter(band_results.keys()))
+            return {
+                "spectralpower": {
+                    "data": band_results[
+                        band_name
+                    ],  # Preserves original tensor structure
+                }
+            }
+        else:
+            # Multiple bands - return dict of tensors
+            return {
+                "spectralpower": {
+                    "data": band_results,  # Dict of tensors with proper dimensions
+                }
+            }

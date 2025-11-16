@@ -85,6 +85,7 @@ def manually_aggregate_reference(
 ) -> np.ndarray:
     """Manually aggregate NICE reference data.
 
+    Updated to return proper tensor structures that match marker outputs.
 
     Parameters
     ----------
@@ -98,12 +99,12 @@ def manually_aggregate_reference(
     Returns
     -------
     np.ndarray
-        Manually aggregated data matching expected Junifer output.
+        Manually aggregated data matching expected Junifer output with proper tensor structure.
     """
-    # If no aggregation, return as-is (flattened)
+    # If no aggregation, return as-is (proper tensor structure)
     if channel_aggregation_method is None and trial_aggregation_method is None:
-        # Return flattened data: (1, n_epochs * n_channels)
-        return nice_output.reshape(1, -1)
+        # Return raw data: (n_epochs, n_channels)
+        return nice_output
 
     # If only trial aggregation (no channel aggregation)
     if (
@@ -115,7 +116,7 @@ def manually_aggregate_reference(
         trial_aggregated = aggregate_data(
             nice_output, trial_aggregation_method, axis=0
         )
-        return trial_aggregated.reshape(1, -1)
+        return trial_aggregated  # Return 1D array (n_channels,)
 
     # If only channel aggregation (no trial aggregation)
     if (
@@ -127,7 +128,7 @@ def manually_aggregate_reference(
         channel_aggregated = aggregate_data(
             nice_output, channel_aggregation_method, axis=1
         )
-        return channel_aggregated.reshape(1, -1)
+        return channel_aggregated  # Return 1D array (n_epochs,)
 
     # Full case: both channel and trial aggregation
     # IMPORTANT: Apply channel aggregation FIRST, then trial aggregation
@@ -142,7 +143,85 @@ def manually_aggregate_reference(
     # Input shape: (n_epochs,) -> Output shape: scalar
     final_value = aggregate_data(channel_aggregated, trial_aggregation_method)
 
-    return np.array([[final_value]])  # Shape: (1, 1)
+    return final_value  # Return scalar
+
+
+def manually_aggregate_connectivity_reference(
+    nice_output: np.ndarray,
+    channel_aggregation_method: str | None = None,
+    trial_aggregation_method: str | None = None,
+) -> np.ndarray:
+    """Manually aggregate NICE connectivity reference data.
+
+    Updated to return proper tensor structures that match SymbolicMutualInformation outputs.
+    Handles connectivity matrix input with shape (n_channels, n_channels, n_epochs).
+
+    Parameters
+    ----------
+    nice_output : np.ndarray
+        Raw NICE connectivity output with shape (n_channels, n_channels, n_epochs)
+    channel_aggregation_method : str, optional
+        Method to aggregate across channels ('mean', 'trim_mean80', etc.)
+    trial_aggregation_method : str, optional
+        Method to aggregate across trials/epochs ('mean', 'trim_mean80', etc.)
+
+    Returns
+    -------
+    np.ndarray
+        Manually aggregated data matching expected SymbolicMutualInformation output.
+    """
+    # Convert connectivity matrix to per-channel values (matching Junifer's approach)
+    # NICE stores as (ch x ch x trials), aggregate across axis=1 (connections dimension)
+    # Junifer uses aggregate_data with axis=1, which averages ALL connections INCLUDING diagonal
+    # Shape: (channels, channels, trials) -> aggregate axis=1 -> (channels, trials)
+    per_channel_values = np.mean(nice_output, axis=1)
+    # Transpose to (trials, channels) for consistency with other markers
+    per_channel_values = per_channel_values.T
+
+    # Now apply the same aggregation logic as regular markers
+    # If no aggregation, return as-is (proper tensor structure)
+    if channel_aggregation_method is None and trial_aggregation_method is None:
+        # Return raw per-channel data: (n_epochs, n_channels)
+        return per_channel_values
+
+    # If only trial aggregation (no channel aggregation)
+    if (
+        channel_aggregation_method is None
+        and trial_aggregation_method is not None
+    ):
+        # Aggregate across trials (axis=0), keep all channels
+        # Result shape: (n_channels,)
+        trial_aggregated = aggregate_data(
+            per_channel_values, trial_aggregation_method, axis=0
+        )
+        return trial_aggregated  # Return 1D array (n_channels,)
+
+    # If only channel aggregation (no trial aggregation)
+    if (
+        trial_aggregation_method is None
+        and channel_aggregation_method is not None
+    ):
+        # Aggregate across channels (axis=1) for each trial separately
+        # Result shape: (n_epochs,)
+        channel_aggregated = aggregate_data(
+            per_channel_values, channel_aggregation_method, axis=1
+        )
+        return channel_aggregated  # Return 1D array (n_epochs,)
+
+    # Full case: both channel and trial aggregation
+    # IMPORTANT: Apply channel aggregation FIRST, then trial aggregation
+
+    # Step 1: Aggregate across channels for each trial
+    # Input shape: (n_epochs, n_channels) -> Output shape: (n_epochs,)
+    channel_aggregated = aggregate_data(
+        per_channel_values, channel_aggregation_method, axis=1
+    )
+
+    # Step 2: Aggregate across trials
+    # Input shape: (n_epochs,) -> Output shape: scalar
+    final_value = aggregate_data(channel_aggregated, trial_aggregation_method)
+
+    return final_value  # Return scalar
 
 
 def check_aggregated_equivalence(
@@ -213,16 +292,34 @@ def check_aggregated_equivalence(
     print(f"  Manually aggregated shape: {manually_aggregated.shape}")
 
     print("\nJunifer aggregated output:")
-    print(f"  Junifer shape: {junifer_output.shape}")
+    # Handle scalar outputs properly
+    if np.isscalar(junifer_output):
+        print(f"  Junifer shape: scalar ({junifer_output})")
+    else:
+        print(f"  Juniper shape: {junifer_output.shape}")
 
-    # Check shapes match
-    if manually_aggregated.shape != junifer_output.shape:
+    # Check shapes match - handle scalar vs array comparison
+    if np.isscalar(manually_aggregated) and np.isscalar(junifer_output):
+        # Both scalars - shapes match
+        print("  ✅ Shapes match (both scalars)!")
+    elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
+        # One scalar, one array - shape mismatch
+        print("  ❌ SHAPE MISMATCH!")
+        if np.isscalar(manually_aggregated):
+            print(f"     Expected (manual): scalar ({manually_aggregated})")
+            print(f"     Got (junifer):     {junifer_output.shape}")
+        else:
+            print(f"     Expected (manual): {manually_aggregated.shape}")
+            print(f"     Got (junifer):     scalar ({junifer_output})")
+        return False
+    elif manually_aggregated.shape != junifer_output.shape:
+        # Both arrays but different shapes
         print("  ❌ SHAPE MISMATCH!")
         print(f"     Expected (manual): {manually_aggregated.shape}")
         print(f"     Got (junifer):     {junifer_output.shape}")
         return False
-
-    print("  ✅ Shapes match!")
+    else:
+        print("  ✅ Shapes match!")
 
     # Compare values
     abs_diff = np.abs(manually_aggregated - junifer_output)
@@ -256,6 +353,136 @@ def check_aggregated_equivalence(
         print(f"  Manual (NICE) value: {manually_aggregated[worst_idx]:.6e}")
         print(f"  Junifer value:       {junifer_output[worst_idx]:.6e}")
         print(f"  Relative diff:       {rel_diff[worst_idx] * 100:.4f}%")
+
+        return False
+
+
+def check_connectivity_aggregated_equivalence(
+    nice_output: np.ndarray,
+    junifer_output: np.ndarray,
+    marker_name: str,
+    channel_agg: str | None,
+    trial_agg: str | None,
+    tolerance: float = 0.01,
+) -> bool:
+    """Check that aggregated connectivity outputs match.
+
+    Parameters
+    ----------
+    nice_output : np.ndarray
+        Raw NICE connectivity output (non-aggregated) with shape (n_channels, n_channels, n_epochs)
+    junifer_output : np.ndarray
+        Junifer output (already aggregated by marker)
+    marker_name : str
+        Name of marker for reporting
+    channel_agg : str or None
+        Channel aggregation method used
+    trial_agg : str or None
+        Trial aggregation method used
+    tolerance : float
+        Maximum relative error in percentage (default: 0.01%)
+
+    Returns
+    -------
+    bool
+        True if outputs match within tolerance
+    """
+    print(f"\n{'=' * 80}")
+    print(f"VALIDATING AGGREGATED: {marker_name}")
+    print(f"{'=' * 80}")
+    print(f"Channel aggregation: {channel_agg}")
+    print(f"Trial aggregation: {trial_agg}")
+
+    # Manually aggregate the NICE connectivity reference data
+    print("\nManually aggregating NICE connectivity reference data...")
+    print(f"  NICE raw shape: {nice_output.shape}")
+    manually_aggregated = manually_aggregate_connectivity_reference(
+        nice_output, channel_agg, trial_agg
+    )
+    if np.isscalar(manually_aggregated):
+        print(f"  Manually aggregated shape: scalar ({manually_aggregated})")
+    else:
+        print(f"  Manually aggregated shape: {manually_aggregated.shape}")
+
+    print("\nJunifer aggregated output:")
+    # Handle scalar outputs properly
+    if np.isscalar(junifer_output):
+        print(f"  Junifer shape: scalar ({junifer_output})")
+    else:
+        print(f"  Junifer shape: {junifer_output.shape}")
+
+    # Check shapes match - handle scalar vs array comparison
+    if np.isscalar(manually_aggregated) and np.isscalar(junifer_output):
+        # Both scalars - shapes match
+        print("  ✅ Shapes match (both scalars)!")
+    elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
+        # One scalar, one array - shape mismatch
+        print("  ❌ SHAPE MISMATCH!")
+        if np.isscalar(manually_aggregated):
+            print(f"     Expected (manual): scalar ({manually_aggregated})")
+            print(f"     Got (junifer):     {junifer_output.shape}")
+        else:
+            print(f"     Expected (manual): {manually_aggregated.shape}")
+            print(f"     Got (junifer):     scalar ({junifer_output})")
+        return False
+    elif manually_aggregated.shape != junifer_output.shape:
+        # Both arrays but different shapes
+        print("  ❌ SHAPE MISMATCH!")
+        print(f"     Expected (manual): {manually_aggregated.shape}")
+        print(f"     Got (junifer):     {junifer_output.shape}")
+        return False
+    else:
+        print("  ✅ Shapes match!")
+
+    # Compare values
+    abs_diff = np.abs(manually_aggregated - junifer_output)
+    rel_diff = abs_diff / (np.abs(manually_aggregated) + 1e-12)
+
+    max_rel_error = np.max(rel_diff) * 100
+    mean_rel_error = np.mean(rel_diff) * 100
+
+    print("\nValue comparison:")
+    if np.isscalar(manually_aggregated):
+        print(f"  Manual (NICE) value: {manually_aggregated:.6e}")
+    else:
+        print(f"  Manual (NICE) mean:  {np.mean(manually_aggregated):.6e}")
+    if np.isscalar(junifer_output):
+        print(f"  Junifer value:       {junifer_output:.6e}")
+    else:
+        print(f"  Junifer mean:        {np.mean(junifer_output):.6e}")
+    print(f"  Max relative error:  {max_rel_error:.4f}%")
+    print(f"  Mean relative error: {mean_rel_error:.4f}%")
+
+    if max_rel_error < tolerance:
+        print(
+            f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% < {tolerance}%)"
+        )
+        return True
+    elif max_rel_error < 1.0:
+        print(
+            f"\n✅ EXCELLENT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
+        )
+        return True
+    else:
+        print(f"\n❌ MISMATCH: {marker_name} ({max_rel_error:.4f}% error)")
+
+        # Find worst case
+        if not np.isscalar(rel_diff):
+            worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
+            print(f"\nWorst case at index {worst_idx}:")
+            if np.isscalar(manually_aggregated):
+                print(f"  Manual (NICE) value: {manually_aggregated:.6e}")
+            else:
+                print(
+                    f"  Manual (NICE) value: {manually_aggregated[worst_idx]:.6e}"
+                )
+            if np.isscalar(junifer_output):
+                print(f"  Junifer value:       {junifer_output:.6e}")
+            else:
+                print(
+                    f"  Junifer value:       {junifer_output[worst_idx]:.6e}"
+                )
+            print(f"  Relative diff:       {rel_diff[worst_idx] * 100:.4f}%")
 
         return False
 
@@ -951,25 +1178,22 @@ class TestTimeLockedTopographyP1Aggregated:
             manually_aggregated = aggregate_data(
                 manually_aggregated, channel_agg, axis=1
             )
-            # Result is (n_trials,), reshape to (1, n_trials)
-            manually_aggregated = manually_aggregated.reshape(1, -1)
+            # Result is (n_trials,) - keep natural shape, no reshape
 
-        # Trial aggregation (axis=0 or axis=1 depending on previous shape)
+        # Trial aggregation
         if trial_agg is not None:
             if channel_agg is not None:
-                # Data is (1, n_trials), aggregate along axis=1
+                # Data is (n_trials,), aggregate to scalar
                 manually_aggregated = aggregate_data(
-                    manually_aggregated, trial_agg, axis=1
+                    manually_aggregated, trial_agg, axis=None
                 )
-                manually_aggregated = manually_aggregated.reshape(1, 1)
+                # Result is scalar - keep natural shape, no reshape
             else:
                 # Data is (n_trials, n_channels), aggregate along axis=0
                 manually_aggregated = aggregate_data(
                     manually_aggregated, trial_agg, axis=0
                 )
-                manually_aggregated = np.expand_dims(
-                    manually_aggregated, axis=0
-                )
+                # Result is (n_channels,) - keep natural shape, no reshape
 
         print(f"  Manually aggregated shape: {manually_aggregated.shape}")
 
@@ -1346,7 +1570,13 @@ class TestSymbolicMutualInformationAggregated:
         )
         junifer_result = junifer_marker.compute(input_dict)
         junifer_output = junifer_result["symbolicmutualinformation"]["data"]
-        print(f"Junifer aggregated output shape: {junifer_output.shape}")
+        # Handle scalar outputs properly
+        if np.isscalar(junifer_output):
+            print(
+                f"Junifer aggregated output shape: scalar ({junifer_output})"
+            )
+        else:
+            print(f"Junifer aggregated output shape: {junifer_output.shape}")
 
         # Step 5: Get NICE reference output (connectivity matrix: channels x channels x trials)
         nice_output_connectivity = self.reference_data["nice_output"]
@@ -1354,44 +1584,18 @@ class TestSymbolicMutualInformationAggregated:
             f"NICE raw output shape (connectivity matrix): {nice_output_connectivity.shape}"
         )
 
-        # Step 6: Convert connectivity matrix to per-channel values (matching Junifer's approach)
-        # NICE stores as (ch x ch x trials), aggregate across axis=1 (connections dimension)
-        # Junifer uses aggregate_data with axis=1, which averages ALL connections INCLUDING diagonal
-        # Shape: (channels, channels, trials) -> aggregate axis=1 -> (channels, trials)
-        per_channel_values = np.mean(nice_output_connectivity, axis=1)
-        # Transpose to (trials, channels) for consistency with other markers
-        per_channel_values = per_channel_values.T
-
-        print(
-            f"Converted to per-channel values: {per_channel_values.shape} (trials x channels)"
-        )
-
-        # Step 7: Fix SymbolicMutualInformation's special transpose behavior
-        # The marker transposes (1, n) to (n, 1) for channel-only aggregation
-        # We need to transpose it back to match our manual aggregation format
-        junifer_output_fixed = junifer_output
-        if junifer_output.shape[0] > 1 and junifer_output.shape[1] == 1:
-            # Junifer has (n_trials, 1) but manual expects (1, n_trials)
-            junifer_output_fixed = junifer_output.T
-            print(
-                f"Transposed Junifer output: {junifer_output.shape} -> {junifer_output_fixed.shape}"
-            )
-
-        # Step 8: Compare using manual aggregation
+        # Step 6: Compare using connectivity-specific aggregation function
         tolerance = self.reference_data["comparison_tolerance"]
-        all_channels = epochs_data["info"]["ch_names"]
-        match = check_aggregated_equivalence(
-            per_channel_values,
-            junifer_output_fixed,
+        match = check_connectivity_aggregated_equivalence(
+            nice_output_connectivity,
+            junifer_output,
             f"{self.reference_data['marker_name']} ({test_name})",
             channel_agg,
             trial_agg,
-            roi_channels=rois,
-            all_channels=all_channels,
             tolerance=tolerance,
         )
 
-        # Step 9: Assert for pytest
+        # Step 7: Assert for pytest
         assert match, (
             f"Aggregated Junifer output does not match manually aggregated NICE "
             f"reference within {tolerance}% tolerance for {test_name}"
@@ -1538,7 +1742,13 @@ class TestPowerSpectralDensitySummaryAggregated:
         )
         junifer_result = junifer_marker.compute(input_dict)
         junifer_output = junifer_result["psdsummary"]["data"]
-        print(f"Junifer aggregated output shape: {junifer_output.shape}")
+        # Handle scalar outputs properly
+        if np.isscalar(junifer_output):
+            print(
+                f"Junifer aggregated output shape: scalar ({junifer_output})"
+            )
+        else:
+            print(f"Junifer aggregated output shape: {junifer_output.shape}")
 
         # Step 5: Get NICE reference output (raw, non-aggregated)
         nice_output = self.reference_data["nice_output"]

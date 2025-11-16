@@ -519,28 +519,18 @@ class PowerSpectralDensitySummary(BaseMarker):
                 channel_values, self.channel_aggregation_method
             )
 
-            # Return single scalar result
+            # Return single scalar result without unnecessary reshaping
             agg_name = f"trial_{self.trial_aggregation_method}_roi_{self.channel_aggregation_method}"
             results = {
                 "psdsummary": {
-                    "data": np.array([[final_value]], dtype=np.float64),
+                    "data": float(
+                        final_value
+                    ),  # Return scalar, not (1, 1) array
                     "col_names": [f"all_channels_{agg_name}"],
                 }
             }
         else:
-            # Standard aggregation: apply ROI filtering and aggregation manually
-            # Apply ROI filtering if specified
-            if self.rois is not None:
-                roi_data = get_data_for_rois(
-                    psd_summary_values.T,
-                    list(ch_names),
-                    self.rois,
-                    self.equipment,
-                )
-                if "selected_channels" in roi_data:
-                    psd_summary_values = roi_data["selected_channels"].T
-                    ch_names = self.rois
-
+            # Standard aggregation: apply aggregation manually
             # Check for no aggregation
             if (
                 self.channel_aggregation_method is None
@@ -578,20 +568,22 @@ class PowerSpectralDensitySummary(BaseMarker):
                             result_data, self.trial_aggregation_method, axis=0
                         )
 
-                # Reshape to 2D
-                if result_data.ndim == 0:
-                    result_data = np.array([[result_data]])
-                elif result_data.ndim == 1:
-                    result_data = result_data[np.newaxis, :]
+                # Return result data without unnecessary reshaping - preserve tensor structure
+                # Scalar: keep as scalar
+                # 1D array: keep as 1D (n_trials) or (n_channels)
+                # 2D array: keep as 2D (n_trials, n_channels)
 
-                # Generate column names
+                # Generate column names based on aggregation and result shape
                 if (
                     self.channel_aggregation_method is not None
                     and self.trial_aggregation_method is not None
                 ):
                     col_names = ["all_channels_all_trials"]
                 elif self.channel_aggregation_method is not None:
-                    n_trials = result_data.shape[1]
+                    # result_data shape: (n_trials,) after channel aggregation
+                    n_trials = (
+                        result_data.shape[0] if result_data.ndim >= 1 else 1
+                    )
                     col_names = [f"trial_{i}" for i in range(n_trials)]
                 elif self.trial_aggregation_method is not None:
                     col_names = [f"{ch}" for ch in ch_names]

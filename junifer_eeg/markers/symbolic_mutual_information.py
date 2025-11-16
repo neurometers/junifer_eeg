@@ -593,64 +593,27 @@ class SymbolicMutualInformation(BaseMarker):
                 # - Was 2D: now (n_channels,)
                 # - Was 1D: now scalar
 
-        # Format output based on result shape
-        if np.isscalar(current_data) or current_data.size == 1:
+        # Format output based on result shape - preserve tensor structure
+        if np.isscalar(current_data):
             # Scalar result - fully aggregated
-            scalar_value = (
-                float(current_data)
-                if np.isscalar(current_data)
-                else float(current_data.item())
-            )
             results = {
                 "symbolicmutualinformation": {
-                    "data": np.array([[scalar_value]]),
-                    "col_names": ["wsmi_aggregated"],
+                    "data": float(current_data),  # Return scalar directly
+                }
+            }
+        elif hasattr(current_data, "size") and current_data.size == 1:
+            # Single element array - convert to scalar
+            results = {
+                "symbolicmutualinformation": {
+                    "data": float(current_data.item()),  # Convert to scalar
                 }
             }
         else:
-            # Vector or matrix result - return as is
-            # Ensure proper format for junifer compatibility
-            if current_data.ndim == 1:
-                # 1D vector - per-channel aggregated (n_channels,)
-                data_2d = current_data.reshape(-1, 1)
-                col_names = [f"E{i + 1}" for i in range(len(current_data))]
-            elif current_data.ndim == 2:
-                # 2D matrix - could be:
-                # a) (n_epochs, n_channels) - per-epoch per-channel
-                # b) (n_channels, n_channels) - connectivity matrix averaged across epochs
-
-                # Check if square (connectivity matrix) or rectangular (per-epoch)
-                if current_data.shape[0] == current_data.shape[1]:
-                    # Square matrix: (n_channels, n_channels) connectivity
-                    # Flatten to upper triangular for junifer format
-                    from .utils import create_connectivity_pair_column_names
-
-                    col_names = create_connectivity_pair_column_names(
-                        picked_ch_names
-                    )
-
-                    # Extract upper triangular values (excluding diagonal)
-                    n_channels = current_data.shape[0]
-                    indices = np.triu_indices(n_channels, k=1)
-                    upper_tri_values = current_data[indices]
-
-                    # Reshape to (1, n_pairs) for single aggregated connectivity matrix
-                    data_2d = upper_tri_values.reshape(1, -1)
-                else:
-                    # Rectangular matrix: (n_epochs, n_channels) - per-epoch per-channel
-                    data_2d = current_data
-                    col_names = [
-                        f"E{i + 1}" for i in range(current_data.shape[1])
-                    ]
-            else:
-                # Higher dimensional - flatten (shouldn't happen with current logic)
-                data_2d = current_data.reshape(1, -1)
-                col_names = [f"conn_{i}" for i in range(current_data.size)]
-
+            # Tensor result - return as is without flattening
+            # Preserve the natural tensor structure based on aggregation state
             results = {
                 "symbolicmutualinformation": {
-                    "data": data_2d,
-                    "col_names": col_names,
+                    "data": current_data,  # Preserve tensor dimensions
                 }
             }
 

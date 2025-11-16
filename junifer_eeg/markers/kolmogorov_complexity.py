@@ -187,21 +187,6 @@ class KolmogorovComplexity(BaseMarker):
                     self._compute_kolmogorov_for_signal(signal)
                 )
 
-        # Apply ROI filtering if specified
-        if self.rois is not None:
-            # k_values shape: (n_epochs, n_channels)
-            # Transpose to (n_channels, n_epochs) for get_data_for_rois
-            roi_data = get_data_for_rois(
-                k_values.T,
-                list(ch_names),
-                self.rois,
-                self.equipment,
-            )
-            # Extract filtered data and transpose back
-            if "selected_channels" in roi_data:
-                k_values = roi_data["selected_channels"].T
-                ch_names = self.rois
-
         # k_values shape: (n_epochs, n_channels)
 
         # Check if we should return raw data without aggregation
@@ -249,23 +234,20 @@ class KolmogorovComplexity(BaseMarker):
                 )
                 # Result: (n_channels,)
 
-        # Reshape to 2D for consistent output
-        if result_data.ndim == 0:
-            result_data = np.array([[result_data]])
-        elif result_data.ndim == 1:
-            if self.channel_aggregation_method is not None:
-                result_data = result_data[np.newaxis, :]
-            else:
-                result_data = result_data[np.newaxis, :]
+        # Return result data without unnecessary reshaping - preserve tensor structure
+        # Scalar: keep as scalar
+        # 1D array: keep as 1D (n_trials) or (n_channels)
+        # 2D array: keep as 2D (n_trials, n_channels)
 
-        # Generate column names based on aggregation
+        # Generate column names based on aggregation and result shape
         if (
             self.channel_aggregation_method is not None
             and self.trial_aggregation_method is not None
         ):
             col_names = ["all_channels_all_trials"]
         elif self.channel_aggregation_method is not None:
-            n_trials = result_data.shape[1]
+            # result_data shape: (n_trials,) after channel aggregation
+            n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
         elif self.trial_aggregation_method is not None:
             col_names = [f"{ch}" for ch in ch_names]

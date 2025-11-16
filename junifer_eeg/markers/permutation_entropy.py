@@ -504,19 +504,12 @@ class PermutationEntropy(BaseMarker):
                 )
                 # Result: (n_channels,)
 
-        # Reshape to 2D for consistent output
-        if result_data.ndim == 0:
-            # Scalar: (1, 1)
-            result_data = np.array([[result_data]])
-        elif result_data.ndim == 1:
-            if self.channel_aggregation_method is not None:
-                # Channel agg was applied: shape is (n_epochs,) -> (1, n_epochs)
-                result_data = result_data[np.newaxis, :]
-            else:
-                # Trial agg was applied: shape is (n_channels,) -> (1, n_channels)
-                result_data = result_data[np.newaxis, :]
+        # Return result data without unnecessary reshaping - preserve tensor structure
+        # Scalar: keep as scalar
+        # 1D array: keep as 1D (n_trials) or (n_channels)
+        # 2D array: keep as 2D (n_trials, n_channels)
 
-        # Generate column names based on aggregation
+        # Generate column names based on aggregation and result shape
         if (
             self.channel_aggregation_method is not None
             and self.trial_aggregation_method is not None
@@ -525,8 +518,8 @@ class PermutationEntropy(BaseMarker):
             col_names = ["all_channels_all_trials"]
         elif self.channel_aggregation_method is not None:
             # Channel aggregation only: one value per trial
-            # result_data shape: (1, n_trials)
-            n_trials = result_data.shape[1]
+            # result_data shape: (n_trials,)
+            n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
         elif self.trial_aggregation_method is not None:
             # Trial aggregation only: one value per channel

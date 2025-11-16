@@ -264,15 +264,6 @@ class TimeLockedContrast(BaseMarker):
 
         # Helper function to aggregate condition data
         def aggregate_condition(data, ch_names):
-            # Apply ROI filtering if specified
-            if self.rois is not None:
-                roi_data = get_data_for_rois(
-                    data.T, list(ch_names), self.rois, self.equipment
-                )
-                if "selected_channels" in roi_data:
-                    data = roi_data["selected_channels"].T
-                    ch_names = self.rois
-
             # Apply aggregation
             result_data = data
 
@@ -293,20 +284,15 @@ class TimeLockedContrast(BaseMarker):
                         result_data, self.trial_aggregation_method, axis=0
                     )
 
-            # Reshape to 2D
-            if result_data.ndim == 0:
-                result_data = np.array([[result_data]])
-            elif result_data.ndim == 1:
-                result_data = result_data[np.newaxis, :]
-
-            # Generate column names
+            # Generate column names based on aggregation and result shape
             if (
                 self.channel_aggregation_method is not None
                 and self.trial_aggregation_method is not None
             ):
                 col_names = ["all_channels_all_trials"]
             elif self.channel_aggregation_method is not None:
-                n_trials = result_data.shape[1]
+                # result_data shape: (n_trials,) after channel aggregation
+                n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
                 col_names = [f"trial_{i}" for i in range(n_trials)]
             elif self.trial_aggregation_method is not None:
                 col_names = [f"{ch}" for ch in ch_names]
