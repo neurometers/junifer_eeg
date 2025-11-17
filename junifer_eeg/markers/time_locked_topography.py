@@ -33,15 +33,16 @@ class TimeLockedTopography(BaseMarker):
 
     def __init__(
         self,
-        tmin: float = -0.2,
-        tmax: float = 0.8,
-        epoch_length: float = 2.0,
-        overlap: float = 0.5,
+        tmin: float,
+        tmax: float,
         baseline: tuple[float, float] | None = None,
+        reference: str | list[str] | None = None,
         rois: Union[List[str], List[int], None] = None,
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
-        equipment: str = "egi256",
+        epoch_length: float = 2.0,
+        overlap: float = 0.0,
+        equipment: str = "standard",
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -49,16 +50,20 @@ class TimeLockedTopography(BaseMarker):
 
         Parameters
         ----------
-        tmin : float, default=-0.2
+        tmin : float
             Start time relative to epoch center in seconds.
-        tmax : float, default=0.8
+        tmax : float
             End time relative to epoch center in seconds.
-        epoch_length : float, default=2.0
-            Length of epochs to create from continuous data.
-        overlap : float, default=0.5
-            Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
         baseline : tuple of float, optional
-            Baseline correction period (start, end) in seconds.
+            Baseline period as (tmin, tmax) for baseline correction.
+            Example: (-0.2, 0) for 200ms pre-stimulus baseline.
+        reference : str or list of str, optional
+            EEG reference to apply before analysis. Validates channels
+            against actual data (like ROI system). Options:
+            - 'average': Average reference across all channels
+            - Channel name string: Single channel (e.g., 'Cz', 'TP9')
+            - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
+            Examples: 'average', 'Cz', ['TP9', 'TP10']
         rois : list of str or int, optional
             Flat list of channel specifications for filtering BEFORE computation.
             Each item can be:
@@ -88,6 +93,7 @@ class TimeLockedTopography(BaseMarker):
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.baseline = baseline
+        self.reference = reference
         self.rois = rois
         self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
@@ -112,6 +118,75 @@ class TimeLockedTopography(BaseMarker):
             return "timeseries"
         # Aggregation applied → time averaged first, then aggregated → 1D or scalar → use vector
         return "vector"
+
+    def _apply_reference(self, epochs):
+        """Apply EEG re-referencing using flexible channel specification.
+
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            Epochs to re-reference
+
+        Returns
+        -------
+        epochs : mne.Epochs
+            Re-referenced epochs
+
+        Notes
+        -----
+        Reference can be specified as:
+        - 'average': Average reference across all channels
+        - String channel name: Single channel (e.g., 'Cz', 'TP9')
+        - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
+        - Reference channels are resolved from actual data, like ROIs
+        """
+        reference = self.reference
+        ch_names = epochs.ch_names
+
+        # Handle special case: 'average' reference
+        if reference == "average":
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels="average"
+            )
+            return epochs_reref
+
+        # Handle single string channel name
+        if isinstance(reference, str):
+            if reference in ch_names:
+                # Valid channel name
+                epochs_reref = epochs.copy().set_eeg_reference(
+                    ref_channels=reference
+                )
+                return epochs_reref
+            else:
+                raise ValueError(
+                    f"Reference channel '{reference}' not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+        # Handle list of channel names
+        if isinstance(reference, list):
+            # Validate all channels exist in data
+            invalid_channels = [ch for ch in reference if ch not in ch_names]
+            if invalid_channels:
+                raise ValueError(
+                    f"Reference channel(s) {invalid_channels} not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+            # All channels valid
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels=reference
+            )
+            return epochs_reref
+
+        # Should not reach here, but handle unexpected types
+        raise TypeError(
+            f"Reference must be 'average', string channel name, or list of channel names. "
+            f"Got: {type(reference)}"
+        )
 
     def compute(
         self,
@@ -199,6 +274,15 @@ class TimeLockedTopography(BaseMarker):
                 }
             }
 
+        # Apply re-referencing FIRST (if specified)
+        if self.reference is not None:
+            epochs = self._apply_reference(epochs)
+
+        # Apply baseline correction SECOND (before cropping)
+        # This ensures baseline period is available for correction
+        if self.baseline is not None:
+            epochs = epochs.copy().apply_baseline(self.baseline)
+
         # Clamp to the available epoch time range to avoid MNE errors
         epoch_min = epochs.tmin
         epoch_max = epochs.tmax
@@ -209,12 +293,8 @@ class TimeLockedTopography(BaseMarker):
         if crop_tmax is None or crop_tmax > epoch_max:
             crop_tmax = epoch_max
 
-        # Crop epochs to the specified time window
-        epochs_cropped = epochs.copy().crop(tmin=crop_tmin, tmax=crop_tmax)
-
-        # Apply baseline correction if specified
-        if self.baseline is not None:
-            epochs_cropped.apply_baseline(self.baseline)
+        # Crop epochs to the specified time window (after baseline correction)
+        epochs_cropped = epochs.crop(tmin=crop_tmin, tmax=crop_tmax)
 
         # Get the raw time-series data
         data = (

@@ -1,6 +1,6 @@
 """Time-locked contrast marker for EEG analysis."""
 
-from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
+from typing import Any, ClassVar, Dict, List, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
@@ -35,20 +35,21 @@ class TimeLockedContrast(BaseMarker):
 
     def __init__(
         self,
-        condition_a: str | List[str],
-        condition_b: str | List[str],
-        tmin: Optional[float] = None,
-        tmax: Optional[float] = None,
-        baseline: Optional[Tuple[Optional[float], Optional[float]]] = None,
-        comment: Optional[str] = None,
+        condition_a: str | int | List[str | int],
+        condition_b: str | int | List[str | int],
+        tmin: float,
+        tmax: float,
+        baseline: tuple[float, float] | None = None,
+        reference: str | list[str] | None = None,
+        comment: str | None = None,
         rois: Union[List[str], List[int], None] = None,
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
         equipment: str = "egi256",
-        epoch_length: Optional[float] = None,
+        epoch_length: float = 2.0,
         overlap: float = 0.0,
-        on: Optional[str | List[str]] = None,
-        name: Optional[str] = None,
+        on: str | None = None,
+        name: str | None = None,
     ) -> None:
         """Initialize TimeLockedContrast marker.
 
@@ -63,7 +64,15 @@ class TimeLockedContrast(BaseMarker):
         tmax : float, optional
             End time for analysis window.
         baseline : tuple of float, optional
-            Baseline correction period (start, end).
+            Baseline period as (tmin, tmax) for baseline correction.
+            Example: (-0.2, 0) for 200ms pre-stimulus baseline.
+        reference : str or list of str, optional
+            EEG reference to apply before analysis. Validates channels
+            against actual data (like ROI system). Options:
+            - 'average': Average reference across all channels
+            - Channel name string: Single channel (e.g., 'Cz', 'TP9')
+            - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
+            Examples: 'average', 'Cz', ['TP9', 'TP10']
         comment : str, optional
             Label for this contrast.
         rois : list of str or int, optional
@@ -100,6 +109,7 @@ class TimeLockedContrast(BaseMarker):
         self.tmin = tmin
         self.tmax = tmax
         self.baseline = baseline
+        self.reference = reference
         self.comment = (
             comment
             or f"{'-'.join(map(str, self.condition_a))}_vs_{'-'.join(map(str, self.condition_b))}"
@@ -132,6 +142,75 @@ class TimeLockedContrast(BaseMarker):
         # Aggregation applied → time averaged first, then aggregated → 1D or scalar → use vector
         return "vector"
 
+    def _apply_reference(self, epochs):
+        """Apply EEG re-referencing using flexible channel specification.
+
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            Epochs to re-reference
+
+        Returns
+        -------
+        epochs : mne.Epochs
+            Re-referenced epochs
+
+        Notes
+        -----
+        Reference can be specified as:
+        - 'average': Average reference across all channels
+        - String channel name: Single channel (e.g., 'Cz', 'TP9')
+        - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
+        - Reference channels are resolved from actual data, like ROIs
+        """
+        reference = self.reference
+        ch_names = epochs.ch_names
+
+        # Handle special case: 'average' reference
+        if reference == "average":
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels="average"
+            )
+            return epochs_reref
+
+        # Handle single string channel name
+        if isinstance(reference, str):
+            if reference in ch_names:
+                # Valid channel name
+                epochs_reref = epochs.copy().set_eeg_reference(
+                    ref_channels=reference
+                )
+                return epochs_reref
+            else:
+                raise ValueError(
+                    f"Reference channel '{reference}' not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+        # Handle list of channel names
+        if isinstance(reference, list):
+            # Validate all channels exist in data
+            invalid_channels = [ch for ch in reference if ch not in ch_names]
+            if invalid_channels:
+                raise ValueError(
+                    f"Reference channel(s) {invalid_channels} not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+            # All channels valid
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels=reference
+            )
+            return epochs_reref
+
+        # Should not reach here, but handle unexpected types
+        raise TypeError(
+            f"Reference must be 'average', string channel name, or list of channel names. "
+            f"Got: {type(reference)}"
+        )
+
     def compute(
         self,
         input: Dict[str, Any],
@@ -153,7 +232,11 @@ class TimeLockedContrast(BaseMarker):
         # Filter to EEG channels
         epochs, eeg_ch_names, eeg_indices = filter_to_eeg_channels(epochs)
 
-        # Apply baseline correction if specified
+        # Apply re-referencing FIRST (if specified)
+        if self.reference is not None:
+            epochs = self._apply_reference(epochs)
+
+        # Apply baseline correction SECOND (if specified)
         if self.baseline is not None:
             epochs = epochs.copy().apply_baseline(self.baseline)
 
