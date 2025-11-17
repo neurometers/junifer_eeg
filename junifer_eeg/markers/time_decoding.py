@@ -24,7 +24,7 @@ class TimeDecoding(BaseMarker):
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "timedecoding": "vector",
+            "timedecoding": "timeseries",  # 2D: (1, n_times) time series
         },
     }
 

@@ -229,7 +229,9 @@ class PowerSpectralDensitySummary(BaseMarker):
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy"}
-    _MARKER_INOUT_MAPPINGS: ClassVar = {"EEG": {"psdsummary": "vector"}}
+    _MARKER_INOUT_MAPPINGS: ClassVar = {
+        "EEG": {"psdsummary": "timeseries"}
+    }  # 2D: (epochs, channels)
 
     def __init__(
         self,
@@ -309,6 +311,21 @@ class PowerSpectralDensitySummary(BaseMarker):
         self.epoch_length = epoch_length
         self.overlap = overlap
         super().__init__(on=on, name=name)
+
+    def get_output_type(self, input_type: str, output_feature: str) -> str:
+        """Get output type based on aggregation settings.
+
+        Returns 'timeseries' for 2D tensor data (no aggregation) and 'vector'
+        for aggregated 1D/scalar results.
+        """
+        # No aggregation → 2D tensor (epochs, channels) → use timeseries
+        if (
+            self.channel_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            return "timeseries"
+        # Aggregation applied → 1D or scalar → use vector
+        return "vector"
 
     def compute(
         self,

@@ -35,7 +35,9 @@ class SpectralPower(BaseMarker):
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "pandas"}
-    _MARKER_INOUT_MAPPINGS: ClassVar = {"EEG": {"spectralpower": "vector"}}
+    _MARKER_INOUT_MAPPINGS: ClassVar = {
+        "EEG": {"spectralpower": "timeseries"}
+    }  # 2D: (epochs, channels)
 
     def __init__(
         self,
@@ -135,6 +137,21 @@ class SpectralPower(BaseMarker):
             raise ValueError("Spectral entropy requires normalize=True")
 
         super().__init__(on=on, name=name)
+
+    def get_output_type(self, input_type: str, output_feature: str) -> str:
+        """Get output type based on aggregation settings.
+
+        Returns 'timeseries' for 2D tensor data (no aggregation) and 'vector'
+        for aggregated 1D/scalar results.
+        """
+        # No aggregation → 2D tensor (epochs, channels) → use timeseries
+        if (
+            self.channel_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            return "timeseries"
+        # Aggregation applied → 1D or scalar → use vector
+        return "vector"
 
     def compute(
         self,

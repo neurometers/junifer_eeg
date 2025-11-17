@@ -162,7 +162,7 @@ class SymbolicMutualInformation(BaseMarker):
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "symbolicmutualinformation": "vector",  # Can be vector (per-channel) or matrix (full connectivity)
+            "symbolicmutualinformation": "timeseries",  # 2D: (epochs, channel_pairs)
         },
     }
 
@@ -244,6 +244,34 @@ class SymbolicMutualInformation(BaseMarker):
         self.filter_order = filter_order
 
         super().__init__(on=on, name=name)
+
+    def get_output_type(self, input_type: str, output_feature: str) -> str:
+        """Get output type based on aggregation settings.
+
+        Returns 'timeseries' for 2D/3D tensor data and 'vector' for 1D/scalar.
+
+        WSMI dimensionality:
+        - No agg: (epochs, channels, channels) → 3D → timeseries
+        - Only connectivity_agg: (epochs, channels) → 2D → timeseries
+        - Only trial_agg: (channels, channels) → 2D → timeseries
+        - Only channel_agg: (epochs, channels) → 2D → timeseries
+        - Two aggs: 1D → vector
+        - All three aggs: scalar → vector
+        """
+        # Count how many aggregation methods are applied
+        agg_count = sum(
+            [
+                self.connectivity_aggregation_method is not None,
+                self.channel_aggregation_method is not None,
+                self.trial_aggregation_method is not None,
+            ]
+        )
+
+        # 0 or 1 aggregation → 2D or 3D tensor → use timeseries
+        if agg_count <= 1:
+            return "timeseries"
+        # 2 or 3 aggregations → 1D or scalar → use vector
+        return "vector"
 
     def compute(
         self,

@@ -29,7 +29,7 @@ class TimeLockedContrast(BaseMarker):
 
     _MARKER_INOUT_MAPPINGS: ClassVar[Dict[str, Dict[str, str]]] = {
         "EEG": {
-            "timelockedcontrast": "vector",
+            "timelockedcontrast": "timeseries",  # 3D: (epochs, channels, times) when not aggregated
         },
     }
 
@@ -112,6 +112,25 @@ class TimeLockedContrast(BaseMarker):
         self.overlap = overlap
 
         super().__init__(on=on, name=name)
+
+    def get_output_type(self, input_type: str, output_feature: str) -> str:
+        """Get output type based on aggregation settings.
+
+        Returns 'timeseries' for 3D tensor data (no aggregation) and 'vector'
+        for aggregated 1D/scalar results.
+
+        Dimensionality:
+        - No aggregation: (epochs, channels, times) → 3D → timeseries
+        - With aggregation: time-averaged first → then aggregated → 1D/scalar → vector
+        """
+        # No aggregation → 3D tensor (epochs, channels, times) → use timeseries
+        if (
+            self.channel_aggregation_method is None
+            and self.trial_aggregation_method is None
+        ):
+            return "timeseries"
+        # Aggregation applied → time averaged first, then aggregated → 1D or scalar → use vector
+        return "vector"
 
     def compute(
         self,
