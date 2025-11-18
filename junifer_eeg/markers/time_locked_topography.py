@@ -103,12 +103,15 @@ class TimeLockedTopography(BaseMarker):
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type based on aggregation settings.
 
-        Returns 'timeseries' for 3D tensor data (no aggregation) and 'vector'
-        for aggregated 1D/scalar results.
+        Returns:
+        - 'timeseries': 3D tensor data (no aggregation)
+        - 'vector': 1D array (one aggregation applied)
+        - 'scalar_table': scalar value (both aggregations applied)
 
         Dimensionality:
         - No aggregation: (epochs, channels, times) → 3D → timeseries
-        - With aggregation: time-averaged first → then aggregated → 1D/scalar → vector
+        - One aggregation: time-averaged → then aggregated → 1D → vector
+        - Both aggregations: time-averaged → fully aggregated → scalar → scalar_table
         """
         # No aggregation → 3D tensor (epochs, channels, times) → use timeseries
         if (
@@ -116,7 +119,15 @@ class TimeLockedTopography(BaseMarker):
             and self.trial_aggregation_method is None
         ):
             return "timeseries"
-        # Aggregation applied → time averaged first, then aggregated → 1D or scalar → use vector
+
+        # Both aggregations → scalar → use scalar_table
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            return "scalar_table"
+
+        # One aggregation → 1D array → use vector
         return "vector"
 
     def _apply_reference(self, epochs):

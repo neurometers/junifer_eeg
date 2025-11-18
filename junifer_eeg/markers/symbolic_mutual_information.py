@@ -248,7 +248,10 @@ class SymbolicMutualInformation(BaseMarker):
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type based on aggregation settings.
 
-        Returns 'timeseries' for 2D/3D tensor data and 'vector' for 1D/scalar.
+        Returns:
+        - 'timeseries': 2D/3D tensor data (0-1 aggregations)
+        - 'vector': 1D array (2 aggregations applied)
+        - 'scalar_table': scalar value (all 3 aggregations applied)
 
         WSMI dimensionality:
         - No agg: (epochs, channels, channels) → 3D → timeseries
@@ -256,7 +259,7 @@ class SymbolicMutualInformation(BaseMarker):
         - Only trial_agg: (channels, channels) → 2D → timeseries
         - Only channel_agg: (epochs, channels) → 2D → timeseries
         - Two aggs: 1D → vector
-        - All three aggs: scalar → vector
+        - All three aggs: scalar → scalar_table
         """
         # Count how many aggregation methods are applied
         agg_count = sum(
@@ -270,7 +273,12 @@ class SymbolicMutualInformation(BaseMarker):
         # 0 or 1 aggregation → 2D or 3D tensor → use timeseries
         if agg_count <= 1:
             return "timeseries"
-        # 2 or 3 aggregations → 1D or scalar → use vector
+
+        # All 3 aggregations → scalar → use scalar_table
+        if agg_count == 3:
+            return "scalar_table"
+
+        # 2 aggregations → 1D array → use vector
         return "vector"
 
     def compute(

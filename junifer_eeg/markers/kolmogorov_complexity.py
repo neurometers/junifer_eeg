@@ -96,8 +96,10 @@ class KolmogorovComplexity(BaseMarker):
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type based on aggregation settings.
 
-        Returns 'timeseries' for 2D tensor data (no aggregation) and 'vector'
-        for aggregated 1D/scalar results.
+        Returns:
+        - 'timeseries': 2D tensor data (no aggregation)
+        - 'vector': 1D array (one aggregation applied)
+        - 'scalar_table': scalar value (both aggregations applied)
         """
         # No aggregation → 2D tensor (epochs, channels) → use timeseries
         if (
@@ -105,7 +107,15 @@ class KolmogorovComplexity(BaseMarker):
             and self.trial_aggregation_method is None
         ):
             return "timeseries"
-        # Aggregation applied → 1D or scalar → use vector
+
+        # Both aggregations → scalar → use scalar_table
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            return "scalar_table"
+
+        # One aggregation → 1D array → use vector
         return "vector"
 
     def compute(

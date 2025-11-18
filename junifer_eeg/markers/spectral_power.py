@@ -141,16 +141,26 @@ class SpectralPower(BaseMarker):
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type based on aggregation settings.
 
-        Returns 'timeseries' for 2D tensor data (no aggregation) and 'vector'
-        for aggregated 1D/scalar results.
+        Returns:
+        - 'timeseries': 2D/3D tensor data (no aggregation)
+        - 'vector': 1D array (one aggregation applied)
+        - 'scalar_table': scalar value (both aggregations applied)
         """
-        # No aggregation → 2D tensor (epochs, channels) → use timeseries
+        # No aggregation → 2D/3D tensor (epochs, channels) or (bands, epochs, channels) → timeseries
         if (
             self.channel_aggregation_method is None
             and self.trial_aggregation_method is None
         ):
             return "timeseries"
-        # Aggregation applied → 1D or scalar → use vector
+
+        # Both aggregations → scalar → use scalar_table
+        if (
+            self.channel_aggregation_method is not None
+            and self.trial_aggregation_method is not None
+        ):
+            return "scalar_table"
+
+        # One aggregation → 1D array → use vector
         return "vector"
 
     def compute(
@@ -178,7 +188,7 @@ class SpectralPower(BaseMarker):
         data_obj = input["data"]
 
         # CRITICAL FIX: Filter to only EEG channels (E1-E256), excluding D/DI auxiliary channels
-        data_obj, eeg_ch_names, eeg_indices = filter_to_eeg_channels(data_obj)
+        data_obj, _, _ = filter_to_eeg_channels(data_obj)
 
         # Handle both Raw and Epochs objects
         if hasattr(data_obj, "events"):
@@ -425,22 +435,29 @@ class SpectralPower(BaseMarker):
             and self.trial_aggregation_method is None
         ):
             # Return raw per-epoch, per-channel results without any aggregation
-            # For multiple bands: return dict with each band as (n_epochs, n_channels)
             if len(all_band_powers) == 1:
                 band_name = next(iter(all_band_powers.keys()))
                 band_data = all_band_powers[band_name]
                 return {
                     "spectralpower": {
                         "data": band_data,  # Shape: (n_epochs, n_channels)
+                        "col_names": ch_names,
                     }
                 }
-            else:
-                # Multiple bands - return dict of arrays
-                return {
-                    "spectralpower": {
-                        "data": all_band_powers,  # Dict of (n_epochs, n_channels) arrays
-                    }
+
+            # Multiple bands: stack into tensor (bands, epochs, channels)
+            band_order = list(all_band_powers.keys())
+            tensor = np.stack(
+                [np.asarray(all_band_powers[band]) for band in band_order],
+                axis=0,
+            )  # Shape: (n_bands, n_epochs, n_channels)
+
+            return {
+                "spectralpower": {
+                    "data": tensor,
+                    "col_names": ch_names,
                 }
+            }
 
         # Remove the single-band debug path to ensure consistent array output format
 
@@ -489,17 +506,22 @@ class SpectralPower(BaseMarker):
         if len(band_results) == 1:
             # Single band - return the tensor directly
             band_name = next(iter(band_results.keys()))
+            result_data = band_results[band_name]
+
             return {
                 "spectralpower": {
-                    "data": band_results[
-                        band_name
-                    ],  # Preserves original tensor structure
+                    "data": result_data,  # Preserves original tensor structure
                 }
             }
-        else:
-            # Multiple bands - return dict of tensors
-            return {
-                "spectralpower": {
-                    "data": band_results,  # Dict of tensors with proper dimensions
-                }
+
+        # Multiple bands - stack results to preserve band dimension
+        band_order = list(band_results.keys())
+        tensor = np.stack(
+            [np.asarray(band_results[band]) for band in band_order], axis=0
+        )
+
+        return {
+            "spectralpower": {
+                "data": tensor,
             }
+        }
