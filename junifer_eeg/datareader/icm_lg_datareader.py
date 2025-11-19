@@ -611,13 +611,9 @@ class ICMLGDataReader(DefaultDataReader):
 
             # Set montage AFTER channel dropping (for interpolation later)
             if self.apply_montage:
-                try:
-                    montage = mne.channels.make_standard_montage(
-                        "GSN-HydroCel-256"
-                    )
-                    raw.set_montage(montage, on_missing="ignore")
-                except Exception:
-                    pass  # Silently skip if montage fails
+                from .utils import detect_and_set_equipment
+
+                detect_and_set_equipment(raw)  # Raises error if fails
         else:
             # For non-EGI systems, use the original logic
             # Exclude Vertex Reference channel (always zero)
@@ -670,66 +666,13 @@ class ICMLGDataReader(DefaultDataReader):
         )
 
         # Only apply standard montages for non-EGI systems
-        if self.apply_montage and n_egi_channels == 0:
-            n_eeg = sum(
-                1
-                for ch in raw.ch_names
-                if ch.startswith("E")
-                or ch in ["Fp1", "Fp2", "F3", "F4", "C3", "C4"]
-            )
+        if (
+            self.apply_montage
+            and n_egi_channels == 0
+            and equipment_type != "egi"
+        ):
+            from .utils import detect_and_set_equipment
 
-            try:
-                if equipment_type == "egi":
-                    if n_eeg >= 256:
-                        montage = mne.channels.make_standard_montage(
-                            "GSN-HydroCel-257",
-                        )
-                    elif n_eeg >= 128:
-                        montage = mne.channels.make_standard_montage(
-                            "GSN-HydroCel-129",
-                        )
-                    else:
-                        montage = mne.channels.make_standard_montage(
-                            "GSN-HydroCel-65",
-                        )
-
-                    # Drop Cz for EGI systems
-                    if "Cz" in raw.ch_names:
-                        raw.drop_channels(["Cz"])
-
-                elif equipment_type == "biosemi":
-                    montage = mne.channels.make_standard_montage("biosemi128")
-                    # Drop external channels
-                    ext_channels = [
-                        "EXG1",
-                        "EXG2",
-                        "EXG3",
-                        "EXG4",
-                        "EXG5",
-                        "EXG6",
-                        "EXG7",
-                        "EXG8",
-                    ]
-                    channels_to_drop = [
-                        ch for ch in ext_channels if ch in raw.ch_names
-                    ]
-                    if channels_to_drop:
-                        raw.drop_channels(channels_to_drop)
-
-                else:
-                    montage = mne.channels.make_standard_montage(
-                        "standard_1020",
-                    )
-
-                raw.set_montage(montage, on_missing="ignore")
-
-            except Exception:
-                pass  # Silently skip if montage fails
-
-        # Set description for equipment tracking
-        n_final_eeg = len(
-            [ch for ch in raw.ch_names if not ch.startswith("STI")],
-        )
-        raw.info["description"] = f"{equipment_type}/{n_final_eeg}"
+            detect_and_set_equipment(raw)  # Raises error if fails
 
         return raw

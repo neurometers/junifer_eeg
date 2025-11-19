@@ -179,7 +179,6 @@ class SymbolicMutualInformation(BaseMarker):
         connectivity_aggregation_method: Optional[str | List[str]] = None,
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
-        equipment: str = "egi256",
         epoch_length: Optional[float] = None,
         overlap: float = 0.0,
         fmin: Optional[float] = None,
@@ -236,7 +235,6 @@ class SymbolicMutualInformation(BaseMarker):
         self.connectivity_aggregation_method = connectivity_aggregation_method
         self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
-        self.equipment = equipment
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.fmin = fmin
@@ -335,7 +333,7 @@ class SymbolicMutualInformation(BaseMarker):
 
         sfreq = epochs.info["sfreq"]
 
-        # Apply CSD preprocessing EARLY in pipeline (like NICE) before any other processing
+        # Apply CSD preprocessing BEFORE ROI filtering (needs all channels with montage)
         if self.csd:
             from mne import pick_types
             from mne.preprocessing import compute_current_source_density
@@ -350,12 +348,12 @@ class SymbolicMutualInformation(BaseMarker):
                     # Interpolate bad channels for CSD computation (like NICE)
                     epochs_temp.interpolate_bads(reset_bads=True)
 
-                # Compute CSD with same parameters as NICE
+                # Compute CSD with correct parameters
                 epochs_csd = compute_current_source_density(
                     epochs_temp, lambda2=1e-5
                 )
 
-                # Check if CSD actually produced CSD channels (NICE behavior)
+                # Check if CSD actually produced CSD channels
                 csd_picks = pick_types(epochs_csd.info, csd=True)
                 if len(csd_picks) > 0:
                     epochs = epochs_csd
@@ -388,9 +386,19 @@ class SymbolicMutualInformation(BaseMarker):
         picked_ch_names = [epochs.ch_names[i] for i in picks]
         n_epochs, n_channels_picked, n_times_epoch = data_for_comp.shape
 
-        # Apply ROI filtering BEFORE computation if specified (NICE requirement)
+        # Apply ROI filtering AFTER CSD (equipment from data metadata)
         if self.rois is not None:
             from .utils import get_data_for_rois
+
+            # Get equipment from data (set by data reader)
+            description = epochs.info.get("description") or ""
+            if "equipment=" in description:
+                equipment = description.replace("equipment=", "")
+            else:
+                raise ValueError(
+                    f"Equipment metadata not found in data. "
+                    f"Data reader should set it. Got: {description}"
+                )
 
             # Transpose to (n_channels, n_epochs, n_times)
             data_transposed = data_for_comp.transpose(1, 0, 2)
@@ -400,7 +408,7 @@ class SymbolicMutualInformation(BaseMarker):
                 data_transposed,
                 picked_ch_names,
                 self.rois,
-                self.equipment,
+                equipment,
             )
 
             # Extract the filtered data (returns {"selected_channels": data})
@@ -428,8 +436,12 @@ class SymbolicMutualInformation(BaseMarker):
 
         # Apply filtering if not disabled by custom fmin/fmax
         if self.fmin is None and self.fmax is None:
-            # Match NICE exactly: concatenate epochs, filter, then split back
-            b, a = butter(6, 2.0 * filter_freq / np.double(sfreq), "lowpass")
+            # Concatenate epochs, filter, then split back
+            b, a = butter(
+                self.filter_order,
+                2.0 * filter_freq / np.double(sfreq),
+                "lowpass",
+            )
             data_concatenated = np.hstack(
                 data_for_comp
             )  # Concatenate epochs horizontally
@@ -445,8 +457,12 @@ class SymbolicMutualInformation(BaseMarker):
         elif self.fmin is not None and self.fmax is not None:
             # Custom frequency band filtering - apply to already picked data
             filter_freq = (self.fmin + self.fmax) / 2.0
-            # Match NICE exactly: concatenate epochs, filter, then split back
-            b, a = butter(6, 2.0 * filter_freq / np.double(sfreq), "lowpass")
+            # Concatenate epochs, filter, then split back
+            b, a = butter(
+                self.filter_order,
+                2.0 * filter_freq / np.double(sfreq),
+                "lowpass",
+            )
             data_concatenated = np.hstack(
                 data_for_comp
             )  # Concatenate epochs horizontally
@@ -505,8 +521,7 @@ class SymbolicMutualInformation(BaseMarker):
         # wSMI/SMI Computation (Jitted) - EXACT NICE implementation
         result = _wsmi_python_jitted(sym, count, wts, self.weighted)
         # result is (n_channels_picked, n_channels_picked, n_epochs)
-        # Note: NICE only fills upper triangle, result[i,j] where i < j
-        # CRITICAL: NICE ALWAYS symmetrizes before any aggregation
+        # Note: only fills upper triangle, result[i,j] where i < j
         # This ensures connectivity matrix is symmetric: result[i,j] = result[j,i]
         result = result + result.transpose(1, 0, 2)
 
@@ -528,7 +543,7 @@ class SymbolicMutualInformation(BaseMarker):
             )  # (n_epochs, n_channels, n_channels)
 
             # Return per-epoch results - each epoch gets its own row
-            # Use lower triangular matrix like NICE (excluding diagonal)
+            # Use lower triangular matrix like(excluding diagonal)
             epoch_data = []
 
             # Generate column names for upper triangular pairs using utility function
@@ -536,12 +551,12 @@ class SymbolicMutualInformation(BaseMarker):
 
             col_names = create_connectivity_pair_column_names(picked_ch_names)
 
-            # Extract upper triangular values for each epoch (like NICE)
+            # Extract upper triangular values for each epoch
             for epoch_idx in range(n_epochs):
                 epoch_matrix = result_epoched[
                     epoch_idx
                 ]  # (n_channels, n_channels)
-                # Extract upper triangular values (excluding diagonal) - NICE only computes these
+                # Extract upper triangular values (excluding diagonal) - only computes these
                 upper_tri_values = epoch_matrix[indices_use]
                 epoch_data.append(upper_tri_values)
 

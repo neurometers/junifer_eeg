@@ -73,6 +73,11 @@ class SARTDataReader(DefaultDataReader):
         # Load epochs
         epochs = mne.read_epochs(file_path, preload=True, verbose=False)
 
+        # Set equipment metadata and montage (required for CSD)
+        from .utils import detect_and_set_equipment
+
+        detect_and_set_equipment(epochs)
+
         print(
             f"SART DATA READER: Loaded {len(epochs)} epochs, {len(epochs.ch_names)} channels"
         )
