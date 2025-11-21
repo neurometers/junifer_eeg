@@ -1,7 +1,7 @@
 """Set up junifer_eeg package."""
 
-# Authors: Giovanni Marraffini <g.marraffini@neurometers.ai>
-#          Federico Raimondo <f.raimondo@fz-juelich.de>
+# Authors: Giovanni Marraffini <giovanni.marraffini@gmail.com>
+#          Federico Raimondo <fraimondo@proton.me>
 # License: AGPL
 
 from setuptools import setup

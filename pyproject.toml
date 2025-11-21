@@ -9,8 +9,8 @@ description = "JUnifer EEG - EEG extension for the JUelich NeuroImaging FEature 
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 authors = [
-    {name = "Giovanni Marraffini", email = "g.marraffini@neurometers.ai"},
-    {name = "Fede Raimondo", email = "f.raimondo@fz-juelich.de"},
+    {name = "Giovanni Marraffini", email = "giovanni.marraffini@gmail.com"},
+    {name = "Federico Raimondo", email = "fraimondo@proton.me"},
 ]
 keywords = ["eeg", "electrophysiology", "biomarkers", "junifer", "neuroimaging"]
 classifiers = [
@@ -19,9 +19,6 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
