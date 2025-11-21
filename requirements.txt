@@ -58,7 +58,6 @@ Jinja2==3.1.6
 jmespath==1.0.1
 joblib==1.5.2
 junifer @ git+https://github.com/juaml/junifer.git@acc3e310cd7b88a0d4b84dd9f6053d48a1ac663b
--e git+ssh://git@github.com/neurometers/junifer_eeg.git@61af9d96ae53d45275a6930b773cb6da5208f2cd#egg=junifer_eeg
 junifer_data==1.3.0
 jupyter_client==8.6.3
 jupyter_core==5.8.1
