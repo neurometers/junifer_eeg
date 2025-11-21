@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  junifer-eeg:
+    image: junifer-eeg:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount the entire repository for access to examples and code
+      - .:/workspace
+      # Mount a cache directory for templateflow and other cached data
+      - ./.docker_cache:/cache
+    working_dir: /workspace
+    environment:
+      # Set HOME to writable cache location
+      - HOME=/cache
+      # Set templateflow cache location
+      - TEMPLATEFLOW_HOME=/cache/templateflow
+      # Git configuration to avoid warnings
+      - GIT_AUTHOR_NAME=junifer-eeg-docker
+      - GIT_AUTHOR_EMAIL=junifer@docker.local
+      - GIT_COMMITTER_NAME=junifer-eeg-docker
+      - GIT_COMMITTER_EMAIL=junifer@docker.local
+    user: "${UID:-1000}:${GID:-1000}"
+    # Override this with your desired command
+    # Example: docker-compose run junifer-eeg run examples/your_config.yaml
+    entrypoint: ["junifer"]
+    command: ["--help"]
+

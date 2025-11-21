@@ -133,6 +133,9 @@ cython_debug/
 # OS Stuff
 .DS_store
 
+# Docker cache
+.docker_cache/
+
 junifer/_version.py
 scratch/
 junifer_jobs/
