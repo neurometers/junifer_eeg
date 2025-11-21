@@ -200,8 +200,6 @@ class PermutationEntropy(BaseMarker):
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
         equipment: str = "egi256",
-        epoch_length: float = 2.0,
-        overlap: float = 0.0,
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -245,10 +243,6 @@ class PermutationEntropy(BaseMarker):
             'min', 'max', 'trim_mean80', 'trim_mean90', etc.
         equipment : str, default='egi256'
             Equipment type for ROI selection (e.g., 'egi256', 'egi64').
-        epoch_length : float, default=2.0
-            Length of epochs in seconds for trial aggregation.
-        overlap : float, default=0.0
-            Overlap between epochs (0.0 to 0.9).
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -266,8 +260,6 @@ class PermutationEntropy(BaseMarker):
         self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
-        self.epoch_length = epoch_length
-        self.overlap = overlap
 
         # Cache factorials for Lehmer code ranking
         self._fact = np.array(
@@ -320,38 +312,36 @@ class PermutationEntropy(BaseMarker):
         -------
         dict
             Computed permutation entropy features.
+
+        Raises
+        ------
+        ValueError
+            If input data is not Epochs or if epochs are empty.
         """
         from scipy.signal import butter, filtfilt
 
         from .utils import filter_to_eeg_channels
 
-        # Get the MNE data object (can be Raw or Epochs)
+        # Get the MNE data object - must be Epochs
         data_obj = input["data"]
+
+        if not hasattr(data_obj, "events"):
+            raise ValueError(
+                "PermutationEntropy requires Epochs data. "
+                "Please epoch your data in preprocessing."
+            )
+
+        if len(data_obj) == 0:
+            raise ValueError(
+                "Cannot compute permutation entropy on empty epochs."
+            )
 
         # Filter to only EEG channels (exclude EOG, stim, etc.)
         data_obj, eeg_ch_names, eeg_indices = filter_to_eeg_channels(data_obj)
 
-        # Handle both Raw and Epochs objects
-        if hasattr(data_obj, "get_data") and hasattr(data_obj, "events"):
-            # This is an Epochs object
-            # Check if epochs object is empty
-            if len(data_obj) == 0:
-                # Return empty results for empty epochs
-                return {
-                    "permutationentropy": {
-                        "data": np.array([[]]),
-                        "col_names": [],
-                    }
-                }
-            epochs_data = (
-                data_obj.get_data()
-            )  # Shape: (n_epochs, n_channels, n_times)
-        else:
-            # This is a Raw object, get data directly and reshape to 3D
-            raw_data = data_obj.get_data()  # Shape: (n_channels, n_times)
-            # Reshape to (1, n_channels, n_times) to treat as single epoch
-            epochs_data = raw_data[np.newaxis, :, :]
-
+        epochs_data = (
+            data_obj.get_data()
+        )  # Shape: (n_epochs, n_channels, n_times)
         ch_names = data_obj.ch_names
         sfreq = data_obj.info["sfreq"]
 

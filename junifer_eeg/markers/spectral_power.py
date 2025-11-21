@@ -49,8 +49,6 @@ class SpectralPower(BaseMarker):
         bands: Optional[dict] = None,
         tmin: Optional[float] = None,
         tmax: Optional[float] = None,
-        epoch_length: float = 2.0,
-        overlap: float = 0.0,
         n_fft: Optional[int] = None,
         n_per_seg: Optional[int] = None,
         n_overlap: Optional[int] = None,
@@ -82,10 +80,6 @@ class SpectralPower(BaseMarker):
             Start time for analysis in seconds. If None, use start of epoch.
         tmax : float, optional
             End time for analysis in seconds. If None, use end of epoch.
-        epoch_length : float, default=2.0
-            Length of epochs to create from continuous data in seconds.
-        overlap : float, default=0.0
-            Overlap between epochs (0.0 = no overlap, 0.9 = 90% overlap).
         n_fft : int, optional
             Length of the FFT used for Welch PSD. If None, uses adaptive sizing.
         n_per_seg : int, optional
@@ -108,6 +102,8 @@ class SpectralPower(BaseMarker):
             Methods to aggregate across ROI electrodes: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
         trial_aggregation_method : str, optional
             Methods to aggregate across trials/epochs: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
+        equipment : str, default="egi256"
+            Equipment configuration for ROI resolution.
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -121,8 +117,6 @@ class SpectralPower(BaseMarker):
         self.bands = bands
         self.tmin = tmin
         self.tmax = tmax
-        self.epoch_length = epoch_length
-        self.overlap = overlap
         self.n_fft = n_fft
         self.n_per_seg = n_per_seg
         self.n_overlap = n_overlap
@@ -181,43 +175,38 @@ class SpectralPower(BaseMarker):
         -------
         dict
             Computed spectral power features with aggregation.
+
+        Raises
+        ------
+        ValueError
+            If input data is not Epochs or if epochs are empty.
         """
         from .utils import filter_to_eeg_channels
 
-        # Get the MNE data object (can be Raw or Epochs)
+        # Get the MNE data object - must be Epochs
         data_obj = input["data"]
 
-        # CRITICAL FIX: Filter to only EEG channels (E1-E256), excluding D/DI auxiliary channels
+        if not hasattr(data_obj, "events"):
+            raise ValueError(
+                "SpectralPower requires Epochs data. "
+                "Please epoch your data in preprocessing."
+            )
+
+        if len(data_obj) == 0:
+            raise ValueError("Cannot compute spectral power on empty epochs.")
+
+        # Filter to only EEG channels (E1-E256), excluding D/DI auxiliary channels
         data_obj, _, _ = filter_to_eeg_channels(data_obj)
 
-        # Handle both Raw and Epochs objects
-        if hasattr(data_obj, "events"):
-            # This is an Epochs object
-            # Check if epochs object is empty
-            if len(data_obj) == 0:
-                # Return empty results for empty epochs
-                return {
-                    "spectralpower": {
-                        "data": np.array([[]]),
-                        "col_names": [],
-                    }
-                }
-            epochs_data = (
-                data_obj.get_data()
-            )  # Shape (n_epochs, n_channels, n_times)
-            ch_names = data_obj.ch_names
-            info = data_obj.info
-        else:
-            # This is a Raw object, reshape to look like single epoch
-            raw_data = data_obj.get_data()  # Shape (n_channels, n_times)
-            epochs_data = raw_data[
-                np.newaxis, :, :
-            ]  # Shape (1, n_channels, n_times)
-            ch_names = data_obj.ch_names
-            info = data_obj.info
-
-        n_epochs, n_channels, n_samples = epochs_data.shape
+        ch_names = data_obj.ch_names
+        info = data_obj.info
         sfreq = info["sfreq"]
+
+        # Get number of time samples from epochs
+        epochs_data = (
+            data_obj.get_data()
+        )  # Shape: (n_epochs, n_channels, n_times)
+        n_samples = epochs_data.shape[2]
 
         # Use custom bands or default frequency bands
         if self.bands is not None:
@@ -316,34 +305,21 @@ class SpectralPower(BaseMarker):
         if self.n_fft is not None:
             psd_params["n_fft"] = self.n_fft
 
-        # Compute PSD for all epochs at once - MUCH faster!
-        if hasattr(data_obj, "events"):
-            # Crop to time window if specified
-            if self.tmin is not None or self.tmax is not None:
-                cropped_epochs = data_obj.copy().crop(
-                    tmin=self.tmin, tmax=self.tmax
-                )
-            else:
-                cropped_epochs = data_obj
-            # Use the (optionally cropped) Epochs object for PSD computation
-            psd = cropped_epochs.compute_psd(**psd_params)
-            psds, freqs = psd.get_data(
-                return_freqs=True
-            )  # Shape: (n_epochs, n_channels, n_freqs)
-        else:
-            # For Raw data, create temporary raw and compute PSD
-            import mne
-
-            temp_raw = mne.io.RawArray(
-                epochs_data[0], info.copy(), verbose=False
+        # Crop to time window if specified
+        if self.tmin is not None or self.tmax is not None:
+            cropped_epochs = data_obj.copy().crop(
+                tmin=self.tmin, tmax=self.tmax
             )
-            psd = temp_raw.compute_psd(**psd_params)
-            psds_single, freqs = psd.get_data(
-                return_freqs=True
-            )  # Shape: (n_channels, n_freqs)
-            psds = psds_single[
-                np.newaxis, :, :
-            ]  # Shape: (1, n_channels, n_freqs)
+        else:
+            cropped_epochs = data_obj
+
+        # Compute PSD for all epochs at once
+        psd = cropped_epochs.compute_psd(**psd_params)
+        psds, freqs = psd.get_data(
+            return_freqs=True
+        )  # Shape: (n_epochs, n_channels, n_freqs)
+
+        n_epochs, n_channels = psds.shape[:2]
 
         # Apply normalization if requested (relative power)
         if self.normalize:
@@ -409,16 +385,16 @@ class SpectralPower(BaseMarker):
                     if len(nonzero) > 0:
                         all_nonzero_values.extend(nonzero)
 
-                if len(all_nonzero_values) > 0:
-                    # Use 1% of the minimum non-zero value as threshold
-                    # This ensures we don't clip real data while still avoiding log(0)
-                    data_min = np.min(all_nonzero_values)
-                    threshold = data_min * 0.01
-                    # But don't go below machine epsilon for float64
-                    threshold = max(threshold, np.finfo(np.float64).eps)
-                else:
-                    # Fallback to a very low threshold
-                    threshold = np.finfo(np.float64).eps
+                if len(all_nonzero_values) == 0:
+                    raise ValueError(
+                        "No non-zero power values found. Cannot compute dB conversion."
+                    )
+                # Use 1% of the minimum non-zero value as threshold
+                # This ensures we don't clip real data while still avoiding log(0)
+                data_min = np.min(all_nonzero_values)
+                threshold = data_min * 0.01
+                # But don't go below machine epsilon for float64
+                threshold = max(threshold, np.finfo(np.float64).eps)
 
             for band_name in bands.keys():
                 # Convert to dB: 10 * log10(power)

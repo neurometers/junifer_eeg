@@ -46,8 +46,6 @@ class TimeLockedContrast(BaseMarker):
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
         equipment: str = "egi256",
-        epoch_length: float = 2.0,
-        overlap: float = 0.0,
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -93,12 +91,12 @@ class TimeLockedContrast(BaseMarker):
         trial_aggregation_method : str or None, optional
             Methods to aggregate across epochs: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
-        equipment : str, optional
+        equipment : str, default="egi256"
             Equipment type for electrode mapping.
-        epoch_length : float, optional
-            Length of epochs if creating from continuous data.
-        overlap : float, default=0.0
-            Overlap between epochs.
+        on : str, optional
+            Data type to compute on.
+        name : str, optional
+            Name of the marker.
         """
         self.condition_a = (
             condition_a if isinstance(condition_a, list) else [condition_a]
@@ -118,8 +116,6 @@ class TimeLockedContrast(BaseMarker):
         self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
-        self.epoch_length = epoch_length
-        self.overlap = overlap
 
         super().__init__(on=on, name=name)
 
@@ -235,10 +231,38 @@ class TimeLockedContrast(BaseMarker):
         3. Compute contrast: A - B
 
         Both conditions use SAME ROI filtering and aggregation parameters.
+
+        Parameters
+        ----------
+        input : dict
+            Input data containing 'data' with MNE Epochs object.
+        extra_input : dict, optional
+            Additional input data.
+
+        Returns
+        -------
+        dict
+            Computed time-locked contrast features.
+
+        Raises
+        ------
+        ValueError
+            If input data is not Epochs, if epochs are empty, or if conditions are missing.
         """
         from .utils import filter_to_eeg_channels
 
         epochs = input["data"]
+
+        if not hasattr(epochs, "events"):
+            raise ValueError(
+                "TimeLockedContrast requires Epochs data. "
+                "Please epoch your data in preprocessing."
+            )
+
+        if len(epochs) == 0:
+            raise ValueError(
+                "Cannot compute time-locked contrast on empty epochs."
+            )
 
         # Filter to EEG channels
         epochs, eeg_ch_names, eeg_indices = filter_to_eeg_channels(epochs)
@@ -282,19 +306,17 @@ class TimeLockedContrast(BaseMarker):
         epochs_b = get_epochs_for_condition(epochs, self.condition_b)
 
         # Check for missing conditions
-        if (
-            epochs_a is None
-            or epochs_b is None
-            or len(epochs_a) == 0
-            or len(epochs_b) == 0
-        ):
-            # Return empty results
-            return {
-                "timelockedcontrast": {
-                    "data": np.array([[]]),
-                    "col_names": [],
-                }
-            }
+        if epochs_a is None or len(epochs_a) == 0:
+            raise ValueError(
+                f"Condition A ({self.condition_a}) not found or empty in epochs. "
+                f"Available event IDs: {list(epochs.event_id.keys())}"
+            )
+
+        if epochs_b is None or len(epochs_b) == 0:
+            raise ValueError(
+                f"Condition B ({self.condition_b}) not found or empty in epochs. "
+                f"Available event IDs: {list(epochs.event_id.keys())}"
+            )
 
         # Store original epochs for raw data return
         epochs_a_full = epochs_a
@@ -330,13 +352,16 @@ class TimeLockedContrast(BaseMarker):
                 )
 
                 # Extract the filtered data (returns {"selected_channels": data})
-                if "selected_channels" in roi_data_dict:
-                    data_filtered = roi_data_dict["selected_channels"]
-                    # Transpose back to (n_epochs, n_channels, n_times)
-                    data = data_filtered.transpose(1, 0, 2)
-                    n_epochs, n_channels, n_times = data.shape
-                    # Update channel names
-                    ch_names = [f"ch_{i}" for i in range(n_channels)]
+                if "selected_channels" not in roi_data_dict:
+                    raise ValueError(
+                        f"ROI filtering failed for rois: {self.rois}"
+                    )
+                data_filtered = roi_data_dict["selected_channels"]
+                # Transpose back to (n_epochs, n_channels, n_times)
+                data = data_filtered.transpose(1, 0, 2)
+                n_epochs, n_channels, n_times = data.shape
+                # Update channel names
+                ch_names = [f"ch_{i}" for i in range(n_channels)]
 
             # Step 1: Average across time dimension (like TimeLockedTopography)
             # Shape: (n_epochs, n_channels)

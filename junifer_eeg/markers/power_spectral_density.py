@@ -248,8 +248,6 @@ class PowerSpectralDensitySummary(BaseMarker):
         channel_aggregation_method: str | None = None,
         trial_aggregation_method: str | None = None,
         equipment: str = "egi256",
-        epoch_length: float = 2.0,
-        overlap: float = 0.0,
         on: str | None = None,
         name: str | None = None,
     ) -> None:
@@ -286,10 +284,8 @@ class PowerSpectralDensitySummary(BaseMarker):
             Aggregation method for ROIs ('mean', 'std', 'median', 'min', 'max').
         trial_aggregation_method : str, optional
             Aggregation method for trials ('mean', 'std', 'median', 'min', 'max').
-        epoch_length : float, default=2.0
-            Length of epochs in seconds for trial aggregation.
-        overlap : float, default=0.0
-            Overlap between epochs (0.0 to 0.9).
+        equipment : str, default="egi256"
+            Equipment configuration for ROI resolution.
         on : str, optional
             Data type to compute on.
         name : str, optional
@@ -308,8 +304,6 @@ class PowerSpectralDensitySummary(BaseMarker):
         self.channel_aggregation_method = channel_aggregation_method
         self.trial_aggregation_method = trial_aggregation_method
         self.equipment = equipment
-        self.epoch_length = epoch_length
-        self.overlap = overlap
         super().__init__(on=on, name=name)
 
     def get_output_type(self, input_type: str, output_feature: str) -> str:
@@ -347,7 +341,7 @@ class PowerSpectralDensitySummary(BaseMarker):
         Parameters
         ----------
         input : dict
-            Input data containing 'data' with MNE Raw or Epochs object.
+            Input data containing 'data' with MNE Epochs object.
         extra_input : dict, optional
             Additional input data.
 
@@ -355,118 +349,60 @@ class PowerSpectralDensitySummary(BaseMarker):
         -------
         dict
             Computed PSD summary statistics.
-        """
-        import mne
-        from mne.utils import _time_mask
 
+        Raises
+        ------
+        ValueError
+            If input data is not Epochs or if epochs are empty.
+        """
         from .utils import filter_to_eeg_channels
 
-        # Get the MNE data object
+        # Get the MNE data object - must be Epochs
         data_obj = input["data"]
+
+        if not hasattr(data_obj, "events"):
+            raise ValueError(
+                "PowerSpectralDensitySummary requires Epochs data. "
+                "Please epoch your data in preprocessing."
+            )
+
+        if len(data_obj) == 0:
+            raise ValueError("Cannot compute PSD summary on empty epochs.")
 
         # Filter to EEG channels to match PowerSpectralDensityEstimator behavior
         data_obj, eeg_ch_names, _ = filter_to_eeg_channels(data_obj)
 
-        # Handle both Raw and Epochs data
-        if hasattr(data_obj, "events"):  # This is Epochs
-            epochs = data_obj
+        epochs = data_obj
 
-            # Crop to time window if specified
-            if self.tmin is not None or self.tmax is not None:
-                epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
+        # Crop to time window if specified
+        if self.tmin is not None or self.tmax is not None:
+            epochs = epochs.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
-            fmax = (
-                self.fmax
-                if self.fmax is not None
-                else epochs.info["sfreq"] / 2
-            )
+        fmax = self.fmax if self.fmax is not None else epochs.info["sfreq"] / 2
 
-            # Prepare MNE parameters
-            mne_params = {}
-            if self.n_per_seg is not None:
-                mne_params["n_per_seg"] = self.n_per_seg
-            if self.n_overlap is not None:
-                mne_params["n_overlap"] = self.n_overlap
-            if self.n_fft is not None:
-                mne_params["n_fft"] = self.n_fft
+        # Prepare MNE parameters
+        mne_params = {}
+        if self.n_per_seg is not None:
+            mne_params["n_per_seg"] = self.n_per_seg
+        if self.n_overlap is not None:
+            mne_params["n_overlap"] = self.n_overlap
+        if self.n_fft is not None:
+            mne_params["n_fft"] = self.n_fft
 
-            # Compute PSD once for all epochs
-            spectrum = epochs.compute_psd(
-                method="welch",
-                fmin=self.fmin,
-                fmax=fmax,
-                **mne_params,
-            )
-            psd = spectrum.get_data().astype(
-                np.float64, copy=False
-            )  # (n_epochs, n_channels, n_freqs)
-            freqs = spectrum.freqs
-            ch_names = epochs.ch_names
-
-        else:  # Raw data
-            raw = data_obj
-
-            # Crop to time window if specified
-            if self.tmin is not None or self.tmax is not None:
-                raw = raw.copy().crop(tmin=self.tmin, tmax=self.tmax)
-
-            # Create epochs from continuous data if needed
-            if self.trial_aggregation_method is not None:
-                epochs_data = self._create_epochs_from_continuous(
-                    raw
-                )  # (n_epochs, n_channels, n_samples)
-            else:
-                # Single "epoch" from continuous data
-                data = raw.get_data()  # Shape: (n_channels, n_times)
-                if self.tmin is not None or self.tmax is not None:
-                    time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-                    data = data[:, time_mask]
-                epochs_data = data[
-                    np.newaxis, :, :
-                ]  # (1, n_channels, n_samples)
-
-            # Wrap as EpochsArray and compute PSD once for all epochs
-            info_copy = raw.info.copy()
-            epochs_like = mne.EpochsArray(
-                epochs_data, info_copy, verbose=False
-            )
-
-            fmax = (
-                self.fmax if self.fmax is not None else info_copy["sfreq"] / 2
-            )
-
-            # Prepare MNE parameters
-            mne_params = {}
-            if self.n_per_seg is not None:
-                mne_params["n_per_seg"] = self.n_per_seg
-            if self.n_overlap is not None:
-                mne_params["n_overlap"] = self.n_overlap
-            if self.n_fft is not None:
-                mne_params["n_fft"] = self.n_fft
-
-            spectrum = epochs_like.compute_psd(
-                method="welch",
-                fmin=self.fmin,
-                fmax=fmax,
-                **mne_params,
-            )
-            psd = spectrum.get_data().astype(
-                np.float64, copy=False
-            )  # (n_epochs, n_channels, n_freqs)
-            freqs = spectrum.freqs
-            ch_names = epochs_like.ch_names
+        # Compute PSD once for all epochs
+        spectrum = epochs.compute_psd(
+            method="welch",
+            fmin=self.fmin,
+            fmax=fmax,
+            **mne_params,
+        )
+        psd = spectrum.get_data().astype(
+            np.float64, copy=False
+        )  # (n_epochs, n_channels, n_freqs)
+        freqs = spectrum.freqs
+        ch_names = epochs.ch_names
 
         n_epochs, n_channels, n_freqs = psd.shape
-
-        # Check if we have any valid epochs
-        if n_epochs == 0 or n_channels == 0 or n_freqs == 0:
-            # Return empty results for empty epochs
-            return {
-                "psdsummary": {
-                    "data": np.array([[]]),
-                    "col_names": [],
-                }
-            }
 
         # Vectorized SEF/MSF computation
         # Compute Spectral Edge Frequency (SEF) where cumulative power reaches percentile
@@ -625,65 +561,3 @@ class PowerSpectralDensitySummary(BaseMarker):
                 }
 
         return results
-
-    def _create_epochs_from_continuous(self, raw):
-        """Create epochs from continuous data.
-
-        Parameters
-        ----------
-        raw : mne.io.Raw
-            Raw data object.
-
-        Returns
-        -------
-        np.ndarray
-            Epochs data with shape (n_epochs, n_channels, epoch_samples).
-        """
-        from mne.utils import _time_mask
-
-        # Get data
-        data = raw.get_data()  # Shape: (n_channels, n_times)
-
-        # Apply time mask if specified
-        if self.tmin is not None or self.tmax is not None:
-            time_mask = _time_mask(raw.times, self.tmin, self.tmax)
-            data = data[:, time_mask]
-
-        n_channels, n_samples = data.shape
-        sfreq = raw.info["sfreq"]
-
-        # Calculate epoch parameters
-        epoch_samples = int(self.epoch_length * sfreq)
-        overlap_samples = int(self.overlap * epoch_samples)
-        step_samples = max(1, epoch_samples - overlap_samples)
-
-        # Calculate number of epochs
-        n_epochs = max(1, (n_samples - epoch_samples) // step_samples + 1)
-
-        # Create epochs array
-        epochs_data = np.zeros(
-            (n_epochs, n_channels, epoch_samples), dtype=data.dtype
-        )
-
-        for epoch_idx in range(n_epochs):
-            start_sample = epoch_idx * step_samples
-            end_sample = start_sample + epoch_samples
-
-            if end_sample <= n_samples:
-                epochs_data[epoch_idx] = data[:, start_sample:end_sample]
-            else:
-                # Pad with last available samples if needed
-                available_samples = n_samples - start_sample
-                if available_samples > 0:
-                    epochs_data[epoch_idx, :, :available_samples] = data[
-                        :, start_sample:
-                    ]
-                    # Pad with last sample
-                    epochs_data[epoch_idx, :, available_samples:] = data[
-                        :, -1:
-                    ]
-                else:
-                    # Degenerate case: all padding
-                    epochs_data[epoch_idx, :, :] = data[:, -1:]
-
-        return epochs_data
