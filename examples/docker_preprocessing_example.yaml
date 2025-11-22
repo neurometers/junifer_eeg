@@ -1,0 +1,71 @@
+# Docker Preprocessing Example
+# This configuration demonstrates how to use paths mapped inside a Docker container (/app/...).
+# It performs a standard preprocessing pipeline: Filter -> Epoch -> Artifact Rejection -> Reference -> Interpolation.
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "sub-{subject}/eeg/*.fif"
+      space: "native"
+  replacements:
+    - "subject"
+  types:
+    - EEG
+  # In Docker, data is typically mounted to /app/data
+  datadir: "/app/data"
+
+preprocess:
+  # Step 1: Filter
+  - kind: EEGFilter
+    low_freq: 45.0
+    high_freq: 0.5
+    notches: [50, 100]
+    resample_freq: 250
+    dump_path: /app/output/{element}/01_filtered_eeg
+    on: EEG
+
+  # Step 2: Epoch
+  - kind: EEGEpoching
+    tmin: -0.2
+    tmax: 1.0
+    baseline: [-0.2, 0.0]
+    # Example event_id (adjust as needed)
+    event_id:
+      "Stimulus": 1
+    exclude_channels: ["STI 014"]
+    dump_path: /app/output/{element}/02_epoched_eeg
+    on: EEG
+
+  # Step 3: Artifact Rejection (Detection)
+  # Using BadChannelsHighFrequency as an example
+  - kind: BadChannelsHighFrequency
+    zscore_thresh: 4.0
+    min_channels: 0.7
+    interpolate: false  # Defer interpolation until after referencing
+    on: EEG
+
+  # Step 4: Reference (Average)
+  - kind: EEGReference
+    ref_channels: "average"
+    projection: true
+    on: EEG
+
+  # Step 5: Interpolation
+  - kind: EEGInterpolation
+    reset_bads: true
+    dump_path: /app/output/{element}/03_clean_eeg
+    on: EEG
+
+markers: []
+
+storage:
+  kind: HDF5FeatureStorage
+  # Store results in the output directory mounted to /app/output
+  uri: /app/output/preprocessing_results.h5
+

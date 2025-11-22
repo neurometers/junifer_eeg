@@ -9,7 +9,7 @@ with:
 workdir: "."
 
 datagrabber:
-  kind: SARTDataGrabber
+  kind: EEGDataGrabber
   patterns:
     EEG:
       pattern: "sub-06_task-Sart1_desc-state_epo.fif"
@@ -18,9 +18,9 @@ datagrabber:
   types:
     - EEG
   datadir: "./raw/wetransfer_sub-06_task-sart1_desc-evoked_epo-json_2025-09-16_1537"
-  preserve_annotations: true
-  extract_behavioral_params: true
-  channel_selection: "eeg"  # Keep only EEG channels, drop stimulus channels
+
+# No preprocessing needed - data is already preprocessed epochs
+preprocess: []
 
 storage:
   kind: HDF5FeatureStorage

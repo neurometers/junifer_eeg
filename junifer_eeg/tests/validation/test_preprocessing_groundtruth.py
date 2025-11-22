@@ -19,11 +19,17 @@ import mne
 import numpy as np
 import pytest
 
-from junifer_eeg.preprocessors.icm_lg_preprocessing import (
-    ICMAdaptiveArtifactRejection,
-    ICMEquipmentFilter,
-    ICMLGEpoching,
+from junifer_eeg.datareader.utils import detect_and_set_equipment
+from junifer_eeg.preprocessors.artifact_rejection import (
+    BadChannelsHighFrequency,
+    BadChannelsThreshold,
+    BadChannelsVariance,
+    BadEpochsThreshold,
 )
+from junifer_eeg.preprocessors.eeg_epoching import EEGEpoching
+from junifer_eeg.preprocessors.eeg_filter import EEGFilter
+from junifer_eeg.preprocessors.eeg_reference import EEGReference
+from junifer_eeg.preprocessors.interpolation import EEGInterpolation
 
 # Ground truth data paths (using cropped data for GitHub size limits)
 GROUND_TRUTH_DIR = Path(__file__).parent / "reference_data" / "preprocessing"
@@ -71,6 +77,11 @@ def preprocessed_epochs():
     # Load raw data (cropped FIF file already has triggers processed)
     raw = mne.io.read_raw_fif(RAW_DATA_PATH, preload=True, verbose=False)
 
+    # Detect and set equipment (automatically sets standard montage for EGI)
+    # This is necessary because raw files might lose dig points or need standard montage
+    # for consistent interpolation.
+    detect_and_set_equipment(raw)
+
     # Create preprocessing input dict
     input_dict = {
         "data": raw,
@@ -82,12 +93,23 @@ def preprocessed_epochs():
         },
     }
 
-    # Step 1: ICMEquipmentFilter
-    equipment_filter = ICMEquipmentFilter(equipment_type="egi")
+    # Step 1: EEGFilter (equivalent to ICMEquipmentFilter with EGI params)
+    equipment_filter = EEGFilter(
+        low_freq=45.0,
+        high_freq=0.5,
+        notches=[50, 100],
+        resample_freq=250,
+        hp_order=6,
+        lp_order=8,
+        l_trans_bandwidth=0.1,
+        filter_method="iir",
+        n_jobs=1,
+    )
     input_dict, _ = equipment_filter.preprocess(input_dict)
 
-    # Step 2: ICMLGEpoching
-    epoching = ICMLGEpoching(
+    # Step 2: EEGEpoching (equivalent to ICMLGEpoching)
+    # Note: We explicitly exclude Vertex Reference here to match Ground Truth
+    epoching = EEGEpoching(
         tmin=-0.2,
         tmax=1.34,
         baseline=[-0.2, 0.0],
@@ -99,21 +121,65 @@ def preprocessed_epochs():
             "LDGD": 50,
             "LDGS": 60,
         },
+        exclude_channels=["STI 014", "Vertex Reference"],
     )
     input_dict, _ = epoching.preprocess(input_dict)
 
-    # Step 3: ICMAdaptiveArtifactRejection
-    artifact_rejection = ICMAdaptiveArtifactRejection(
-        zscore_thresh=4.0,
-        min_channels=0.5,
-        min_events=0.1,
+    # Step 3: Adaptive artifact rejection (4 steps chained)
+    # Step 3a: Bad channels threshold
+    bad_channels_threshold = BadChannelsThreshold(
+        reject={"eeg": 100e-6},
+        n_epochs_bad_ch=0.5,
+        min_channels=0.7,
+        interpolate=False,
     )
-    input_dict, _ = artifact_rejection.preprocess(input_dict)
+    input_dict, _ = bad_channels_threshold.preprocess(input_dict)
+
+    # Step 3b: Bad channels variance
+    bad_channels_variance = BadChannelsVariance(
+        zscore_thresh=4.0,
+        max_iter=4,
+        min_channels=0.7,
+        interpolate=False,
+    )
+    input_dict, _ = bad_channels_variance.preprocess(input_dict)
+
+    # Step 3c: Bad epochs threshold
+    bad_epochs_threshold = BadEpochsThreshold(
+        reject={"eeg": 100e-6},
+        n_channels_bad_epoch=0.1,
+        min_events=0.1,
+        drop_bad_epochs=True,
+    )
+    input_dict, _ = bad_epochs_threshold.preprocess(input_dict)
+
+    # Step 3d: Bad channels high frequency (Detection ONLY)
+    # Note: set interpolate=False to separate detection from interpolation
+    # This allows Reference to be applied BEFORE interpolation (correct order)
+    bad_channels_hf = BadChannelsHighFrequency(
+        zscore_thresh=4.0,
+        max_iter=4,
+        min_channels=0.5,
+        interpolate=False,
+    )
+    input_dict, _ = bad_channels_hf.preprocess(input_dict)
+
+    # Step 4: Average Reference (BEFORE Interpolation)
+    eeg_reference = EEGReference(ref_channels="average", projection=True)
+    input_dict, _ = eeg_reference.preprocess(input_dict)
+
+    # Step 5: Interpolation (AFTER Reference)
+    eeg_interpolation = EEGInterpolation(
+        method={"eeg": "spline"},
+        reset_bads=True,
+        origin="auto",
+    )
+    input_dict, _ = eeg_interpolation.preprocess(input_dict)
 
     # Return final epochs and artifact rejection info
     return {
         "epochs": input_dict["data"],
-        "artifact_rejection": artifact_rejection,
+        "artifact_rejection": bad_channels_hf,
     }
 
 
@@ -206,13 +272,13 @@ class TestPreprocessingFinalEpochs:
         else:
             bad_channels_detected = set()
 
-        # Get data arrays
-        preprocessed_data = preprocessed_epochs_obj.get_data()
-        ground_truth_data = ground_truth_epochs.get_data()
-
         # Get channel info
         preprocessed_ch_names = preprocessed_epochs_obj.ch_names
         ground_truth_ch_names = ground_truth_epochs.ch_names
+
+        # Identify extra channels
+        _ = set(preprocessed_ch_names) - set(ground_truth_ch_names)
+        _ = set(ground_truth_ch_names) - set(preprocessed_ch_names)
 
         # Find ONLY good channels (excluding the 22 bad/interpolated channels)
         good_channels = [
@@ -229,6 +295,60 @@ class TestPreprocessingFinalEpochs:
             ground_truth_ch_names.index(ch) for ch in good_channels
         ]
 
+        # Get data arrays first (before sorting)
+        preprocessed_data_raw = preprocessed_epochs_obj.get_data()
+        ground_truth_data_raw = ground_truth_epochs.get_data()
+
+        # Sort epochs by event code and sample to ensure same order
+        # This is important because dropping bad epochs may change the order
+        preprocessed_events = preprocessed_epochs_obj.events
+        ground_truth_events = ground_truth_epochs.events
+
+        # Check events array shapes
+        preprocessed_events_shape = (
+            preprocessed_events.shape
+            if hasattr(preprocessed_events, "shape")
+            else (0, 0)
+        )
+        ground_truth_events_shape = (
+            ground_truth_events.shape
+            if hasattr(ground_truth_events, "shape")
+            else (0, 0)
+        )
+
+        # Ensure events arrays have the correct shape (n_events, 3)
+        # If either doesn't have 3 columns, don't sort - just use data as-is
+        if (
+            len(preprocessed_events_shape) < 2
+            or preprocessed_events_shape[1] != 3
+            or len(ground_truth_events_shape) < 2
+            or ground_truth_events_shape[1] != 3
+        ):
+            # Don't sort - just use data as-is
+            preprocessed_data = preprocessed_data_raw
+            ground_truth_data = ground_truth_data_raw
+        else:
+            # Use lexsort for stable sorting by multiple keys
+            # We want to sort by event_code (primary) and sample (secondary)
+            # np.lexsort sorts by the last key passed, then second to last, etc.
+            # So we pass (sample, event_code)
+
+            preprocessed_samples = preprocessed_events[:, 0]
+            preprocessed_codes = preprocessed_events[:, 2]
+            preprocessed_sorted_idx = np.lexsort(
+                (preprocessed_samples, preprocessed_codes)
+            )
+
+            ground_truth_samples = ground_truth_events[:, 0]
+            ground_truth_codes = ground_truth_events[:, 2]
+            ground_truth_sorted_idx = np.lexsort(
+                (ground_truth_samples, ground_truth_codes)
+            )
+
+            # Get data arrays and sort them
+            preprocessed_data = preprocessed_data_raw[preprocessed_sorted_idx]
+            ground_truth_data = ground_truth_data_raw[ground_truth_sorted_idx]
+
         # Compare data ONLY for good channels (not interpolated)
         preprocessed_data_subset = preprocessed_data[
             :, preprocessed_ch_indices, :
@@ -241,12 +361,23 @@ class TestPreprocessingFinalEpochs:
         abs_diff = np.abs(preprocessed_data_subset - ground_truth_data_subset)
         mean_abs_diff = np.mean(abs_diff)
 
-        # Compute relative error (avoiding division by zero)
-        ground_truth_nonzero = np.abs(ground_truth_data_subset) > 1e-20
+        # Compute relative error safely but strictly
+        # Use a small epsilon to avoid division by zero, but do not mask out values
+        denominator = np.abs(ground_truth_data_subset)
+
+        # Safe division:
         rel_diff = np.zeros_like(abs_diff)
-        rel_diff[ground_truth_nonzero] = abs_diff[
-            ground_truth_nonzero
-        ] / np.abs(ground_truth_data_subset[ground_truth_nonzero])
+
+        # Where denominator is non-zero
+        mask_nonzero = denominator != 0
+        rel_diff[mask_nonzero] = (
+            abs_diff[mask_nonzero] / denominator[mask_nonzero]
+        )
+
+        # Where denominator is zero, if diff is non-zero, set to inf
+        mask_bad = (denominator == 0) & (abs_diff != 0)
+        rel_diff[mask_bad] = np.inf
+
         mean_rel_diff = np.mean(rel_diff) * 100  # Convert to percentage
 
         # For good channels only (not interpolated), expect near-exact match

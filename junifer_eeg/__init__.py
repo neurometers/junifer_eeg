@@ -10,10 +10,9 @@ from . import (
     datareader,
     markers,
     preprocessors,
-    storage,
 )
-from .datagrabber import ICMLGDataGrabber
-from .datareader import EEGDataReader, ICMLGDataReader, SARTDataReader
+from .datagrabber import EEGDataGrabber
+from .datareader import EEGDataReader
 from .markers import (
     SpectralPower,
     TimeLockedContrast,
@@ -24,10 +23,14 @@ from .markers import (
 # Import MNE data type dumpers
 from .mne_asset_dumper import register_mne_dumpers
 from .preprocessors import (
+    BadChannelsHighFrequency,
+    BadChannelsThreshold,
+    BadChannelsVariance,
+    BadEpochsThreshold,
+    EEGEpoching,
     EEGFilter,
-    ICMAdaptiveArtifactRejection,
-    ICMEquipmentFilter,
-    ICMLGEpoching,
+    EEGInterpolation,
+    EEGReference,
 )
 
 # Register MNE data types with junifer's DataObjectDumper
@@ -36,14 +39,16 @@ register_mne_dumpers()
 # Import main classes for convenience
 
 __all__ = [
+    "BadChannelsHighFrequency",
+    "BadChannelsThreshold",
+    "BadChannelsVariance",
+    "BadEpochsThreshold",
+    "EEGDataGrabber",
     "EEGDataReader",
+    "EEGEpoching",
     "EEGFilter",
-    "ICMAdaptiveArtifactRejection",
-    "ICMEquipmentFilter",
-    "ICMLGDataGrabber",
-    "ICMLGDataReader",
-    "ICMLGEpoching",
-    "SARTDataReader",
+    "EEGInterpolation",
+    "EEGReference",
     "SpectralPower",
     "TimeLockedContrast",
     "TimeLockedTopography",
@@ -51,5 +56,4 @@ __all__ = [
     "datareader",
     "markers",
     "preprocessors",
-    "storage",
 ]

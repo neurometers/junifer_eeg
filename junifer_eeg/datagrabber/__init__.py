@@ -1,6 +1,5 @@
 """Data grabbers for junifer_eeg."""
 
-from .icm_lg_datagrabber import ICMLGDataGrabber
-from .sart_datagrabber import SARTDataGrabber
+from .eeg_datagrabber import EEGDataGrabber
 
-__all__ = ["ICMLGDataGrabber", "SARTDataGrabber"]
+__all__ = ["EEGDataGrabber"]

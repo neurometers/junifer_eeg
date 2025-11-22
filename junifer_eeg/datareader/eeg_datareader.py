@@ -1,7 +1,7 @@
 """EEG data reader extending junifer's DefaultDataReader."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 import junifer.datagrabber.pattern_validation_mixin as validation_module
 
@@ -81,8 +81,48 @@ class EEGDataReader(DefaultDataReader):
     Automatically detects whether FIF files contain raw data or epochs.
     The file reading is handled by extending the global extension mappings.
     Also extends junifer's PatternDataGrabber validation to support EEG data type.
+    Applies common processing needed for markers: equipment detection and montage setting.
     """
 
     def __init__(self) -> None:
         """Initialize EEGDataReader."""
         super().__init__()
+
+    def _fit_transform(
+        self,
+        input: Dict[str, Dict],
+        params: Optional[Dict] = None,
+    ) -> Dict:
+        """Fit and transform EEG data with equipment detection.
+
+        Applies common processing needed for markers:
+        - Equipment detection from channel names
+        - Montage setting
+
+        Parameters
+        ----------
+        input : Dict[str, Dict]
+            Input data dictionary
+        params : Optional[Dict]
+            Additional parameters (unused)
+
+        Returns
+        -------
+        Dict
+            Transformed data with equipment information
+        """
+        # Use parent class for basic file reading
+        output = super()._fit_transform(input, params)
+
+        # Apply equipment detection and montage setting for EEG data
+        for data_type, data_info in output.items():
+            if data_type == "EEG" and "data" in data_info:
+                raw_or_epochs = data_info["data"]
+
+                if isinstance(raw_or_epochs, (mne.io.BaseRaw, mne.BaseEpochs)):
+                    from .utils import detect_and_set_equipment
+
+                    # Detect equipment and set montage
+                    detect_and_set_equipment(raw_or_epochs)
+
+        return output
