@@ -24,7 +24,7 @@ preprocess: []
 
 storage:
   kind: HDF5FeatureStorage
-  uri: icm_complete_non-aggregated.h5
+  uri: output/icm_complete_non-aggregated.h5
   single_output: true
 
 markers:

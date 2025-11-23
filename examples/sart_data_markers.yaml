@@ -24,7 +24,7 @@ preprocess: []
 
 storage:
   kind: HDF5FeatureStorage
-  uri: test_nico_individual_markers.h5
+  uri: output/test_nico_individual_markers.h5
   single_output: true
   
 
