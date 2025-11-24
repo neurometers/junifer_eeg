@@ -12,12 +12,12 @@ datagrabber:
   kind: EEGDataGrabber
   patterns:
     EEG:
-      pattern: "sub-06_task-Sart1_desc-state_epo.fif"
+      pattern: "sub-04_task-Sart1_desc-sleep_epo.fif"
       space: "native"
   replacements: []
   types:
     - EEG
-  datadir: "./raw/wetransfer_sub-06_task-sart1_desc-evoked_epo-json_2025-09-16_1537"
+  datadir: "site/bckp/nico/wetransfer_sub-04_task-sart1_desc-sleep_epo-fif_2025-11-24_1036/"
 
 # No preprocessing needed - data is already preprocessed epochs
 preprocess: []
@@ -29,130 +29,186 @@ storage:
   
 
 markers:
-  # ========================================
-  # 1. SPECTRAL ANALYSIS: Absolute Power (dB)
-  # ========================================
-  - kind: SpectralPower
-    name: psd_bands
-    bands:
-      delta: [1.0, 4.0]
-      theta: [4.0, 8.0]
-      alpha: [8.0, 12.0]
-      beta: [12.0, 30.0]
-      gamma: [30.0, 45.0]
-    normalize: false
-    dB: true
-    n_fft: 2048
-    n_overlap: 50
-    n_per_seg: 256
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
+
 
   # ========================================
-  # 2. SPECTRAL ANALYSIS: Relative Power (normalized)
-  # ========================================
-  - kind: SpectralPower
-    name: psd_relative
-    bands:
-      delta: [1.0, 4.0]
-      theta: [4.0, 8.0]
-      alpha: [8.0, 12.0]
-      beta: [12.0, 30.0]
-      gamma: [30.0, 45.0]
-    normalize: true
-    dB: false
-    n_fft: 2048
-    n_overlap: 50
-    n_per_seg: 256
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
-
-  # ========================================
-  # 3. CONNECTIVITY: Symbolic Mutual Information (unweighted)
-  # ========================================
-  - kind: SymbolicMutualInformation
-    name: smi
-    tmin: null
-    tmax: null
-    kernel: 3
-    tau: 8
-    weighted: false
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
-
-  # ========================================
-  # 4. CONNECTIVITY: Weighted Symbolic Mutual Information
-  # ========================================
-  - kind: SymbolicMutualInformation
-    name: wsmi
-    tmin: null
-    tmax: null
-    kernel: 3
-    tau: 8
-    weighted: true
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
-
-  # ========================================
-  # 5. INFORMATION THEORY: Permutation Entropy
-  # ========================================
-  - kind: PermutationEntropy
-    name: permutation_entropy
-    kernel: 3
-    tau: 8
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
-
-  # ========================================
-  # 6. INFORMATION THEORY: Kolmogorov Complexity
-  # ========================================
-  - kind: KolmogorovComplexity
-    name: kolmogorov_complexity
-    channel_aggregation_method: null
-    trial_aggregation_method: null
-    on: EEG
-
-  # ========================================
-  # 7. TIME-LOCKED TOPOGRAPHIES: ERP Analysis
+  # SLEEP ANALYSIS MARKERS
   # ========================================
   
-  # Early component (P1-like, around 100ms)
-  - kind: TimeLockedTopography
-    name: erp_early_100ms
-    tmin: 0.080
-    tmax: 0.120
-    channel_aggregation_method: null
-    trial_aggregation_method: null
+
+  # 1. Sleep Spindles Detection (Aggregated across channels)
+  - kind: SpindlesDetection
+    name: spindles_channel_agg
+    freq_sp: [12, 15]           # Spindles frequency range (Hz)
+    freq_broad: [1, 30]         # Broad band frequency range (Hz)
+    duration: [0.5, 2.5]        # Min/max spindle duration (seconds)
+    min_distance: 500           # Min distance between spindles (ms)
+    thresh_rms: 1.5             # RMS threshold (SD above mean)
+    thresh_corr: 0.65           # Correlation threshold
+    reference_channels: ['TP7', 'TP8']  # Reference channels (default mastoids)
+    channel_aggregation_method: "mean"  # Aggregate across channels
     on: EEG
 
-  # Mid component (N1-like, around 150ms)
-  - kind: TimeLockedTopography
-    name: erp_mid_150ms
-    tmin: 0.130
-    tmax: 0.170
-    channel_aggregation_method: null
-    trial_aggregation_method: null
+  # 2. Sleep Spindles Detection (Raw events - per epoch, per channel)
+  - kind: SpindlesDetection
+    name: spindles_events
+    freq_sp: [12, 15]           # Spindles frequency range (Hz)
+    freq_broad: [1, 30]         # Broad band frequency range (Hz)
+    duration: [0.5, 2.5]        # Min/max spindle duration (seconds)
+    min_distance: 500           # Min distance between spindles (ms)
+    thresh_rms: 1.5             # RMS threshold (SD above mean)
+    thresh_corr: 0.65           # Correlation threshold
+    reference_channels: ['TP7', 'TP8']  # Reference channels (default mastoids)
+    # No aggregation - returns all events with Epoch and Channel info
     on: EEG
 
-  # Late component (P3-like, around 300ms)
-  - kind: TimeLockedTopography
-    name: erp_late_300ms
-    tmin: 0.250
-    tmax: 0.350
-    channel_aggregation_method: null
-    trial_aggregation_method: null
+  # 3. Slow Waves Detection (Aggregated across channels)
+  - kind: SlowWavesDetection
+    name: slowwaves_channel_agg
+    freq_sw: [0.3, 1.5]         # Slow waves frequency range (Hz)
+    amp_ptp_initial: 15.0       # Initial PTP threshold (µV)
+    freq_threshold: 7.0         # Max frequency threshold (Hz)
+    artifact_threshold: 75.0    # Max positive peak threshold (µV)
+    reference_channels: ['TP7', 'TP8']  # Reference channels (default mastoids)
+    channel_aggregation_method: "mean"  # Aggregate across channels
     on: EEG
 
-  # Very late component (around 500ms)
-  - kind: TimeLockedTopography
-    name: erp_very_late_500ms
-    tmin: 0.450
-    tmax: 0.550
-    channel_aggregation_method: null
-    trial_aggregation_method: null
+  # 4. Slow Waves Detection (Raw events - per epoch, per channel)
+  - kind: SlowWavesDetection
+    name: slowwaves_events
+    freq_sw: [0.3, 1.5]         # Slow waves frequency range (Hz)
+    amp_ptp_initial: 15.0       # Initial PTP threshold (µV)
+    freq_threshold: 7.0         # Max frequency threshold (Hz)
+    artifact_threshold: 75.0    # Max positive peak threshold (µV)
+    reference_channels: ['TP7', 'TP8']  # Reference channels (default mastoids)
+    # No aggregation - returns all events with Epoch and Channel info
     on: EEG
+
+
+  # # ========================================
+  # # 1. SPECTRAL ANALYSIS: Absolute Power (dB)
+  # # ========================================
+  # - kind: SpectralPower
+  #   name: psd_bands
+  #   bands:
+  #     delta: [1.0, 4.0]
+  #     theta: [4.0, 8.0]
+  #     alpha: [8.0, 12.0]
+  #     beta: [12.0, 30.0]
+  #     gamma: [30.0, 45.0]
+  #   normalize: false
+  #   dB: true
+  #   n_fft: 2048
+  #   n_overlap: 50
+  #   n_per_seg: 256
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 2. SPECTRAL ANALYSIS: Relative Power (normalized)
+  # # ========================================
+  # - kind: SpectralPower
+  #   name: psd_relative
+  #   bands:
+  #     delta: [1.0, 4.0]
+  #     theta: [4.0, 8.0]
+  #     alpha: [8.0, 12.0]
+  #     beta: [12.0, 30.0]
+  #     gamma: [30.0, 45.0]
+  #   normalize: true
+  #   dB: false
+  #   n_fft: 2048
+  #   n_overlap: 50
+  #   n_per_seg: 256
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 3. CONNECTIVITY: Symbolic Mutual Information (unweighted)
+  # # ========================================
+  # - kind: SymbolicMutualInformation
+  #   name: smi
+  #   tmin: null
+  #   tmax: null
+  #   kernel: 3
+  #   tau: 8
+  #   weighted: false
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 4. CONNECTIVITY: Weighted Symbolic Mutual Information
+  # # ========================================
+  # - kind: SymbolicMutualInformation
+  #   name: wsmi
+  #   tmin: null
+  #   tmax: null
+  #   kernel: 3
+  #   tau: 8
+  #   weighted: true
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 5. INFORMATION THEORY: Permutation Entropy
+  # # ========================================
+  # - kind: PermutationEntropy
+  #   name: permutation_entropy
+  #   kernel: 3
+  #   tau: 8
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 6. INFORMATION THEORY: Kolmogorov Complexity
+  # # ========================================
+  # - kind: KolmogorovComplexity
+  #   name: kolmogorov_complexity
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # ========================================
+  # # 7. TIME-LOCKED TOPOGRAPHIES: ERP Analysis
+  # # ========================================
+  
+  # # Early component (P1-like, around 100ms)
+  # - kind: TimeLockedTopography
+  #   name: erp_early_100ms
+  #   tmin: 0.080
+  #   tmax: 0.120
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # Mid component (N1-like, around 150ms)
+  # - kind: TimeLockedTopography
+  #   name: erp_mid_150ms
+  #   tmin: 0.130
+  #   tmax: 0.170
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # Late component (P3-like, around 300ms)
+  # - kind: TimeLockedTopography
+  #   name: erp_late_300ms
+  #   tmin: 0.250
+  #   tmax: 0.350
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG
+
+  # # Very late component (around 500ms)
+  # - kind: TimeLockedTopography
+  #   name: erp_very_late_500ms
+  #   tmin: 0.450
+  #   tmax: 0.550
+  #   channel_aggregation_method: null
+  #   trial_aggregation_method: null
+  #   on: EEG

@@ -7,7 +7,9 @@ from .power_spectral_density import (
     PowerSpectralDensityEstimator,
     PowerSpectralDensitySummary,
 )
+from .slow_waves_detection import SlowWavesDetection
 from .spectral_power import SpectralPower
+from .spindles_detection import SpindlesDetection
 from .symbolic_mutual_information import SymbolicMutualInformation
 from .time_decoding import TimeDecoding
 from .time_locked_contrast import TimeLockedContrast
@@ -20,7 +22,9 @@ __all__ = [
     "PermutationEntropy",
     "PowerSpectralDensityEstimator",
     "PowerSpectralDensitySummary",
+    "SlowWavesDetection",
     "SpectralPower",
+    "SpindlesDetection",
     "SymbolicMutualInformation",
     "TimeDecoding",
     "TimeLockedContrast",
