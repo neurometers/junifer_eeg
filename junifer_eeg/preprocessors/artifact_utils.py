@@ -32,7 +32,7 @@ def find_bads_channels_variance(inst, picks, zscore_thresh=4, max_iter=2):
         data = inst.get_data()
     else:
         data = inst._data[None, :]
-    masked_data = np.ma.masked_array(data, fill_value=np.NaN)
+    masked_data = np.ma.masked_array(data, fill_value=np.nan)
     exclude = np.array([x for x in range(data.shape[1]) if x not in picks])
     if len(exclude) > 0:
         masked_data[:, exclude, :] = np.ma.masked
@@ -74,14 +74,14 @@ def find_bads_channels_high_frequency(
         data = inst.get_data()
     else:
         data = inst._data[None, :]
-    masked_data = np.ma.masked_array(data, fill_value=np.NaN)
+    masked_data = np.ma.masked_array(data, fill_value=np.nan)
     exclude = np.array([x for x in range(data.shape[1]) if x not in picks])
     if len(exclude) > 0:
         masked_data[:, exclude, :] = np.ma.masked
     filter_freq = 25
     b, a = butter(4, 2.0 * filter_freq / inst.info["sfreq"], "highpass")
     filt_data = filtfilt(b, a, np.ma.hstack(masked_data))
-    filt_masked_data = np.ma.masked_array(filt_data, fill_value=np.NaN)
+    filt_masked_data = np.ma.masked_array(filt_data, fill_value=np.nan)
     if len(exclude) > 0:
         filt_masked_data[exclude, :] = np.ma.masked
 
@@ -124,7 +124,7 @@ def find_bads_epochs_threshold(
         n_channels_bad_epoch = math.floor(n_channels_bad_epoch * n_channels)
 
     data = epochs.get_data()
-    masked_data = np.ma.masked_array(data, fill_value=np.NaN)
+    masked_data = np.ma.masked_array(data, fill_value=np.nan)
     exclude = np.array([x for x in range(data.shape[1]) if x not in picks])
     if len(exclude) > 0:
         masked_data[:, exclude, :] = np.ma.masked
