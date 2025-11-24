@@ -115,7 +115,7 @@ class TestSpindlesDetection3DTensor:
         col_names = result["spindlesdetection"]["col_names"]
 
         # Check tensor shape: (n_features, n_epochs, n_channels)
-        expected_shape = (3, 5, 8)  # 3 features, 5 epochs, 8 channels
+        expected_shape = (4, 5, 8)  # 4 features, 5 epochs, 8 channels
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -144,7 +144,7 @@ class TestSpindlesDetection3DTensor:
         data = result["spindlesdetection"]["data"]
 
         # After channel aggregation: (n_features, n_epochs)
-        expected_shape = (3, 5)
+        expected_shape = (4, 5)
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -163,7 +163,7 @@ class TestSpindlesDetection3DTensor:
         data = result["spindlesdetection"]["data"]
 
         # After both aggregations: (n_features,)
-        expected_shape = (3,)
+        expected_shape = (4,)
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -173,7 +173,7 @@ class TestSpindlesDetection3DTensor:
         marker = SpindlesDetection()
         result = marker.compute({"data": empty_epochs})
 
-        assert result["spindlesdetection"]["data"].shape == (3, 3, 4)
+        assert result["spindlesdetection"]["data"].shape == (4, 3, 4)
         assert np.all(np.isnan(result["spindlesdetection"]["data"])), (
             "All values should be NaN for empty data"
         )
@@ -226,7 +226,7 @@ class TestSlowWavesDetection3DTensor:
         col_names = result["slowwavesdetection"]["col_names"]
 
         # Check tensor shape: (n_features, n_epochs, n_channels)
-        expected_shape = (4, 5, 8)  # 4 features, 5 epochs, 8 channels
+        expected_shape = (5, 5, 8)  # 5 features, 5 epochs, 8 channels
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -254,7 +254,7 @@ class TestSlowWavesDetection3DTensor:
         data = result["slowwavesdetection"]["data"]
 
         # After channel aggregation: (n_features, n_epochs)
-        expected_shape = (4, 5)
+        expected_shape = (5, 5)
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -272,7 +272,7 @@ class TestSlowWavesDetection3DTensor:
         data = result["slowwavesdetection"]["data"]
 
         # After both aggregations: (n_features,)
-        expected_shape = (4,)
+        expected_shape = (5,)
         assert data.shape == expected_shape, (
             f"Expected shape {expected_shape}, got {data.shape}"
         )
@@ -282,7 +282,7 @@ class TestSlowWavesDetection3DTensor:
         marker = SlowWavesDetection()
         result = marker.compute({"data": empty_epochs})
 
-        assert result["slowwavesdetection"]["data"].shape == (4, 3, 4)
+        assert result["slowwavesdetection"]["data"].shape == (5, 3, 4)
         assert np.all(np.isnan(result["slowwavesdetection"]["data"])), (
             "All values should be NaN for empty data"
         )
@@ -321,7 +321,7 @@ class TestSleepMarkersAggregationEdgeCases:
         spindles_chan = SpindlesDetection(channel_aggregation_method="mean")
         result_chan = spindles_chan.compute({"data": empty_epochs})
         assert result_chan["spindlesdetection"]["data"].shape == (
-            3,
+            4,
             3,
         )  # (features, epochs)
         assert np.all(np.isnan(result_chan["spindlesdetection"]["data"])), (
@@ -332,7 +332,7 @@ class TestSleepMarkersAggregationEdgeCases:
         spindles_epoch = SpindlesDetection(epoch_aggregation_method="mean")
         result_epoch = spindles_epoch.compute({"data": empty_epochs})
         assert result_epoch["spindlesdetection"]["data"].shape == (
-            3,
+            4,
             4,
         )  # (features, channels)
         assert np.all(np.isnan(result_epoch["spindlesdetection"]["data"])), (
@@ -345,7 +345,7 @@ class TestSleepMarkersAggregationEdgeCases:
         )
         result_both = spindles_both.compute({"data": empty_epochs})
         assert result_both["spindlesdetection"]["data"].shape == (
-            3,
+            4,
         )  # (features,)
         assert np.all(np.isnan(result_both["spindlesdetection"]["data"])), (
             "Both aggregations of all NaN should be NaN"
@@ -366,7 +366,7 @@ class TestSleepMarkersAggregationEdgeCases:
         result = marker.compute({"data": empty_epochs})
 
         # Should reduce to (features, epochs) and handle NaN gracefully
-        assert result["spindlesdetection"]["data"].shape == (3, 3)
+        assert result["spindlesdetection"]["data"].shape == (4, 3)
         # With empty data, all results should be NaN regardless of aggregation method
         assert np.all(np.isnan(result["spindlesdetection"]["data"])), (
             f"Aggregation method {aggregation_method} should handle NaN data correctly"
@@ -377,10 +377,10 @@ class TestSleepMarkersAggregationEdgeCases:
         marker = SpindlesDetection()
         result = marker.compute({"data": synthetic_sleep_epochs})
 
-        # Spindles should have features: Duration, Amplitude, Frequency
-        # We can't directly test feature names, but we can verify the tensor has 3 features
+        # Spindles should have features: Duration, Amplitude, Frequency, Density
+        # We can't directly test feature names, but we can verify the tensor has 4 features
         data = result["spindlesdetection"]["data"]
-        assert data.shape[0] == 3, "Spindles should have exactly 3 features"
+        assert data.shape[0] == 4, "Spindles should have exactly 4 features"
 
         # Test that features have reasonable ranges (not all NaN, reasonable values)
         # Duration should be positive (seconds)
