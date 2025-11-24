@@ -13,7 +13,7 @@ class SpindlesDetection(BaseMarker):
     """Sleep spindles detection marker using YASA.
 
     Detects sleep spindles in EEG data and returns mean values per epoch/channel
-    for the main spindle features: Duration, Amplitude, and Frequency.
+    for the main spindle features: Duration, Amplitude, Frequency, and Density.
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "yasa", "pandas", "numpy"}
@@ -96,8 +96,9 @@ class SpindlesDetection(BaseMarker):
         dict
             Dictionary with spindles detection results.
             Returns 3D tensor with shape (n_features, n_epochs, n_channels) where
-            features are [Duration, Amplitude, Frequency] and each value is the mean
-            of all spindles for that epoch/channel combination. Empty cells contain NaN.
+            features are [Duration, Amplitude, Frequency, Density] and each value is the mean
+            of all spindles for that epoch/channel combination, except Density which is the
+            count of detected events. Empty cells contain NaN.
             Aggregation reduces dimensions following SpectralPower pattern.
         """
         import mne
@@ -196,7 +197,7 @@ class SpindlesDetection(BaseMarker):
         # Get dimensions for 3D tensor
         n_epochs = len(epochs_copy)
         n_channels = len(ch_names)
-        n_features = 3  # Duration, Amplitude, Frequency
+        n_features = 4  # Duration, Amplitude, Frequency, Density
 
         # Initialize 3D tensor with NaN
         tensor = np.full((n_features, n_epochs, n_channels), np.nan)
@@ -209,10 +210,13 @@ class SpindlesDetection(BaseMarker):
 
             for (epoch_idx, chan_idx), group in grouped:
                 if epoch_idx < n_epochs and chan_idx < n_channels:
+                    # Add mean values for existing features
                     for feat_idx, feat in enumerate(feature_cols):
                         tensor[feat_idx, epoch_idx, chan_idx] = group[
                             feat
                         ].mean()
+                    # Add density feature (count of events)
+                    tensor[3, epoch_idx, chan_idx] = len(group)
 
         # Apply aggregation if specified (following SpectralPower pattern)
         if (

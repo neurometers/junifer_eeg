@@ -13,7 +13,7 @@ class SlowWavesDetection(BaseMarker):
     """Sleep slow waves detection marker using YASA.
 
     Detects sleep slow waves in EEG data and returns mean values per epoch/channel
-    for the main slow wave features: Duration, PTP, Frequency, and Slope.
+    for the main slow wave features: Duration, PTP, Frequency, Slope, and Density.
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "yasa", "pandas", "numpy"}
@@ -87,8 +87,9 @@ class SlowWavesDetection(BaseMarker):
         dict
             Dictionary with slow waves detection results.
             Returns 3D tensor with shape (n_features, n_epochs, n_channels) where
-            features are [Duration, PTP, Frequency, Slope] and each value is the mean
-            of all slow waves for that epoch/channel combination. Empty cells contain NaN.
+            features are [Duration, PTP, Frequency, Slope, Density] and each value is the mean
+            of all slow waves for that epoch/channel combination, except Density which is the
+            count of detected events. Empty cells contain NaN.
             Aggregation reduces dimensions following SpectralPower pattern.
         """
         import mne
@@ -192,7 +193,7 @@ class SlowWavesDetection(BaseMarker):
         # Get dimensions for 3D tensor
         n_epochs = len(epochs_copy)
         n_channels = len(ch_names)
-        n_features = 4  # Duration, PTP, Frequency, Slope
+        n_features = 5  # Duration, PTP, Frequency, Slope, Density
 
         # Initialize 3D tensor with NaN
         tensor = np.full((n_features, n_epochs, n_channels), np.nan)
@@ -205,10 +206,13 @@ class SlowWavesDetection(BaseMarker):
 
             for (epoch_idx, chan_idx), group in grouped:
                 if epoch_idx < n_epochs and chan_idx < n_channels:
+                    # Add mean values for existing features
                     for feat_idx, feat in enumerate(feature_cols):
                         tensor[feat_idx, epoch_idx, chan_idx] = group[
                             feat
                         ].mean()
+                    # Add density feature (count of events)
+                    tensor[4, epoch_idx, chan_idx] = len(group)
 
         # Apply aggregation if specified (following SpectralPower pattern)
         if (

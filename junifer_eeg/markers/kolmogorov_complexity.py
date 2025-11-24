@@ -160,7 +160,7 @@ class KolmogorovComplexity(BaseMarker):
         epochs_data = (
             data_obj.get_data()
         )  # Shape: (n_epochs, n_channels, n_times)
-        n_epochs, n_channels, n_samples = epochs_data.shape
+        n_epochs, n_channels, _ = epochs_data.shape
         ch_names = list(data_obj.ch_names)
 
         # Apply ROI filtering BEFORE computation if specified
@@ -181,7 +181,7 @@ class KolmogorovComplexity(BaseMarker):
                 data_filtered = roi_data_dict["selected_channels"]
                 # Transpose back to (n_epochs, n_channels, n_samples)
                 epochs_data = data_filtered.transpose(1, 0, 2)
-                n_epochs, n_channels, n_samples = epochs_data.shape
+                n_epochs, n_channels, _ = epochs_data.shape
                 # Preserve the actual ROI channel names
                 ch_names = self.rois
 
