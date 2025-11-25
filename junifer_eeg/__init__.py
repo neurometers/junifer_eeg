@@ -7,12 +7,11 @@ except ImportError:
 
 # Import main modules
 from . import (
-    datareader,
+    datagrabber,
     markers,
     preprocessors,
 )
 from .datagrabber import EEGDataGrabber
-from .datareader import EEGDataReader
 from .markers import (
     SpectralPower,
     TimeLockedContrast,
@@ -44,7 +43,6 @@ __all__ = [
     "BadChannelsVariance",
     "BadEpochsThreshold",
     "EEGDataGrabber",
-    "EEGDataReader",
     "EEGEpoching",
     "EEGFilter",
     "EEGInterpolation",
@@ -53,7 +51,7 @@ __all__ = [
     "TimeLockedContrast",
     "TimeLockedTopography",
     "WindowDecoding",
-    "datareader",
+    "datagrabber",
     "markers",
     "preprocessors",
 ]

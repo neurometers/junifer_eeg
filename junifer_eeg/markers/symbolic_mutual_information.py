@@ -361,7 +361,7 @@ class SymbolicMutualInformation(BaseMarker):
                     # CSD didn't work, use original EEG data
                     pass  # epochs remains unchanged
 
-        # Pick data channels for connectivity computation (matching NICE exactly)
+        # Pick data channels for connectivity computation
         # MEG, EEG, CSD, SEEG, ECoG are typical data channels. Exclude bads.
         from mne import pick_types
 

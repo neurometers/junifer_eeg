@@ -19,7 +19,7 @@ import mne
 import numpy as np
 import pytest
 
-from junifer_eeg.datareader.utils import detect_and_set_equipment
+from junifer_eeg.datagrabber.utils import detect_and_set_equipment
 from junifer_eeg.preprocessors.artifact_rejection import (
     BadChannelsHighFrequency,
     BadChannelsThreshold,

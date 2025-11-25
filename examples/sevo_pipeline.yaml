@@ -1,0 +1,180 @@
+# EEG Pipeline for Sevoflurane Data
+# Raw BrainVision data preprocessing and analysis
+
+# ========================================
+# WORKSPACE CONFIGURATION
+# ========================================
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+# ========================================
+# DATA CONFIGURATION
+# ========================================
+datagrabber:
+  kind: EEGDataGrabber
+  datadir: /home/gio/Documents/Repos/junifer_eeg/site/bckp/sevo/sevo
+  types: ["EEG"]
+  patterns:
+    EEG:
+      pattern: "{subject}.vhdr"  # BrainVision header files - glob pattern with replacement
+      space: "native"
+  replacements: ["subject"]  # Extract subject name from filename
+
+# ========================================
+# STORAGE CONFIGURATION
+# ========================================
+storage:
+  kind: HDF5FeatureStorage
+  uri: "sevo_features.h5"
+  single_output: true
+
+# ========================================
+# PREPROCESSING PIPELINE
+# ========================================
+preprocess:
+  # Step 1: Filter the raw continuous data
+  - kind: EEGFilter
+    low_freq: 45.0          # Low-pass filter (Hz)
+    high_freq: 0.5          # High-pass filter (Hz) 
+    notches: [50, 100]      # Notch filters for line noise (Hz)
+    resample_freq: 250      # Downsample to 250 Hz
+    filter_method: "iir"
+    hp_order: 4             # High-pass filter order
+    lp_order: 8             # Low-pass filter order
+    on: EEG
+
+  # Step 2: Create fixed-length epochs from continuous data
+  - kind: EEGEpoching
+    duration: 2.0            # Duration of each epoch in seconds (fixed-length mode)
+    overlap: 0.0             # No overlap between epochs
+    baseline: null           # No baseline correction for ongoing data
+    on: EEG
+
+  # Step 3: Adaptive artifact rejection - Step 1 (Threshold - Channels)
+  # More lenient thresholds for sparse 11-channel data
+  - kind: BadChannelsThreshold
+    reject: {"eeg": 150e-6}  # 150 µV threshold (more lenient)
+    n_epochs_bad_ch: 0.7     # 70% of epochs over threshold to mark as bad
+    min_channels: 0.3        # Minimum 30% good channels required (more lenient)
+    interpolate: true        # Interpolate bad channels
+    on: EEG
+
+  # Step 4: Adaptive artifact rejection - Step 2 (Variance - Channels)  
+  - kind: BadChannelsVariance
+    zscore_thresh: 5.0       # Z-score threshold (more lenient)
+    max_iter: 4              # Maximum iterations (matches your function)
+    min_channels: 0.3        # Minimum 30% good channels required
+    interpolate: true        # Interpolate bad channels
+    on: EEG
+
+  # Step 5: Adaptive artifact rejection - Step 3 (Threshold - Epochs)
+  - kind: BadEpochsThreshold
+    reject: {"eeg": 150e-6}  # 150 µV threshold (more lenient)
+    n_channels_bad_epoch: 0.3  # 30% of channels over threshold to mark epoch as bad
+    min_events: 0.2          # Minimum 20% good epochs required
+    drop_bad_epochs: true    # Drop detected bad epochs
+    on: EEG
+
+  # Step 6: Adaptive artifact rejection - Step 4 (High Frequency - Channels)
+  - kind: BadChannelsHighFrequency
+    zscore_thresh: 5.0       # Z-score threshold (more lenient)
+    max_iter: 4              # Maximum iterations (matches your function)
+    min_channels: 0.3        # Minimum 30% good channels required
+    interpolate: true        # Interpolate bad channels
+    on: EEG
+
+# ========================================
+# MARKERS FOR ANALYSIS
+# ========================================
+markers:
+  # ========================================
+  # 1. SPECTRAL ANALYSIS: Absolute Power (dB)
+  # ========================================
+  - kind: SpectralPower
+    name: psd_bands
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: false
+    dB: true
+    n_fft: 2048
+    n_overlap: 50
+    n_per_seg: 256
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+  # ========================================
+  # 2. SPECTRAL ANALYSIS: Relative Power (normalized)
+  # ========================================
+  - kind: SpectralPower
+    name: psd_relative
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: true
+    dB: false
+    n_fft: 2048
+    n_overlap: 50
+    n_per_seg: 256
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+  # ========================================
+  # 3. CONNECTIVITY: Symbolic Mutual Information (unweighted)
+  # ========================================
+  - kind: SymbolicMutualInformation
+    name: smi
+    tmin: null
+    tmax: null
+    kernel: 3
+    tau: 8
+    weighted: false
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+  # ========================================
+  # 4. CONNECTIVITY: Weighted Symbolic Mutual Information
+  # ========================================
+  - kind: SymbolicMutualInformation
+    name: wsmi
+    tmin: null
+    tmax: null
+    kernel: 3
+    tau: 8
+    weighted: true
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+  # ========================================
+  # 5. INFORMATION THEORY: Permutation Entropy
+  # ========================================
+  - kind: PermutationEntropy
+    name: permutation_entropy
+    kernel: 3
+    tau: 8
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+  # ========================================
+  # 6. INFORMATION THEORY: Kolmogorov Complexity
+  # ========================================
+  - kind: KolmogorovComplexity
+    name: kolmogorov_complexity
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
+

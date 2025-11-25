@@ -4,23 +4,23 @@ JUnifer EEG is an extension for the JUelich NeuroImaging FEature extractoR (juni
 
 ## Overview
 
-This extension follows junifer's architectural patterns to add EEG support by:
+This extension adds EEG support to junifer by:
 
-- **Extending `PatternDataGrabber`** - Just a way to use the extended datareader.
-- **Extending `DefaultDataReader`** - Adds EEG file format support (.edf, .bdf) via global extension mappings
-- **Feature extraction** - `SpectralPower` marker for frequency band analysis
+- **Custom datagrabber** - `EEGDataGrabber` with EEG file format support (.vhdr, .edf, .fif) via global reader registry
+- **Equipment detection** - Automatic detection and montage setting for Biosemi, BrainVision, EGI systems
+- **Preprocessing** - Filtering, epoching, artifact rejection, and interpolation
+- **Feature extraction** - Spectral power, connectivity, complexity, and ERP markers
 - **HDF5 storage** - Uses junifer's recommended storage format
-- **EEG data type** - Extends junifer's validation to support EEG alongside BOLD/T1w
 
 ## Architecture
 
-This extension follows the recommended junifer pattern:
+This extension follows junifer's pattern:
 
 ```
-PatternDataGrabber → EEGDataReader → EEGFilter → SpectralPower → HDF5FeatureStorage
+EEGDataGrabber → Preprocessors → Markers → HDF5FeatureStorage
 ```
 
-All components integrate seamlessly with junifer's existing infrastructure and CLI.
+The global reader registry automatically handles montage setting for all EEG formats, enabling CSD computation and proper channel localization.
 
 ## Installation
 
