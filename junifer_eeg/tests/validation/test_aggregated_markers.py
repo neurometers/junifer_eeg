@@ -11,6 +11,7 @@ This ensures that the aggregation logic in Junifer markers works correctly.
 """
 
 import pickle
+import sys
 from pathlib import Path
 
 import mne
@@ -18,20 +19,30 @@ import numpy as np
 import pytest
 from scipy import stats
 
+# Add parent directory to path for helper import
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from junifer_eeg.markers.contingent_negative_variation import (
     ContingentNegativeVariation,
 )
 from junifer_eeg.markers.kolmogorov_complexity import KolmogorovComplexity
-from junifer_eeg.markers.permutation_entropy import PermutationEntropy
+from junifer_eeg.markers.permutation_entropy_new.permutation_entropy_bands_rois import (
+    PermutationEntropyROIs,
+)
 from junifer_eeg.markers.power_spectral_density import (
     PowerSpectralDensitySummary,
 )
-from junifer_eeg.markers.spectral_power import SpectralPower
-from junifer_eeg.markers.symbolic_mutual_information import (
-    SymbolicMutualInformation,
+from junifer_eeg.markers.spectral_power_new.spectral_power_bands_rois import (
+    SpectralPowerBandsROIs,
+)
+from junifer_eeg.markers.symbolic_mutual_information_new.symbolic_mutual_information_rois import (
+    SymbolicMutualInformationROIs,
 )
 from junifer_eeg.markers.time_locked_contrast import TimeLockedContrast
 from junifer_eeg.markers.time_locked_topography import TimeLockedTopography
+from junifer_eeg.tests.validation.update_tests_helper import (
+    convert_permutation_entropy_params,
+    convert_spectral_power_params,
+)
 
 
 def aggregate_data(
@@ -517,50 +528,38 @@ class TestSpectralPowerDeltaAggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -582,6 +581,7 @@ class TestSpectralPowerDeltaAggregated:
             Name for this specific test case
         rois : list of str or None
             ROI specification to group channels for aggregation.
+            If rois == "first_half", automatically selects first 16 channels.
             For real EGI data, use ["scalp"] to group all electrodes.
             For this test data (standard EEG naming), pass channel names list directly.
             If None, each channel is treated as a separate ROI.
@@ -599,7 +599,11 @@ class TestSpectralPowerDeltaAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -614,7 +618,11 @@ class TestSpectralPowerDeltaAggregated:
             print(f"  {key}: {value}")
 
         # Step 3: Create Junifer marker with aggregation parameters
-        junifer_marker = SpectralPower(**junifer_params)
+        # Convert old SpectralPower parameters to new SpectralPowerBandsROIs format
+
+        new_params = convert_spectral_power_params(junifer_params)
+
+        junifer_marker = SpectralPowerBandsROIs(**new_params)
 
         # Step 4: Run Junifer marker
         input_dict = {
@@ -684,50 +692,38 @@ class TestCNVAggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -764,7 +760,11 @@ class TestCNVAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -856,50 +856,38 @@ class TestKolmogorovComplexityAggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -936,7 +924,11 @@ class TestKolmogorovComplexityAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -1025,50 +1017,38 @@ class TestTimeLockedTopographyP1Aggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -1105,7 +1085,11 @@ class TestTimeLockedTopographyP1Aggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -1285,50 +1269,38 @@ class TestPermutationEntropyAggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -1365,7 +1337,11 @@ class TestPermutationEntropyAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -1380,7 +1356,11 @@ class TestPermutationEntropyAggregated:
             print(f"  {key}: {value}")
 
         # Step 3: Create Junifer marker with aggregation parameters
-        junifer_marker = PermutationEntropy(**junifer_params)
+        # Convert old PermutationEntropy parameters to new PermutationEntropyROIs format
+
+        new_params = convert_permutation_entropy_params(junifer_params)
+
+        junifer_marker = PermutationEntropyROIs(**new_params)
 
         # Step 4: Run Junifer marker
         input_dict = {
@@ -1532,28 +1512,40 @@ class TestSymbolicMutualInformationAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
 
-        # Remove deprecated 'average' parameter if present
+        # Remove deprecated parameters from old marker
         junifer_params.pop("average", None)
+        junifer_params.pop("channel_aggregation_method", None)
+        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params.pop("connectivity_aggregation_method", None)
+        junifer_params.pop("rois", None)  # Not in new marker
 
-        # Add aggregation parameters
+        # Add aggregation parameters for new refactored marker
         # For connectivity markers, we need to first aggregate the connectivity dimension
         # to convert (channels x channels x trials) to (channels x trials)
-        junifer_params["connectivity_aggregation_method"] = "mean"
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
-        junifer_params["rois"] = rois
+        junifer_params["connectivity_method"] = "mean"
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
+        # Note: rois parameter removed - not used in these tests
+
+        # Convert old tau parameter to new taus parameter for refactored marker
+        if "tau" in junifer_params:
+            junifer_params["taus"] = junifer_params.pop("tau")
 
         print("\nJunifer parameters (WITH aggregation):")
         for key, value in junifer_params.items():
             print(f"  {key}: {value}")
 
         # Step 3: Create Junifer marker with aggregation parameters
-        junifer_marker = SymbolicMutualInformation(**junifer_params)
+        junifer_marker = SymbolicMutualInformationROIs(**junifer_params)
 
         # Step 4: Run Junifer marker
         input_dict = {
@@ -1630,50 +1622,38 @@ class TestPowerSpectralDensitySummaryAggregated:
 
     def test_aggregation_mean_mean(self):
         """Test with mean aggregation for both channels and trials."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg="mean",
             test_name="mean_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_trim_mean80_trim_mean80(self):
         """Test with trim_mean80 aggregation (NICE standard)."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="trim_mean80",
             trial_agg="trim_mean80",
             test_name="trim_mean80_trim_mean80",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_mean_only(self):
         """Test with only trial aggregation (mean), no channel aggregation."""
-        # Use subset of channels for trial-only aggregation
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg=None,
             trial_agg="mean",
             test_name="none_mean",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def test_aggregation_channel_only(self):
         """Test with only channel aggregation (mean), no trial aggregation."""
-        # Use only half the channels to test ROI filtering
-        ch_names = self.reference_data["epochs_data"]["info"]["ch_names"]
-        roi_channels = ch_names[:16]  # First 16 out of 32 channels
         self._run_aggregation_test(
             channel_agg="mean",
             trial_agg=None,
             test_name="mean_none",
-            rois=roi_channels,
+            rois="first_half",
         )
 
     def _run_aggregation_test(
@@ -1710,7 +1690,11 @@ class TestPowerSpectralDensitySummaryAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
+
+        # Handle ROI selection - use actual epochs channel names
+        if rois == "first_half":
+            # Use first 16 channels from actual epochs
+            rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
         junifer_params = self.reference_data["junifer_params"].copy()
@@ -1818,7 +1802,6 @@ class TestTimeLockedContrastAggregated:
             tmin=epochs_data["tmin"],
             verbose=False,
         )
-        print(f"Recreated epochs: {epochs.get_data().shape}")
 
         # Step 2: Create Junifer marker with reference parameters
         junifer_params = self.reference_data["junifer_params"].copy()

@@ -10,8 +10,8 @@ from typing import Any, ClassVar, List, Union
 
 from junifer.api.decorators import register_marker
 
+from ..utils import aggregate_data
 from ._time_locked_base import TimeLockedBase
-from .utils import aggregate_data
 
 
 @register_marker
@@ -222,7 +222,7 @@ class TimeLockedTopography(TimeLockedBase):
         ValueError
             If input data is not Epochs or if epochs are empty.
         """
-        from .utils import filter_to_eeg_channels
+        from ..utils import filter_to_eeg_channels
 
         # Get the MNE data object - must be Epochs
         data_obj = input["data"]

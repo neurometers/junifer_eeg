@@ -1,16 +1,50 @@
 """EEG markers module."""
 
+# Core infrastructure
+from .base import EEGBaseMarker, EEGEpochsMarker, EEGRawMarker
+
+# Legacy markers (to be deprecated)
 from .contingent_negative_variation import ContingentNegativeVariation
+from .eeg_roi_aggregation import EEGROIAggregation
 from .kolmogorov_complexity import KolmogorovComplexity
-from .permutation_entropy import PermutationEntropy
+from .permutation_entropy import (
+    PermutationEntropy as PermutationEntropyOld,  # Old marker
+)
+from .permutation_entropy_new._permutation_entropy_base import (
+    PermutationEntropyBase,
+)
+
+# Refactored hierarchical markers
+from .permutation_entropy_new.permutation_entropy_bands import (
+    PermutationEntropy,  # New refactored marker
+)
+from .permutation_entropy_new.permutation_entropy_bands_rois import (
+    PermutationEntropyROIs,
+)
 from .power_spectral_density import (
     PowerSpectralDensityEstimator,
     PowerSpectralDensitySummary,
 )
 from .slow_waves_detection import SlowWavesDetection
-from .spectral_power import SpectralPower
+from .spectral_power import SpectralPower  # Old marker from .py file
+from .spectral_power_new._spectral_power_base import SpectralPowerBase
+from .spectral_power_new.spectral_power_bands import SpectralPowerBands
+from .spectral_power_new.spectral_power_bands_rois import (
+    SpectralPowerBandsROIs,
+)
 from .spindles_detection import SpindlesDetection
-from .symbolic_mutual_information import SymbolicMutualInformation
+from .symbolic_mutual_information import (
+    SymbolicMutualInformation as SymbolicMutualInformationOld,
+)
+from .symbolic_mutual_information_new._symbolic_mutual_information_base import (
+    SymbolicMutualInformationBase,
+)
+from .symbolic_mutual_information_new.symbolic_mutual_information import (
+    SymbolicMutualInformation,
+)
+from .symbolic_mutual_information_new.symbolic_mutual_information_rois import (
+    SymbolicMutualInformationROIs,
+)
 from .time_decoding import TimeDecoding
 from .time_locked_contrast import TimeLockedContrast
 from .time_locked_topography import TimeLockedTopography
@@ -18,14 +52,25 @@ from .window_decoding import WindowDecoding
 
 __all__ = [
     "ContingentNegativeVariation",
+    "EEGBaseMarker",
+    "EEGEpochsMarker",
+    "EEGROIAggregation",
+    "EEGRawMarker",
     "KolmogorovComplexity",
-    "PermutationEntropy",
+    "PermutationEntropy",  # New refactored marker
+    "PermutationEntropyBase",
+    "PermutationEntropyROIs",  # New refactored marker
     "PowerSpectralDensityEstimator",
     "PowerSpectralDensitySummary",
     "SlowWavesDetection",
     "SpectralPower",
+    "SpectralPowerBands",
+    "SpectralPowerBandsROIs",
+    "SpectralPowerBase",
     "SpindlesDetection",
-    "SymbolicMutualInformation",
+    "SymbolicMutualInformation",  # New refactored marker
+    "SymbolicMutualInformationBase",
+    "SymbolicMutualInformationROIs",  # New refactored marker
     "TimeDecoding",
     "TimeLockedContrast",
     "TimeLockedTopography",

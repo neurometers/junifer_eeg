@@ -27,7 +27,7 @@ datagrabber:
 # ========================================
 storage:
   kind: HDF5FeatureStorage
-  uri: "sevo_features.h5"
+  uri: "output/sevo_features.h5"
   single_output: true
 
 # ========================================
@@ -102,9 +102,9 @@ markers:
       gamma: [30.0, 45.0]
     normalize: false
     dB: true
-    n_fft: 2048
-    n_overlap: 50
-    n_per_seg: 256
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
     channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
@@ -122,40 +122,47 @@ markers:
       gamma: [30.0, 45.0]
     normalize: true
     dB: false
-    n_fft: 2048
-    n_overlap: 50
-    n_per_seg: 256
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
     channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
   # ========================================
-  # 3. CONNECTIVITY: Symbolic Mutual Information (unweighted)
+  # PSD SUMMARY MARKERS (3 total: #12-14)
   # ========================================
-  - kind: SymbolicMutualInformation
-    name: smi
-    tmin: null
-    tmax: null
-    kernel: 3
-    tau: 8
-    weighted: false
+  # Per-channel spectral summaries
+  - kind: PowerSpectralDensitySummary
+    name: msf
+    percentile: 0.5
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
     channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
 
-  # ========================================
-  # 4. CONNECTIVITY: Weighted Symbolic Mutual Information
-  # ========================================
-  - kind: SymbolicMutualInformation
-    name: wsmi
-    tmin: null
-    tmax: null
-    kernel: 3
-    tau: 8
-    weighted: true
+  - kind: PowerSpectralDensitySummary
+    name: sef90
+    percentile: 0.9
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
     channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: sef95
+    percentile: 0.95
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_aggregation_method: null
+    trial_aggregation_method: null
+    on: EEG
+
 
   # ========================================
   # 5. INFORMATION THEORY: Permutation Entropy
@@ -176,5 +183,6 @@ markers:
     channel_aggregation_method: null
     trial_aggregation_method: null
     on: EEG
+
 
 

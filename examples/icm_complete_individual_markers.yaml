@@ -12,9 +12,9 @@ datagrabber:
   kind: EEGDataGrabber
   patterns:
     EEG:
-      pattern: "sub-PA301/epochs/sub-PA301_ses-01_task-lg_acq-01_epo.fif"
+      pattern: "{subject}/epochs/{subject}_ses-01_task-lg_acq-01_epo.fif"
       space: "native"
-  replacements: []
+  replacements: ["sub-PA301", "", ""]
   types:
     - EEG
   datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
