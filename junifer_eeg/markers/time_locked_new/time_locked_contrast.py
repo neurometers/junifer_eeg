@@ -18,7 +18,6 @@ import numpy as np
 from junifer.api.decorators import register_marker
 
 from ._time_locked_base import TimeLockedBase
-from .utils import aggregate_data
 
 
 @register_marker
@@ -57,8 +56,8 @@ class TimeLockedContrast(TimeLockedBase):
         reference: str | list[str] | None = None,
         comment: str | None = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -83,9 +82,9 @@ class TimeLockedContrast(TimeLockedBase):
             Comment for the analysis (not used in computation).
         rois : list of str or int, optional
             ROI specification for channel filtering.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Method to aggregate across channels.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Method to aggregate across epochs.
         equipment : str, default="egi256"
             Equipment type for electrode mapping.
@@ -96,84 +95,18 @@ class TimeLockedContrast(TimeLockedBase):
         """
         self.condition_a = condition_a
         self.condition_b = condition_b
-        self.tmin = tmin
-        self.tmax = tmax
         self.baseline = baseline
         self.reference = reference
         self.comment = comment
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
-        self.equipment = equipment
-        super().__init__(on=on, name=name)
-
-    def _apply_reference(self, epochs):
-        """Apply EEG re-referencing using flexible channel specification.
-
-        Parameters
-        ----------
-        epochs : mne.Epochs
-            Epochs to re-reference
-
-        Returns
-        -------
-        epochs : mne.Epochs
-            Re-referenced epochs
-
-        Notes
-        -----
-        Reference can be specified as:
-        - 'average': Average reference across all channels
-        - String channel name: Single channel (e.g., 'Cz', 'TP9')
-        - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
-        - Reference channels are resolved from actual data, like ROIs
-        """
-        reference = self.reference
-        ch_names = epochs.ch_names
-
-        # Handle special case: 'average' reference
-        if reference == "average":
-            epochs_reref = epochs.copy().set_eeg_reference(
-                ref_channels="average"
-            )
-            return epochs_reref
-
-        # Handle single string channel name
-        if isinstance(reference, str):
-            if reference in ch_names:
-                # Valid channel name
-                epochs_reref = epochs.copy().set_eeg_reference(
-                    ref_channels=reference
-                )
-                return epochs_reref
-            else:
-                raise ValueError(
-                    f"Reference channel '{reference}' not found in data. "
-                    f"Available channels: {ch_names[:20]}... "
-                    f"(showing first 20 of {len(ch_names)})"
-                )
-
-        # Handle list of channel names
-        if isinstance(reference, list):
-            # Validate all channels exist in data
-            invalid_channels = [ch for ch in reference if ch not in ch_names]
-            if invalid_channels:
-                raise ValueError(
-                    f"Reference channel(s) {invalid_channels} not found in data. "
-                    f"Available channels: {ch_names[:20]}... "
-                    f"(showing first 20 of {len(ch_names)})"
-                )
-
-            # All channels valid
-            epochs_reref = epochs.copy().set_eeg_reference(
-                ref_channels=reference
-            )
-            return epochs_reref
-
-        # Should not reach here, but handle unexpected types
-        raise TypeError(
-            f"Reference must be 'average', string channel name, or list of channel names. "
-            f"Got: {type(reference)}"
+        self.channel_method = channel_method
+        self.trial_method = trial_method
+        super().__init__(
+            tmin=tmin,
+            tmax=tmax,
+            equipment=equipment,
+            on=on,
+            name=name,
         )
 
     def compute(
@@ -207,7 +140,7 @@ class TimeLockedContrast(TimeLockedBase):
         ValueError
             If input data is not Epochs, if epochs are empty, or if conditions are missing.
         """
-        from .utils import filter_to_eeg_channels
+        from ..utils import filter_to_eeg_channels
 
         epochs = input["data"]
 
@@ -227,7 +160,7 @@ class TimeLockedContrast(TimeLockedBase):
 
         # Apply re-referencing FIRST (if specified)
         if self.reference is not None:
-            epochs = self._apply_reference(epochs)
+            epochs = self._apply_reference(epochs, self.reference)
 
         # Apply baseline correction SECOND (if specified)
         if self.baseline is not None:
@@ -239,7 +172,34 @@ class TimeLockedContrast(TimeLockedBase):
         # Filter epochs by conditions using original implementation approach
         def get_epochs_for_condition(epochs, condition):
             """Get epochs for condition using MNE's built-in filtering."""
-            # Handle both string and integer condition IDs
+            # Handle list of conditions (e.g., ['60', '50'])
+            if isinstance(condition, list):
+                # MNE supports list indexing directly
+                valid_conditions = []
+                for cond in condition:
+                    if cond in epochs.event_id:
+                        valid_conditions.append(cond)
+                    elif str(cond) in epochs.event_id:
+                        valid_conditions.append(str(cond))
+                    else:
+                        try:
+                            int_cond = int(cond)
+                            if int_cond in epochs.event_id.values():
+                                # Find key for this int value
+                                for k, v in epochs.event_id.items():
+                                    if v == int_cond:
+                                        valid_conditions.append(k)
+                                        break
+                        except (ValueError, TypeError):
+                            pass
+                if not valid_conditions:
+                    raise ValueError(
+                        f"None of conditions {condition} found in epochs. "
+                        f"Available event IDs: {list(epochs.event_id.keys())}"
+                    )
+                return epochs[valid_conditions]
+
+            # Handle single condition (string or integer)
             if condition in epochs.event_id:
                 # Condition exists as-is in event_id
                 return epochs[condition]
@@ -286,10 +246,7 @@ class TimeLockedContrast(TimeLockedBase):
             return time_averaged, ch_names
 
         # Check if we should return raw temporal data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw data from both conditions combined (matching NICE)
             # NICE stores all epochs from both conditions with FULL time range (not cropped)
             # Get raw data for both conditions (use full epochs, not cropped)
@@ -314,50 +271,29 @@ class TimeLockedContrast(TimeLockedBase):
         data_a, ch_names_a = process_condition(epochs_a)
         data_b, ch_names_b = process_condition(epochs_b)
 
-        # Helper function to aggregate condition data
-        def aggregate_condition(data, ch_names):
-            # Apply aggregation
-            result_data = data
+        # Aggregate both conditions using common helper
+        from ..utils import apply_channel_trial_aggregation
 
-            # Channel aggregation
-            if self.channel_aggregation_method is not None:
-                result_data = aggregate_data(
-                    result_data, self.channel_aggregation_method, axis=1
-                )
-
-            # Trial aggregation
-            if self.trial_aggregation_method is not None:
-                if result_data.ndim == 1:
-                    result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=None
-                    )
-                else:
-                    result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=0
-                    )
-
-            return result_data
-
-        # Aggregate both conditions
-        result_a = aggregate_condition(data_a, ch_names_a)
-        result_b = aggregate_condition(data_b, ch_names_b)
+        result_a = apply_channel_trial_aggregation(
+            data_a, self.channel_method, self.trial_method
+        )
+        result_b = apply_channel_trial_aggregation(
+            data_b, self.channel_method, self.trial_method
+        )
 
         # Compute contrast: A - B
         contrast_result = result_a - result_b
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # result_data shape: (n_trials,) after channel aggregation
             n_trials = (
                 contrast_result.shape[0] if contrast_result.ndim >= 1 else 1
             )
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{ch}" for ch in ch_names_a]
         else:
             col_names = [f"{ch}" for ch in ch_names_a]

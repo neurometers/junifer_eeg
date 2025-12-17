@@ -12,12 +12,12 @@ Structure:
 from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union
 
 import numpy as np
-from junifer.markers.base import BaseMarker
 
+from ..base import EEGEpochsMarker
 from ..utils import filter_to_eeg_channels, get_data_for_rois
 
 
-class DecodingBase(BaseMarker):
+class DecodingBase(EEGEpochsMarker):
     """Base class for Decoding markers with common data preparation functionality.
 
     Provides shared functionality for data preparation including condition filtering,
@@ -77,15 +77,18 @@ class DecodingBase(BaseMarker):
         self.condition_b = (
             condition_b if isinstance(condition_b, list) else [condition_b]
         )
-        self.tmin = tmin
-        self.tmax = tmax
         self.n_splits = n_splits
         self.scoring = scoring
         self.random_state = random_state
         self.comment = comment
         self.rois = rois
-        self.equipment = equipment
-        super().__init__(on=on, name=name)
+        super().__init__(
+            tmin=tmin,
+            tmax=tmax,
+            equipment=equipment,
+            on=on,
+            name=name,
+        )
 
     def _prepare_epochs_data(
         self, input: Dict[str, Any]

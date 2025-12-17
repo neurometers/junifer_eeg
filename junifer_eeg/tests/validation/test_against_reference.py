@@ -23,24 +23,35 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from junifer_eeg.markers.contingent_negative_variation import (
     ContingentNegativeVariation,
 )
-from junifer_eeg.markers.kolmogorov_complexity import KolmogorovComplexity
-from junifer_eeg.markers.permutation_entropy_new.permutation_entropy_bands_rois import (
-    PermutationEntropyROIs,
+from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+    KolmogorovComplexity,
 )
-from junifer_eeg.markers.power_spectral_density import (
+from junifer_eeg.markers.permutation_entropy_new import (
+    PermutationEntropy as PermutationEntropyROIs,
+)
+from junifer_eeg.markers.power_spectral_density_new.psd_summary import (
     PowerSpectralDensitySummary,
 )
-from junifer_eeg.markers.spectral_power_new.spectral_power_bands_rois import (
-    SpectralPowerBandsROIs,
+from junifer_eeg.markers.spectral_power_new import (
+    SpectralPowerBands as SpectralPowerBandsROIs,
 )
 from junifer_eeg.markers.symbolic_mutual_information_new.symbolic_mutual_information import (
     SymbolicMutualInformation,
 )
-from junifer_eeg.markers.time_locked_contrast import TimeLockedContrast
-from junifer_eeg.markers.time_locked_topography import TimeLockedTopography
+from junifer_eeg.markers.time_locked_new.time_locked_contrast import (
+    TimeLockedContrast,
+)
+from junifer_eeg.markers.time_locked_new.time_locked_topography import (
+    TimeLockedTopography,
+)
 from junifer_eeg.tests.validation.update_tests_helper import (
-    convert_permutation_entropy_params,
-    convert_spectral_power_params,
+    convert_legacy_params,
+)
+from junifer_eeg.tests.validation.update_tests_helper import (
+    convert_to_permutation_entropy_rois as convert_permutation_entropy_params,
+)
+from junifer_eeg.tests.validation.update_tests_helper import (
+    convert_to_spectral_power_bands_rois as convert_spectral_power_params,
 )
 
 
@@ -76,10 +87,9 @@ def check_shapes_and_compare(
     nice_arr = np.atleast_1d(nice_data)
     junifer_arr = np.atleast_1d(junifer_data)
 
-    if nice_arr.shape != junifer_arr.shape:
-        print("  ❌ SHAPE MISMATCH!")
-        return False
-
+    assert nice_arr.shape == junifer_arr.shape, (
+        f"Shape mismatch: NICE {nice_arr.shape} vs Junifer {junifer_arr.shape}"
+    )
     print("  ✅ Shapes match!")
 
     # Compare values
@@ -95,33 +105,32 @@ def check_shapes_and_compare(
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
-    if max_rel_error < tolerance:
+    assert max_rel_error < 1.0, (
+        f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\n  Worst case at index {np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else 'scalar'}\n  NICE value: {nice_arr[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6f}\n  Junifer value: {junifer_arr[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6f}\n  Absolute diff: {abs_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6e}\n  Relative diff: {rel_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.4f}%"
+    )
+
+    if max_rel_error < 0.01:
         print(
-            f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% < {tolerance}%)"
+            f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
         )
-        return True
-    elif max_rel_error < 1.0:
+    else:
         print(
             f"\n✅ EXCELLENT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
         )
-        return True
+
+    if nice_arr.size > 1:
+        worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
+        print(f"\nWorst case at index {worst_idx}:")
+        print(f"  NICE value:    {nice_arr[worst_idx]:.6e}")
+        print(f"  Junifer value: {junifer_arr[worst_idx]:.6e}")
+        print(f"  Relative diff: {rel_diff[worst_idx] * 100:.4f}%")
     else:
-        print(f"\n❌ MISMATCH: {marker_name} ({max_rel_error:.4f}% error)")
+        print("\nScalar comparison:")
+        print(f"  NICE value:    {nice_arr[0]:.6e}")
+        print(f"  Junifer value: {junifer_arr[0]:.6e}")
+        print(f"  Relative diff: {rel_diff[0] * 100:.4f}%")
 
-        # Find worst case (only if not scalar)
-        if nice_arr.size > 1:
-            worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
-            print(f"\nWorst case at index {worst_idx}:")
-            print(f"  NICE value:    {nice_arr[worst_idx]:.6e}")
-            print(f"  Junifer value: {junifer_arr[worst_idx]:.6e}")
-            print(f"  Relative diff: {rel_diff[worst_idx] * 100:.4f}%")
-        else:
-            print("\nScalar comparison:")
-            print(f"  NICE value:    {nice_arr[0]:.6e}")
-            print(f"  Junifer value: {junifer_arr[0]:.6e}")
-            print(f"  Relative diff: {rel_diff[0] * 100:.4f}%")
-
-        return False
+    return True
 
 
 class TestSpectralPowerDelta:
@@ -717,7 +726,7 @@ class TestCNV:
             verbose=False,
         )
         junifer_marker = ContingentNegativeVariation(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -770,7 +779,7 @@ class TestKolmogorovComplexity:
             verbose=False,
         )
         junifer_marker = KolmogorovComplexity(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -821,7 +830,7 @@ class TestTimeLockedTopographyP1:
             verbose=False,
         )
         junifer_marker = TimeLockedTopography(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -867,7 +876,7 @@ class TestTimeLockedTopographyP3a:
             verbose=False,
         )
         junifer_marker = TimeLockedTopography(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -913,7 +922,7 @@ class TestTimeLockedTopographyP3b:
             verbose=False,
         )
         junifer_marker = TimeLockedTopography(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1217,7 +1226,7 @@ class TestPSDSummaryMSF:
             verbose=False,
         )
         junifer_marker = PowerSpectralDensitySummary(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1264,7 +1273,7 @@ class TestPSDSummarySEF90:
             verbose=False,
         )
         junifer_marker = PowerSpectralDensitySummary(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1311,7 +1320,7 @@ class TestPSDSummarySEF95:
             verbose=False,
         )
         junifer_marker = PowerSpectralDensitySummary(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1366,7 +1375,7 @@ class TestTimeLockedContrastLSGS_LDGD:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1416,7 +1425,7 @@ class TestTimeLockedContrastLSGD_LDGS:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1465,7 +1474,7 @@ class TestTimeLockedContrastLD_LS:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1514,7 +1523,7 @@ class TestTimeLockedContrastMMN:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1563,7 +1572,7 @@ class TestTimeLockedContrastP3a:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1612,7 +1621,7 @@ class TestTimeLockedContrastGD_GS:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1661,7 +1670,7 @@ class TestTimeLockedContrastP3b:
             verbose=False,
         )
         junifer_marker = TimeLockedContrast(
-            **self.reference_data["junifer_params"]
+            **convert_legacy_params(self.reference_data["junifer_params"])
         )
         input_dict = {
             "data": epochs,
@@ -1767,9 +1776,11 @@ class TestSymbolicMutualInformation:
             verbose=False,
         )
         # Filter out old parameter names for new refactored marker
-        junifer_params = self.reference_data["junifer_params"].copy()
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not used in base marker
 
@@ -1838,9 +1849,11 @@ class TestSymbolicMutualInformationTheta:
             verbose=False,
         )
         # Filter out old parameter names for new refactored marker
-        junifer_params = self.reference_data["junifer_params"].copy()
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not used in base marker
 
@@ -1906,9 +1919,11 @@ class TestSymbolicMutualInformationAlpha:
             verbose=False,
         )
         # Filter out old parameter names for new refactored marker
-        junifer_params = self.reference_data["junifer_params"].copy()
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not used in base marker
 
@@ -1974,9 +1989,11 @@ class TestSymbolicMutualInformationBeta:
             verbose=False,
         )
         # Filter out old parameter names for new refactored marker
-        junifer_params = self.reference_data["junifer_params"].copy()
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not used in base marker
 
@@ -2042,9 +2059,11 @@ class TestSymbolicMutualInformationGamma:
             verbose=False,
         )
         # Filter out old parameter names for new refactored marker
-        junifer_params = self.reference_data["junifer_params"].copy()
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not used in base marker
 

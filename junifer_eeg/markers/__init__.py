@@ -10,16 +10,13 @@ from .kolmogorov_complexity import KolmogorovComplexity
 from .permutation_entropy import (
     PermutationEntropy as PermutationEntropyOld,  # Old marker
 )
-from .permutation_entropy_new._permutation_entropy_base import (
-    PermutationEntropyBase,
-)
 
 # Refactored hierarchical markers
-from .permutation_entropy_new.permutation_entropy_bands import (
-    PermutationEntropy,  # New refactored marker
+from .permutation_entropy_new import (
+    PermutationEntropy,  # New refactored marker (now includes aggregation)
 )
-from .permutation_entropy_new.permutation_entropy_bands_rois import (
-    PermutationEntropyROIs,
+from .permutation_entropy_new._permutation_entropy_base import (
+    PermutationEntropyBase,
 )
 from .power_spectral_density import (
     PowerSpectralDensityEstimator,
@@ -27,10 +24,9 @@ from .power_spectral_density import (
 )
 from .slow_waves_detection import SlowWavesDetection
 from .spectral_power import SpectralPower  # Old marker from .py file
-from .spectral_power_new._spectral_power_base import SpectralPowerBase
-from .spectral_power_new.spectral_power_bands import SpectralPowerBands
-from .spectral_power_new.spectral_power_bands_rois import (
-    SpectralPowerBandsROIs,
+from .spectral_power_new import (
+    SpectralPowerBands,  # Now includes aggregation
+    SpectralPowerBase,
 )
 from .spindles_detection import SpindlesDetection
 from .symbolic_mutual_information import (
@@ -46,8 +42,18 @@ from .symbolic_mutual_information_new.symbolic_mutual_information_rois import (
     SymbolicMutualInformationROIs,
 )
 from .time_decoding import TimeDecoding
-from .time_locked_contrast import TimeLockedContrast
-from .time_locked_topography import TimeLockedTopography
+from .time_locked_contrast import (
+    TimeLockedContrast as TimeLockedContrastOld,  # Legacy
+)
+from .time_locked_new.time_locked_contrast import (
+    TimeLockedContrast,  # New refactored marker (primary)
+)
+from .time_locked_new.time_locked_topography import (
+    TimeLockedTopography,  # New refactored marker (primary)
+)
+from .time_locked_topography import (
+    TimeLockedTopography as TimeLockedTopographyOld,  # Legacy
+)
 from .window_decoding import WindowDecoding
 
 __all__ = [
@@ -59,20 +65,22 @@ __all__ = [
     "KolmogorovComplexity",
     "PermutationEntropy",  # New refactored marker
     "PermutationEntropyBase",
-    "PermutationEntropyROIs",  # New refactored marker
+    "PermutationEntropyOld",  # Legacy
     "PowerSpectralDensityEstimator",
     "PowerSpectralDensitySummary",
     "SlowWavesDetection",
     "SpectralPower",
     "SpectralPowerBands",
-    "SpectralPowerBandsROIs",
     "SpectralPowerBase",
     "SpindlesDetection",
     "SymbolicMutualInformation",  # New refactored marker
     "SymbolicMutualInformationBase",
-    "SymbolicMutualInformationROIs",  # New refactored marker
+    "SymbolicMutualInformationOld",  # Legacy
+    "SymbolicMutualInformationROIs",
     "TimeDecoding",
-    "TimeLockedContrast",
-    "TimeLockedTopography",
+    "TimeLockedContrast",  # New refactored marker
+    "TimeLockedContrastOld",  # Legacy
+    "TimeLockedTopography",  # New refactored marker
+    "TimeLockedTopographyOld",  # Legacy
     "WindowDecoding",
 ]

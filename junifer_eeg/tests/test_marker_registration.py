@@ -34,12 +34,11 @@ def test_marker_registration():
         print(f"Original instance: {orig_instance}")
         print(f"New instance: {new_instance}")
 
-        print("✅ Both implementations can be imported and instantiated")
-        return True
+        print("✅ No registration conflicts detected")
 
     except Exception as e:
         print(f"❌ Registration conflict detected: {e}")
-        return False
+        raise
 
 
 def test_output_type_method():
@@ -53,12 +52,12 @@ def test_output_type_method():
     # Test different aggregation combinations
     test_cases = [
         ({}, "timeseries"),
-        ({"channel_aggregation_method": "mean"}, "vector"),
-        ({"trial_aggregation_method": "mean"}, "vector"),
+        ({"channel_method": "mean"}, "vector"),
+        ({"trial_method": "mean"}, "vector"),
         (
             {
-                "channel_aggregation_method": "mean",
-                "trial_aggregation_method": "mean",
+                "channel_method": "mean",
+                "trial_method": "mean",
             },
             "scalar_table",
         ),
@@ -66,17 +65,16 @@ def test_output_type_method():
 
     for params, expected_type in test_cases:
         marker = KolmogorovComplexity(**params)
-        actual_type = marker.get_output_type("EEG", "kolmogorovcomplexity")
 
-        if actual_type == expected_type:
-            print(f"  ✅ {params} -> {actual_type}")
-        else:
-            print(
-                f"  ❌ {params} -> Expected {expected_type}, got {actual_type}"
-            )
-            return False
+        assert hasattr(marker, "get_output_type"), (
+            f"{marker.__class__.__name__} missing get_output_type method"
+        )
 
-    return True
+        output_type = marker.get_output_type("EEG", "kolmogorovcomplexity")
+        assert output_type == expected_type, (
+            f"{marker.__class__.__name__} wrong output type: {output_type}, expected {expected_type}"
+        )
+        print(f"  ✅ {params} -> {output_type}")
 
 
 if __name__ == "__main__":
@@ -85,8 +83,18 @@ if __name__ == "__main__":
     print("=" * 50)
 
     success = True
-    success &= test_marker_registration()
-    success &= test_output_type_method()
+
+    try:
+        test_marker_registration()
+    except AssertionError as e:
+        print(f"❌ Marker registration test failed: {e}")
+        success = False
+
+    try:
+        test_output_type_method()
+    except AssertionError as e:
+        print(f"❌ Output type method test failed: {e}")
+        success = False
 
     print("\n" + "=" * 50)
     if success:

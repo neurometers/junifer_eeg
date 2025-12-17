@@ -114,12 +114,19 @@ if _HAVE_NUMBA:
 class PermutationEntropyBase(metaclass=Singleton):
     """Base permutation entropy computation with caching.
 
-    Singleton class that computes permutation entropy with LRU caching
-    for efficient reuse across multiple markers.
+    Singleton class that computes permutation entropy with
+    internal caching for efficient reuse across multiple markers.
+
+    The caching uses (epochs_id, params) as key - valid while the
+    epochs object exists in memory. This follows Fede's pattern but
+    adapted for in-memory EEG data instead of file paths.
 
     """
 
     _DEPENDENCIES: ClassVar = {"numpy"}
+
+    # Internal cache: {(epochs_id, params_tuple): pe_values}
+    _cache: ClassVar[dict] = {}
 
     def __init__(self) -> None:
         """Initialize PE base."""
@@ -128,10 +135,9 @@ class PermutationEntropyBase(metaclass=Singleton):
     def __del__(self) -> None:  # pragma: no cover
         """Terminate and clear cache."""
         logger.debug("Clearing cache for PE computation")
-        if hasattr(self, "compute"):
-            self.compute.cache_clear()
+        PermutationEntropyBase._cache.clear()
 
-    def _compute_pe(
+    def compute(
         self,
         epochs: "mne.Epochs",
         kernel: int,
@@ -142,7 +148,11 @@ class PermutationEntropyBase(metaclass=Singleton):
         tmin: float,
         tmax: float,
     ) -> np.ndarray:
-        """Compute permutation entropy for epochs.
+        """Compute permutation entropy with caching.
+
+        This method follows Fede's pattern (like AFNIReHo) but adapted for
+        in-memory EEG data. The cache key is (epochs_id, params) - valid
+        while the epochs object exists in memory.
 
         Parameters
         ----------
@@ -169,6 +179,25 @@ class PermutationEntropyBase(metaclass=Singleton):
             PE values with shape (n_epochs, n_channels).
 
         """
+        # Build cache key from hashable parameters
+        cache_key = (
+            id(epochs),
+            kernel,
+            tau,
+            fmin,
+            fmax,
+            filter_order,
+            tmin,
+            tmax,
+        )
+
+        # Check cache first
+        if cache_key in self._cache:
+            logger.debug(f"PE cache hit: epochs_id={id(epochs)}")
+            return self._cache[cache_key]
+
+        logger.debug(f"PE cache miss: computing kernel={kernel}, tau={tau}")
+
         from mne.utils import _time_mask
         from scipy.signal import butter, filtfilt
 
@@ -224,5 +253,8 @@ class PermutationEntropyBase(metaclass=Singleton):
                 pe_values[epoch_idx, ch_idx] = pe_func(
                     signal, kernel, tau, fact
                 )
+
+        # Store in cache
+        self._cache[cache_key] = pe_values
 
         return pe_values

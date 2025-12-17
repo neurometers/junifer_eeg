@@ -1,7 +1,6 @@
 """Base symbolic mutual information computation with caching."""
 
 import math
-from functools import lru_cache
 from itertools import permutations
 from typing import ClassVar
 
@@ -153,8 +152,12 @@ def _wsmi_python_jitted(data_sym, counts, wts_matrix, weighted=True):
 class SymbolicMutualInformationBase(metaclass=Singleton):
     """Base symbolic mutual information computation with caching.
 
-    Singleton class that computes symbolic mutual information with LRU caching
-    for efficient reuse across multiple markers.
+    Singleton class that computes symbolic mutual information with
+    internal caching for efficient reuse across multiple markers.
+
+    The caching uses (data_id, params) as key - valid while the
+    data array exists in memory. This follows Fede's pattern but
+    adapted for in-memory EEG data instead of file paths.
 
     This class handles the core SMI/WSMI algorithm including:
     - Symbolic transformation of filtered data
@@ -165,63 +168,26 @@ class SymbolicMutualInformationBase(metaclass=Singleton):
 
     _DEPENDENCIES: ClassVar = {"numpy", "numba"}
 
-    def __init__(self) -> None:
-        """Initialize SMI base."""
-        pass
+    # Internal cache: {(data_id, kernel, tau, weighted): connectivity_matrix}
+    _cache: ClassVar[dict] = {}
 
     def __del__(self) -> None:  # pragma: no cover
         """Terminate and clear cache."""
         logger.debug("Clearing cache for SMI computation")
-        SymbolicMutualInformationBase.compute.cache_clear()
+        SymbolicMutualInformationBase._cache.clear()
 
-    @staticmethod
-    @lru_cache(maxsize=None, typed=True)
     def compute(
-        data_id: int,
-        kernel: int,
-        tau: int,
-        weighted: bool,
-    ) -> tuple[np.ndarray, dict[str, int]]:
-        """Compute SMI with caching (placeholder for cached call).
-
-        This method is meant to be called after data is prepared.
-        The actual computation is done in _compute_smi.
-
-        Parameters
-        ----------
-        data_id : int
-            Unique identifier for the data (for caching).
-        kernel : int
-            Length of ordinal patterns.
-        tau : int
-            Time delay for patterns.
-        weighted : bool
-            Whether to compute weighted SMI.
-
-        Returns
-        -------
-        tuple
-            (connectivity_matrix, metadata) where:
-            - connectivity_matrix: array of shape (n_channels, n_channels, n_epochs)
-            - metadata: dict with computation parameters
-
-        """
-        # This is a placeholder - actual computation happens in _compute_smi
-        # The caching works on the data_id hash
-        logger.debug(
-            f"SMI cache: data_id={data_id}, kernel={kernel}, "
-            f"tau={tau}, weighted={weighted}"
-        )
-        return None, {"cached": False}
-
-    def _compute_smi(
         self,
         filtered_data: np.ndarray,
         kernel: int,
         tau: int,
         weighted: bool,
     ) -> np.ndarray:
-        """Compute symbolic mutual information on filtered data.
+        """Compute symbolic mutual information with caching.
+
+        This method follows Fede's pattern (like AFNIReHo) but adapted for
+        in-memory EEG data. The cache key is (data_id, params) - valid
+        while the data array exists in memory.
 
         Parameters
         ----------
@@ -241,8 +207,16 @@ class SymbolicMutualInformationBase(metaclass=Singleton):
             Values represent SMI/WSMI between channel pairs.
 
         """
+        # Build cache key from hashable parameters
+        cache_key = (id(filtered_data), kernel, tau, weighted)
+
+        # Check cache first
+        if cache_key in self._cache:
+            logger.debug(f"SMI cache hit: data_id={id(filtered_data)}")
+            return self._cache[cache_key]
+
         logger.debug(
-            f"Computing SMI: kernel={kernel}, tau={tau}, weighted={weighted}"
+            f"SMI cache miss: computing kernel={kernel}, tau={tau}, weighted={weighted}"
         )
 
         # Symbolic transformation
@@ -257,5 +231,8 @@ class SymbolicMutualInformationBase(metaclass=Singleton):
 
         # Symmetrize the upper triangular result
         result = result + result.transpose(1, 0, 2)
+
+        # Store in cache
+        self._cache[cache_key] = result
 
         return result

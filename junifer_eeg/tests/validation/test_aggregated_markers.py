@@ -24,24 +24,35 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from junifer_eeg.markers.contingent_negative_variation import (
     ContingentNegativeVariation,
 )
-from junifer_eeg.markers.kolmogorov_complexity import KolmogorovComplexity
-from junifer_eeg.markers.permutation_entropy_new.permutation_entropy_bands_rois import (
-    PermutationEntropyROIs,
+from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+    KolmogorovComplexity,
 )
-from junifer_eeg.markers.power_spectral_density import (
+from junifer_eeg.markers.permutation_entropy_new import (
+    PermutationEntropy as PermutationEntropyROIs,
+)
+from junifer_eeg.markers.power_spectral_density_new.psd_summary import (
     PowerSpectralDensitySummary,
 )
-from junifer_eeg.markers.spectral_power_new.spectral_power_bands_rois import (
-    SpectralPowerBandsROIs,
+from junifer_eeg.markers.spectral_power_new import (
+    SpectralPowerBands as SpectralPowerBandsROIs,
 )
 from junifer_eeg.markers.symbolic_mutual_information_new.symbolic_mutual_information_rois import (
     SymbolicMutualInformationROIs,
 )
-from junifer_eeg.markers.time_locked_contrast import TimeLockedContrast
-from junifer_eeg.markers.time_locked_topography import TimeLockedTopography
+from junifer_eeg.markers.time_locked_new.time_locked_contrast import (
+    TimeLockedContrast,
+)
+from junifer_eeg.markers.time_locked_new.time_locked_topography import (
+    TimeLockedTopography,
+)
 from junifer_eeg.tests.validation.update_tests_helper import (
-    convert_permutation_entropy_params,
-    convert_spectral_power_params,
+    convert_legacy_params,
+)
+from junifer_eeg.tests.validation.update_tests_helper import (
+    convert_to_permutation_entropy_rois as convert_permutation_entropy_params,
+)
+from junifer_eeg.tests.validation.update_tests_helper import (
+    convert_to_spectral_power_bands_rois as convert_spectral_power_params,
 )
 
 
@@ -91,8 +102,8 @@ def aggregate_data(
 
 def manually_aggregate_reference(
     nice_output: np.ndarray,
-    channel_aggregation_method: str | None = None,
-    trial_aggregation_method: str | None = None,
+    channel_method: str | None = None,
+    trial_method: str | None = None,
 ) -> np.ndarray:
     """Manually aggregate NICE reference data.
 
@@ -102,9 +113,9 @@ def manually_aggregate_reference(
     ----------
     nice_output : np.ndarray
         Raw NICE output with shape (n_epochs, n_channels) or (n_epochs, n_channels, n_freqs)
-    channel_aggregation_method : str, optional
+    channel_method : str, optional
         Method to aggregate across channels ('mean', 'trim_mean80', etc.)
-    trial_aggregation_method : str, optional
+    trial_method : str, optional
         Method to aggregate across trials/epochs ('mean', 'trim_mean80', etc.)
 
     Returns
@@ -113,31 +124,23 @@ def manually_aggregate_reference(
         Manually aggregated data matching expected Junifer output with proper tensor structure.
     """
     # If no aggregation, return as-is (proper tensor structure)
-    if channel_aggregation_method is None and trial_aggregation_method is None:
+    if channel_method is None and trial_method is None:
         # Return raw data: (n_epochs, n_channels)
         return nice_output
 
     # If only trial aggregation (no channel aggregation)
-    if (
-        channel_aggregation_method is None
-        and trial_aggregation_method is not None
-    ):
+    if channel_method is None and trial_method is not None:
         # Aggregate across trials (axis=0), keep all channels
         # Result shape: (n_channels,)
-        trial_aggregated = aggregate_data(
-            nice_output, trial_aggregation_method, axis=0
-        )
+        trial_aggregated = aggregate_data(nice_output, trial_method, axis=0)
         return trial_aggregated  # Return 1D array (n_channels,)
 
     # If only channel aggregation (no trial aggregation)
-    if (
-        trial_aggregation_method is None
-        and channel_aggregation_method is not None
-    ):
+    if trial_method is None and channel_method is not None:
         # Aggregate across channels (axis=1) for each trial separately
         # Result shape: (n_epochs,)
         channel_aggregated = aggregate_data(
-            nice_output, channel_aggregation_method, axis=1
+            nice_output, channel_method, axis=1
         )
         return channel_aggregated  # Return 1D array (n_epochs,)
 
@@ -146,21 +149,19 @@ def manually_aggregate_reference(
 
     # Step 1: Aggregate across channels for each trial
     # Input shape: (n_epochs, n_channels) -> Output shape: (n_epochs,)
-    channel_aggregated = aggregate_data(
-        nice_output, channel_aggregation_method, axis=1
-    )
+    channel_aggregated = aggregate_data(nice_output, channel_method, axis=1)
 
     # Step 2: Aggregate across trials
     # Input shape: (n_epochs,) -> Output shape: scalar
-    final_value = aggregate_data(channel_aggregated, trial_aggregation_method)
+    final_value = aggregate_data(channel_aggregated, trial_method)
 
     return final_value  # Return scalar
 
 
 def manually_aggregate_connectivity_reference(
     nice_output: np.ndarray,
-    channel_aggregation_method: str | None = None,
-    trial_aggregation_method: str | None = None,
+    channel_method: str | None = None,
+    trial_method: str | None = None,
 ) -> np.ndarray:
     """Manually aggregate NICE connectivity reference data.
 
@@ -171,9 +172,9 @@ def manually_aggregate_connectivity_reference(
     ----------
     nice_output : np.ndarray
         Raw NICE connectivity output with shape (n_channels, n_channels, n_epochs)
-    channel_aggregation_method : str, optional
+    channel_method : str, optional
         Method to aggregate across channels ('mean', 'trim_mean80', etc.)
-    trial_aggregation_method : str, optional
+    trial_method : str, optional
         Method to aggregate across trials/epochs ('mean', 'trim_mean80', etc.)
 
     Returns
@@ -191,31 +192,25 @@ def manually_aggregate_connectivity_reference(
 
     # Now apply the same aggregation logic as regular markers
     # If no aggregation, return as-is (proper tensor structure)
-    if channel_aggregation_method is None and trial_aggregation_method is None:
+    if channel_method is None and trial_method is None:
         # Return raw per-channel data: (n_epochs, n_channels)
         return per_channel_values
 
     # If only trial aggregation (no channel aggregation)
-    if (
-        channel_aggregation_method is None
-        and trial_aggregation_method is not None
-    ):
+    if channel_method is None and trial_method is not None:
         # Aggregate across trials (axis=0), keep all channels
         # Result shape: (n_channels,)
         trial_aggregated = aggregate_data(
-            per_channel_values, trial_aggregation_method, axis=0
+            per_channel_values, trial_method, axis=0
         )
         return trial_aggregated  # Return 1D array (n_channels,)
 
     # If only channel aggregation (no trial aggregation)
-    if (
-        trial_aggregation_method is None
-        and channel_aggregation_method is not None
-    ):
+    if trial_method is None and channel_method is not None:
         # Aggregate across channels (axis=1) for each trial separately
         # Result shape: (n_epochs,)
         channel_aggregated = aggregate_data(
-            per_channel_values, channel_aggregation_method, axis=1
+            per_channel_values, channel_method, axis=1
         )
         return channel_aggregated  # Return 1D array (n_epochs,)
 
@@ -225,12 +220,12 @@ def manually_aggregate_connectivity_reference(
     # Step 1: Aggregate across channels for each trial
     # Input shape: (n_epochs, n_channels) -> Output shape: (n_epochs,)
     channel_aggregated = aggregate_data(
-        per_channel_values, channel_aggregation_method, axis=1
+        per_channel_values, channel_method, axis=1
     )
 
     # Step 2: Aggregate across trials
     # Input shape: (n_epochs,) -> Output shape: scalar
-    final_value = aggregate_data(channel_aggregated, trial_aggregation_method)
+    final_value = aggregate_data(channel_aggregated, trial_method)
 
     return final_value  # Return scalar
 
@@ -315,21 +310,19 @@ def check_aggregated_equivalence(
         print("  ✅ Shapes match (both scalars)!")
     elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
         # One scalar, one array - shape mismatch
-        print("  ❌ SHAPE MISMATCH!")
         if np.isscalar(manually_aggregated):
-            print(f"     Expected (manual): scalar ({manually_aggregated})")
-            print(f"     Got (junifer):     {junifer_output.shape}")
+            raise AssertionError(
+                f"SHAPE MISMATCH!\nExpected (manual): scalar ({manually_aggregated})\nGot (junifer): {junifer_output.shape}"
+            )
         else:
-            print(f"     Expected (manual): {manually_aggregated.shape}")
-            print(f"     Got (junifer):     scalar ({junifer_output})")
-        return False
-    elif manually_aggregated.shape != junifer_output.shape:
-        # Both arrays but different shapes
-        print("  ❌ SHAPE MISMATCH!")
-        print(f"     Expected (manual): {manually_aggregated.shape}")
-        print(f"     Got (junifer):     {junifer_output.shape}")
-        return False
+            raise AssertionError(
+                f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): scalar ({junifer_output})"
+            )
     else:
+        # Both arrays
+        assert manually_aggregated.shape == junifer_output.shape, (
+            f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
+        )
         print("  ✅ Shapes match!")
 
     # Compare values
@@ -345,27 +338,20 @@ def check_aggregated_equivalence(
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
-    if max_rel_error < tolerance:
+    assert max_rel_error < 1.0, (
+        f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\nWorst case at index {np.unravel_index(np.argmax(abs_diff), abs_diff.shape)}\nManual value: {manually_aggregated[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6f}\nJunifer value: {junifer_output[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6f}\nAbsolute diff: {abs_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6e}\nRelative diff: {rel_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.4f}%"
+    )
+
+    if max_rel_error < 0.01:
         print(
-            f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% < {tolerance}%)"
+            f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
         )
-        return True
-    elif max_rel_error < 1.0:
+    else:
         print(
             f"\n✅ EXCELLENT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
         )
-        return True
-    else:
-        print(f"\n❌ MISMATCH: {marker_name} ({max_rel_error:.4f}% error)")
 
-        # Find worst case
-        worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
-        print(f"\nWorst case at index {worst_idx}:")
-        print(f"  Manual (NICE) value: {manually_aggregated[worst_idx]:.6e}")
-        print(f"  Junifer value:       {junifer_output[worst_idx]:.6e}")
-        print(f"  Relative diff:       {rel_diff[worst_idx] * 100:.4f}%")
-
-        return False
+    return True
 
 
 def check_connectivity_aggregated_equivalence(
@@ -428,21 +414,19 @@ def check_connectivity_aggregated_equivalence(
         print("  ✅ Shapes match (both scalars)!")
     elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
         # One scalar, one array - shape mismatch
-        print("  ❌ SHAPE MISMATCH!")
         if np.isscalar(manually_aggregated):
-            print(f"     Expected (manual): scalar ({manually_aggregated})")
-            print(f"     Got (junifer):     {junifer_output.shape}")
+            raise AssertionError(
+                f"SHAPE MISMATCH!\nExpected (manual): scalar ({manually_aggregated})\nGot (junifer): {junifer_output.shape}"
+            )
         else:
-            print(f"     Expected (manual): {manually_aggregated.shape}")
-            print(f"     Got (junifer):     scalar ({junifer_output})")
-        return False
-    elif manually_aggregated.shape != junifer_output.shape:
-        # Both arrays but different shapes
-        print("  ❌ SHAPE MISMATCH!")
-        print(f"     Expected (manual): {manually_aggregated.shape}")
-        print(f"     Got (junifer):     {junifer_output.shape}")
-        return False
+            raise AssertionError(
+                f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): scalar ({junifer_output})"
+            )
     else:
+        # Both arrays
+        assert manually_aggregated.shape == junifer_output.shape, (
+            f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
+        )
         print("  ✅ Shapes match!")
 
     # Compare values
@@ -464,38 +448,20 @@ def check_connectivity_aggregated_equivalence(
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
+    assert max_rel_error < 1.0, (
+        f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\nWorst case at index {np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else 'scalar'}\nManual (NICE) value: {manually_aggregated[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()]:.6e}\nJunifer value: {junifer_output[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()]:.6e}\nRelative diff: {rel_diff[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()] * 100:.4f}%"
+    )
+
     if max_rel_error < tolerance:
         print(
             f"\n✅ PERFECT MATCH: {marker_name} ({max_rel_error:.4f}% < {tolerance}%)"
         )
-        return True
-    elif max_rel_error < 1.0:
+    else:
         print(
             f"\n✅ EXCELLENT MATCH: {marker_name} ({max_rel_error:.4f}% error)"
         )
-        return True
-    else:
-        print(f"\n❌ MISMATCH: {marker_name} ({max_rel_error:.4f}% error)")
 
-        # Find worst case
-        if not np.isscalar(rel_diff):
-            worst_idx = np.unravel_index(np.argmax(rel_diff), rel_diff.shape)
-            print(f"\nWorst case at index {worst_idx}:")
-            if np.isscalar(manually_aggregated):
-                print(f"  Manual (NICE) value: {manually_aggregated:.6e}")
-            else:
-                print(
-                    f"  Manual (NICE) value: {manually_aggregated[worst_idx]:.6e}"
-                )
-            if np.isscalar(junifer_output):
-                print(f"  Junifer value:       {junifer_output:.6e}")
-            else:
-                print(
-                    f"  Junifer value:       {junifer_output[worst_idx]:.6e}"
-                )
-            print(f"  Relative diff:       {rel_diff[worst_idx] * 100:.4f}%")
-
-        return False
+    return True
 
 
 class TestSpectralPowerDeltaAggregated:
@@ -606,11 +572,13 @@ class TestSpectralPowerDeltaAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -767,11 +735,13 @@ class TestCNVAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -931,11 +901,13 @@ class TestKolmogorovComplexityAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -1092,11 +1064,13 @@ class TestTimeLockedTopographyP1Aggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -1344,11 +1318,13 @@ class TestPermutationEntropyAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -1519,12 +1495,14 @@ class TestSymbolicMutualInformationAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Remove deprecated parameters from old marker
         junifer_params.pop("average", None)
-        junifer_params.pop("channel_aggregation_method", None)
-        junifer_params.pop("trial_aggregation_method", None)
+        junifer_params.pop("channel_method", None)
+        junifer_params.pop("trial_method", None)
         junifer_params.pop("connectivity_aggregation_method", None)
         junifer_params.pop("rois", None)  # Not in new marker
 
@@ -1697,11 +1675,13 @@ class TestPowerSpectralDensitySummaryAggregated:
             rois = epochs.ch_names[:16]  # First 16 out of 32 channels
 
         # Step 2: Get base Junifer parameters and add aggregation
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         # Add aggregation parameters
-        junifer_params["channel_aggregation_method"] = channel_agg
-        junifer_params["trial_aggregation_method"] = trial_agg
+        junifer_params["channel_method"] = channel_agg
+        junifer_params["trial_method"] = trial_agg
         junifer_params["rois"] = rois
 
         print("\nJunifer parameters (WITH aggregation):")
@@ -1804,7 +1784,9 @@ class TestTimeLockedContrastAggregated:
         )
 
         # Step 2: Create Junifer marker with reference parameters
-        junifer_params = self.reference_data["junifer_params"].copy()
+        junifer_params = convert_legacy_params(
+            self.reference_data["junifer_params"]
+        )
 
         print("\nJunifer parameters:")
         for key, value in junifer_params.items():

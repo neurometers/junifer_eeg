@@ -32,7 +32,7 @@ markers:
   # ========================================
   
   # Single marker computes all bands with aggregation
-  - kind: SpectralPowerBandsROIs
+  - kind: SpectralPowerBands
     name: spectral_all_bands
     bands:
       delta: [1.0, 4.0]
@@ -58,7 +58,7 @@ markers:
   # ========================================
   
   # Single marker computes all bands with aggregation
-  - kind: PermutationEntropyROIs
+  - kind: PermutationEntropy
     name: pe_all_bands
     bands:
       delta: [1.0, 4.0]

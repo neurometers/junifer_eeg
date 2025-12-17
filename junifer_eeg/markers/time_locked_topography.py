@@ -10,7 +10,7 @@ from typing import Any, ClassVar, List, Union
 
 from junifer.api.decorators import register_marker
 
-from ._time_locked_base import TimeLockedBase
+from .time_locked_new._time_locked_base import TimeLockedBase
 from .utils import aggregate_data
 
 
@@ -23,8 +23,8 @@ class TimeLockedTopography(TimeLockedBase):
 
     Follows next_icm aggregation pattern:
     1. Average across time points (tmin to tmax)
-    2. Aggregate across electrodes (using channel_aggregation_method)
-    3. Aggregate across trials (using trial_aggregation_method)
+    2. Aggregate across electrodes (using channel_method)
+    3. Aggregate across trials (using trial_method)
 
     Refactored to use shared base class helpers for ROI filtering and data preparation.
     """
@@ -41,8 +41,8 @@ class TimeLockedTopography(TimeLockedBase):
         baseline: tuple[float, float] | None = None,
         reference: str | list[str] | None = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "standard",
         on: str | None = None,
         name: str | None = None,
@@ -76,10 +76,10 @@ class TimeLockedTopography(TimeLockedBase):
             - ['scalp'] - Semantic ROI (expands to all scalp channels)
 
             If None, uses all channels.
-        channel_aggregation_method : str or None, optional
+        channel_method : str or None, optional
             Methods to aggregate across channels: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str or None, optional
+        trial_method : str or None, optional
             Methods to aggregate across epochs: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
         equipment : str, default="standard"
@@ -94,8 +94,8 @@ class TimeLockedTopography(TimeLockedBase):
         self.baseline = baseline
         self.reference = reference
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
         super().__init__(on=on, name=name)
 
@@ -113,17 +113,11 @@ class TimeLockedTopography(TimeLockedBase):
         - Both aggregations: time-averaged → fully aggregated → scalar → scalar_table
         """
         # No aggregation → 3D tensor (epochs, channels, times) → use timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
@@ -263,10 +257,7 @@ class TimeLockedTopography(TimeLockedBase):
         n_epochs, n_channels, n_times = data.shape
 
         # Check if we should return raw temporal data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel, per-time results (matching NICE)
             # Shape: (n_epochs, n_channels, n_times)
             return {
@@ -284,21 +275,21 @@ class TimeLockedTopography(TimeLockedBase):
         result_data = time_averaged
 
         # Step 1: Channel aggregation (aggregate across axis=1)
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             result_data = aggregate_data(
                 result_data,
-                self.channel_aggregation_method,
+                self.channel_method,
                 axis=1,
             )
             # After channel agg: (n_epochs,)
 
         # Step 2: Trial aggregation
-        if self.trial_aggregation_method is not None:
+        if self.trial_method is not None:
             if result_data.ndim == 1:
                 # Already reduced by channel agg: (n_epochs,)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=None,
                 )
                 # Result: scalar
@@ -306,22 +297,19 @@ class TimeLockedTopography(TimeLockedBase):
                 # No channel agg yet: (n_epochs, n_channels)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=0,
                 )
                 # Result: (n_channels,)
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # result_data shape: (n_trials,) after channel aggregation
             n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{ch}" for ch in ch_names]
         else:
             col_names = [f"{ch}" for ch in ch_names]

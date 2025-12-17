@@ -10,7 +10,6 @@ from typing import Any, ClassVar, List, Union
 
 from junifer.api.decorators import register_marker
 
-from ..utils import aggregate_data
 from ._time_locked_base import TimeLockedBase
 
 
@@ -23,8 +22,8 @@ class TimeLockedTopography(TimeLockedBase):
 
     Follows next_icm aggregation pattern:
     1. Average across time points (tmin to tmax)
-    2. Aggregate across electrodes (using channel_aggregation_method)
-    3. Aggregate across trials (using trial_aggregation_method)
+    2. Aggregate across electrodes (using channel_method)
+    3. Aggregate across trials (using trial_method)
 
     Refactored to use shared base class helpers for ROI filtering and data preparation.
     """
@@ -41,8 +40,8 @@ class TimeLockedTopography(TimeLockedBase):
         baseline: tuple[float, float] | None = None,
         reference: str | list[str] | None = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "standard",
         on: str | None = None,
         name: str | None = None,
@@ -76,10 +75,10 @@ class TimeLockedTopography(TimeLockedBase):
             - ['scalp'] - Semantic ROI (expands to all scalp channels)
 
             If None, uses all channels.
-        channel_aggregation_method : str or None, optional
+        channel_method : str or None, optional
             Methods to aggregate across channels: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str or None, optional
+        trial_method : str or None, optional
             Methods to aggregate across epochs: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
         equipment : str, default="standard"
@@ -89,15 +88,18 @@ class TimeLockedTopography(TimeLockedBase):
         name : str, optional
             Name of the marker.
         """
-        self.tmin = tmin
-        self.tmax = tmax
         self.baseline = baseline
         self.reference = reference
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
-        self.equipment = equipment
-        super().__init__(on=on, name=name)
+        self.channel_method = channel_method
+        self.trial_method = trial_method
+        super().__init__(
+            tmin=tmin,
+            tmax=tmax,
+            equipment=equipment,
+            on=on,
+            name=name,
+        )
 
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type based on aggregation settings.
@@ -113,90 +115,15 @@ class TimeLockedTopography(TimeLockedBase):
         - Both aggregations: time-averaged → fully aggregated → scalar → scalar_table
         """
         # No aggregation → 3D tensor (epochs, channels, times) → use timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
         return "vector"
-
-    def _apply_reference(self, epochs):
-        """Apply EEG re-referencing using flexible channel specification.
-
-        Parameters
-        ----------
-        epochs : mne.Epochs
-            Epochs to re-reference
-
-        Returns
-        -------
-        epochs : mne.Epochs
-            Re-referenced epochs
-
-        Notes
-        -----
-        Reference can be specified as:
-        - 'average': Average reference across all channels
-        - String channel name: Single channel (e.g., 'Cz', 'TP9')
-        - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
-        - Reference channels are resolved from actual data, like ROIs
-        """
-        reference = self.reference
-        ch_names = epochs.ch_names
-
-        # Handle special case: 'average' reference
-        if reference == "average":
-            epochs_reref = epochs.copy().set_eeg_reference(
-                ref_channels="average"
-            )
-            return epochs_reref
-
-        # Handle single string channel name
-        if isinstance(reference, str):
-            if reference in ch_names:
-                # Valid channel name
-                epochs_reref = epochs.copy().set_eeg_reference(
-                    ref_channels=reference
-                )
-                return epochs_reref
-            else:
-                raise ValueError(
-                    f"Reference channel '{reference}' not found in data. "
-                    f"Available channels: {ch_names[:20]}... "
-                    f"(showing first 20 of {len(ch_names)})"
-                )
-
-        # Handle list of channel names
-        if isinstance(reference, list):
-            # Validate all channels exist in data
-            invalid_channels = [ch for ch in reference if ch not in ch_names]
-            if invalid_channels:
-                raise ValueError(
-                    f"Reference channel(s) {invalid_channels} not found in data. "
-                    f"Available channels: {ch_names[:20]}... "
-                    f"(showing first 20 of {len(ch_names)})"
-                )
-
-            # All channels valid
-            epochs_reref = epochs.copy().set_eeg_reference(
-                ref_channels=reference
-            )
-            return epochs_reref
-
-        # Should not reach here, but handle unexpected types
-        raise TypeError(
-            f"Reference must be 'average', string channel name, or list of channel names. "
-            f"Got: {type(reference)}"
-        )
 
     def compute(
         self,
@@ -243,7 +170,7 @@ class TimeLockedTopography(TimeLockedBase):
 
         # Apply re-referencing FIRST (if specified)
         if self.reference is not None:
-            epochs = self._apply_reference(epochs)
+            epochs = self._apply_reference(epochs, self.reference)
 
         # Apply baseline correction SECOND (before cropping)
         # This ensures baseline period is available for correction
@@ -263,10 +190,7 @@ class TimeLockedTopography(TimeLockedBase):
         n_epochs, n_channels, n_times = data.shape
 
         # Check if we should return raw temporal data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel, per-time results (matching NICE)
             # Shape: (n_epochs, n_channels, n_times)
             return {
@@ -280,48 +204,21 @@ class TimeLockedTopography(TimeLockedBase):
             data
         )  # Shape: (n_epochs, n_channels)
 
-        # Apply aggregation
-        result_data = time_averaged
+        # Apply aggregation using common helper
+        from ..utils import apply_channel_trial_aggregation
 
-        # Step 1: Channel aggregation (aggregate across axis=1)
-        if self.channel_aggregation_method is not None:
-            result_data = aggregate_data(
-                result_data,
-                self.channel_aggregation_method,
-                axis=1,
-            )
-            # After channel agg: (n_epochs,)
-
-        # Step 2: Trial aggregation
-        if self.trial_aggregation_method is not None:
-            if result_data.ndim == 1:
-                # Already reduced by channel agg: (n_epochs,)
-                result_data = aggregate_data(
-                    result_data,
-                    self.trial_aggregation_method,
-                    axis=None,
-                )
-                # Result: scalar
-            else:
-                # No channel agg yet: (n_epochs, n_channels)
-                result_data = aggregate_data(
-                    result_data,
-                    self.trial_aggregation_method,
-                    axis=0,
-                )
-                # Result: (n_channels,)
+        result_data = apply_channel_trial_aggregation(
+            time_averaged, self.channel_method, self.trial_method
+        )
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # result_data shape: (n_trials,) after channel aggregation
             n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{ch}" for ch in ch_names]
         else:
             col_names = [f"{ch}" for ch in ch_names]

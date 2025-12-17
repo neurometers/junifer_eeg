@@ -1,6 +1,16 @@
-"""Permutation Entropy marker for junifer_eeg."""
+"""Permutation Entropy marker for junifer_eeg.
+
+.. deprecated::
+    This module is deprecated. Use the refactored markers instead:
+    - :class:`PermutationEntropy` from permutation_entropy_new
+    - :class:`PermutationEntropyROIs` for ROI aggregation
+
+    Import from permutation_entropy_new:
+    ``from junifer_eeg.markers.permutation_entropy_new import PermutationEntropy``
+"""
 
 import math
+import warnings
 from typing import Any, ClassVar, Union
 
 import numpy as np
@@ -8,6 +18,13 @@ from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
 from .utils import aggregate_data, get_data_for_rois
+
+warnings.warn(
+    "This PermutationEntropy module is deprecated. Use PermutationEntropy or "
+    "PermutationEntropyROIs from permutation_entropy_new instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 # Try to import numba for acceleration
 try:
@@ -197,8 +214,8 @@ class PermutationEntropy(BaseMarker):
         fmax: float | None = None,
         filter_order: int = 6,
         rois: Union[list[str], list[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -235,10 +252,10 @@ class PermutationEntropy(BaseMarker):
             - ['scalp'] - Semantic ROI (expands to all scalp channels)
 
             If None, uses all channels.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Aggregation method for ROIs/channels: 'mean', 'std', 'median',
             'min', 'max', 'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Aggregation method for trials/epochs: 'mean', 'std', 'median',
             'min', 'max', 'trim_mean80', 'trim_mean90', etc.
         equipment : str, default='egi256'
@@ -257,8 +274,8 @@ class PermutationEntropy(BaseMarker):
         self.fmax = fmax
         self.filter_order = filter_order
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
 
         # Cache factorials for Lehmer code ranking
@@ -278,17 +295,11 @@ class PermutationEntropy(BaseMarker):
         - 'scalar_table': scalar value (both aggregations applied)
         """
         # No aggregation → 2D tensor (epochs, channels) → use timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
@@ -473,10 +484,7 @@ class PermutationEntropy(BaseMarker):
         # pe_values_expanded shape: (n_epochs, n_channels)
 
         # Check if we should return raw data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel data
             col_names = [f"{ch}" for ch in ch_names]
             return {
@@ -491,22 +499,22 @@ class PermutationEntropy(BaseMarker):
         # result_data shape: (n_epochs, n_channels)
 
         # Step 1: Channel aggregation (aggregate across axis=1)
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             result_data = aggregate_data(
                 result_data,
-                self.channel_aggregation_method,
+                self.channel_method,
                 axis=1,
             )
             # After channel agg: (n_epochs,)
 
         # Step 2: Trial aggregation
-        if self.trial_aggregation_method is not None:
+        if self.trial_method is not None:
             # Aggregate across epochs (axis=0 if 2D, or entire array if 1D)
             if result_data.ndim == 1:
                 # Already reduced by channel agg: (n_epochs,)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=None,  # Aggregate entire array
                 )
                 # Result: scalar
@@ -514,7 +522,7 @@ class PermutationEntropy(BaseMarker):
                 # No channel agg yet: (n_epochs, n_channels)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=0,
                 )
                 # Result: (n_channels,)
@@ -525,18 +533,15 @@ class PermutationEntropy(BaseMarker):
         # 2D array: keep as 2D (n_trials, n_channels)
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             # Both aggregations: single scalar
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # Channel aggregation only: one value per trial
             # result_data shape: (n_trials,)
             n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             # Trial aggregation only: one value per channel
             col_names = [f"{ch}" for ch in ch_names]
         else:

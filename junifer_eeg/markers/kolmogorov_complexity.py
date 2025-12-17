@@ -34,8 +34,8 @@ class KolmogorovComplexity(BaseMarker):
         tmax: float | None = None,
         nbins: int = 16,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -63,10 +63,10 @@ class KolmogorovComplexity(BaseMarker):
             - [0, 'E5', 10, 'frontal'] - Mix of types
 
             If None, uses all channels.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Methods to aggregate across ROI electrodes/channels: 'mean', 'std',
             'median', 'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Methods to aggregate across trials/epochs: 'mean', 'std',
             'median', 'trim_mean80', 'trim_mean90', etc.
         equipment : str, optional
@@ -80,8 +80,8 @@ class KolmogorovComplexity(BaseMarker):
         self.tmax = tmax
         self.nbins = nbins
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
         super().__init__(on=on, name=name)
 
@@ -94,17 +94,11 @@ class KolmogorovComplexity(BaseMarker):
         - 'scalar_table': scalar value (both aggregations applied)
         """
         # No aggregation → 2D tensor (epochs, channels) → use timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
@@ -198,10 +192,7 @@ class KolmogorovComplexity(BaseMarker):
         # k_values shape: (n_epochs, n_channels)
 
         # Check if we should return raw data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel data
             col_names = [f"{ch}" for ch in ch_names]
             return {
@@ -215,21 +206,21 @@ class KolmogorovComplexity(BaseMarker):
         result_data = k_values
 
         # Step 1: Channel aggregation (aggregate across axis=1)
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             result_data = aggregate_data(
                 result_data,
-                self.channel_aggregation_method,
+                self.channel_method,
                 axis=1,
             )
             # After channel agg: (n_epochs,)
 
         # Step 2: Trial aggregation
-        if self.trial_aggregation_method is not None:
+        if self.trial_method is not None:
             if result_data.ndim == 1:
                 # Already reduced by channel agg: (n_epochs,)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=None,
                 )
                 # Result: scalar
@@ -237,7 +228,7 @@ class KolmogorovComplexity(BaseMarker):
                 # No channel agg yet: (n_epochs, n_channels)
                 result_data = aggregate_data(
                     result_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=0,
                 )
                 # Result: (n_channels,)
@@ -248,16 +239,13 @@ class KolmogorovComplexity(BaseMarker):
         # 2D array: keep as 2D (n_trials, n_channels)
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # result_data shape: (n_trials,) after channel aggregation
             n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{ch}" for ch in ch_names]
         else:
             col_names = [f"{ch}" for ch in ch_names]

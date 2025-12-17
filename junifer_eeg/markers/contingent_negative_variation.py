@@ -33,8 +33,8 @@ class ContingentNegativeVariation(BaseMarker):
         tmin: float | None = None,
         tmax: float | None = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -58,10 +58,10 @@ class ContingentNegativeVariation(BaseMarker):
             - ['cnv_roi'] - Semantic task-specific ROI
 
             **NOTE:** NICE uses task-specific 'cnv_roi', NOT 'scalp' ROI.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Methods to aggregate across channels: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Methods to aggregate across epochs: 'mean', 'std', 'median',
             'trim_mean80', 'trim_mean90', etc.
         equipment : str, default="egi256"
@@ -74,8 +74,8 @@ class ContingentNegativeVariation(BaseMarker):
         self.tmin = tmin
         self.tmax = tmax
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
         super().__init__(on=on, name=name)
 
@@ -87,16 +87,10 @@ class ContingentNegativeVariation(BaseMarker):
         - 'vector': 1D array (one aggregation applied)
         - 'scalar_table': scalar value (both aggregations applied)
         """
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         return "vector"
@@ -243,32 +237,29 @@ class ContingentNegativeVariation(BaseMarker):
         result_data = data
 
         # Channel aggregation
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             result_data = aggregate_data(
-                result_data, self.channel_aggregation_method, axis=1
+                result_data, self.channel_method, axis=1
             )
 
         # Trial aggregation
-        if self.trial_aggregation_method is not None:
+        if self.trial_method is not None:
             if result_data.ndim == 1:
                 result_data = aggregate_data(
-                    result_data, self.trial_aggregation_method, axis=None
+                    result_data, self.trial_method, axis=None
                 )
             else:
                 result_data = aggregate_data(
-                    result_data, self.trial_aggregation_method, axis=0
+                    result_data, self.trial_method, axis=0
                 )
 
         # Generate column names
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = [f"{prefix}_all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
             col_names = [f"{prefix}_trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{prefix}_{ch}" for ch in ch_names]
         else:
             col_names = [f"{prefix}_{ch}" for ch in ch_names]

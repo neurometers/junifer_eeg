@@ -1,8 +1,11 @@
-"""Time-locked markers refactored.
+"""Time-locked markers with refactored architecture."""
 
-This package contains the refactored time-locked markers using shared base class helpers.
-"""
-
+from ._time_locked_base import TimeLockedBase
+from .time_locked_contrast import TimeLockedContrast
 from .time_locked_topography import TimeLockedTopography
 
-__all__ = ["TimeLockedTopography"]
+__all__ = [
+    "TimeLockedBase",
+    "TimeLockedContrast",
+    "TimeLockedTopography",
+]

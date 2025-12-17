@@ -1,6 +1,6 @@
 """Permutation entropy at multiple temporal scales."""
 
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
@@ -15,11 +15,10 @@ __all__ = ["PermutationEntropy"]
 
 @register_marker
 class PermutationEntropy(EEGEpochsMarker):
-    """Permutation entropy at multiple temporal scales.
+    """Permutation entropy at multiple temporal scales with optional aggregation.
 
     Computes permutation entropy at different temporal scales (tau values).
     Uses adaptive lowpass filtering: filter_freq = sfreq / (kernel * tau).
-    Does not perform channel or trial aggregation - use PermutationEntropyROIs for that.
 
     Parameters
     ----------
@@ -32,6 +31,12 @@ class PermutationEntropy(EEGEpochsMarker):
         - int: channel index (e.g., 0, 1, 223)
         - str: channel name (e.g., 'E1', 'E224') OR semantic ROI (e.g., 'scalp')
         If None, uses all channels.
+    channel_method : str, optional
+        Method for channel aggregation: 'mean', 'median', 'std', 'trim_mean80',
+        'trim_mean90', etc. If None, no channel aggregation.
+    trial_method : str, optional
+        Method for trial aggregation: 'mean', 'median', 'std', 'trim_mean80',
+        'trim_mean90', etc. If None, no trial aggregation.
     kernel : int, default=3
         Length of ordinal patterns.
     tmin : float, optional
@@ -55,7 +60,9 @@ class PermutationEntropy(EEGEpochsMarker):
     def __init__(
         self,
         taus: int | list[int] = 8,
-        rois: Optional[list[str] | list[int]] = None,
+        rois: Union[list[str], list[int], None] = None,
+        channel_method: Optional[str] = None,
+        trial_method: Optional[str] = None,
         kernel: int = 3,
         tmin: Optional[float] = None,
         tmax: Optional[float] = None,
@@ -71,6 +78,8 @@ class PermutationEntropy(EEGEpochsMarker):
         # Convert single tau to list
         self.taus = [taus] if isinstance(taus, int) else list(taus)
         self.rois = rois
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.kernel = kernel
 
     def compute(
@@ -105,64 +114,17 @@ class PermutationEntropy(EEGEpochsMarker):
         # Filter to EEG channels only
         data_obj, _, _ = filter_to_eeg_channels(data_obj)
         ch_names = data_obj.ch_names
-        sfreq = data_obj.info["sfreq"]
 
         # Apply ROI filtering BEFORE computation if specified
         if self.rois is not None:
-            import mne
+            from ..utils import apply_roi_filtering_to_epochs
 
-            from ..utils import get_data_for_rois
-
-            # Get equipment from data metadata
-            description = data_obj.info.get("description") or ""
-            if "equipment=" in description:
-                equipment = description.replace("equipment=", "")
-            else:
-                equipment = self.equipment
-
-            # Get data as (n_epochs, n_channels, n_times)
-            data_array = data_obj.get_data()
-
-            # Transpose to (n_channels, n_epochs, n_times)
-            data_transposed = data_array.transpose(1, 0, 2)
-
-            # Get ROI-filtered data
-            roi_data_dict = get_data_for_rois(
-                data_transposed,
-                ch_names,
+            data_obj, ch_names = apply_roi_filtering_to_epochs(
+                data_obj,
                 self.rois,
-                equipment,
+                self.equipment,
+                marker_name="PermutationEntropy",
             )
-
-            # Extract the filtered data
-            if "selected_channels" in roi_data_dict:
-                data_filtered = roi_data_dict["selected_channels"]
-                # Transpose back to (n_epochs, n_channels, n_times)
-                data_filtered = data_filtered.transpose(1, 0, 2)
-
-                # Create minimal info for filtered channels
-                n_channels_filtered = data_filtered.shape[1]
-                # Validate that ROI count matches filtered data shape
-                if len(self.rois) != n_channels_filtered:
-                    raise ValueError(
-                        f"ROI count mismatch: {len(self.rois)} != {n_channels_filtered} in PermutationEntropy"
-                    )
-                # Use actual ROI channel names instead of default 'ch_0' names to preserve channel identity
-                info = mne.create_info(
-                    ch_names=self.rois,
-                    sfreq=sfreq,
-                    ch_types="eeg",
-                )
-
-                # Create new Epochs object with filtered channels
-                data_obj = mne.EpochsArray(
-                    data_filtered,
-                    info,
-                    events=data_obj.events,
-                    tmin=data_obj.tmin,
-                    verbose=False,
-                )
-                ch_names = data_obj.ch_names
 
         # Compute PE using base (with caching potential)
         pe_base = PermutationEntropyBase()
@@ -173,7 +135,7 @@ class PermutationEntropy(EEGEpochsMarker):
         for tau in self.taus:
             logger.debug(f"Computing PE for tau={tau}")
 
-            pe_values = pe_base._compute_pe(
+            pe_values = pe_base.compute(
                 data_obj,
                 self.kernel,
                 tau,
@@ -186,27 +148,32 @@ class PermutationEntropy(EEGEpochsMarker):
 
             all_tau_pe[f"tau_{tau}"] = pe_values
 
-        # Format output
+        # Format output - unify single and multiple taus then apply aggregation
         if len(all_tau_pe) == 1:
-            # Single tau - return 2D array (n_epochs, n_channels)
+            # Single tau - shape (n_epochs, n_channels)
             tau_name = next(iter(all_tau_pe.keys()))
-            return {
-                "permutationentropy": {
-                    "data": all_tau_pe[tau_name],
-                    "col_names": ch_names,
-                }
-            }
+            output_data = all_tau_pe[tau_name]
+        else:
+            # Multiple taus - stack into tensor (n_taus, n_epochs, n_channels)
+            tau_order = [f"tau_{tau}" for tau in self.taus]
+            output_data = np.stack(
+                [all_tau_pe[tau_name] for tau_name in tau_order],
+                axis=0,
+            )
 
-        # Multiple taus - stack into 3D tensor (n_taus, n_epochs, n_channels)
-        tau_order = [f"tau_{tau}" for tau in self.taus]
-        tensor = np.stack(
-            [all_tau_pe[tau_name] for tau_name in tau_order],
-            axis=0,
+        output_ch_names = ch_names
+
+        # Apply aggregation using common helper
+        from ..utils import apply_channel_trial_aggregation
+
+        output_data = apply_channel_trial_aggregation(
+            output_data, self.channel_method, self.trial_method
         )
+        if self.channel_method is not None:
+            output_ch_names = None
 
-        return {
-            "permutationentropy": {
-                "data": tensor,
-                "col_names": ch_names,
-            }
-        }
+        result = {"permutationentropy": {"data": output_data}}
+        if output_ch_names is not None:
+            result["permutationentropy"]["col_names"] = output_ch_names
+
+        return result

@@ -2,10 +2,8 @@
 
 from ._spectral_power_base import SpectralPowerBase
 from .spectral_power_bands import SpectralPowerBands
-from .spectral_power_bands_rois import SpectralPowerBandsROIs
 
 __all__ = [
     "SpectralPowerBands",
-    "SpectralPowerBandsROIs",
     "SpectralPowerBase",
 ]

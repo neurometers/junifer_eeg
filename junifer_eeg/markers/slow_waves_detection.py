@@ -28,7 +28,7 @@ class SlowWavesDetection(BaseMarker):
         freq_threshold: float = 7.0,
         artifact_threshold: float = 75.0,
         reference_channels: tuple = ("TP7", "TP8"),
-        channel_aggregation_method: Optional[str] = None,
+        channel_method: Optional[str] = None,
         epoch_aggregation_method: Optional[str] = None,
         on: str | list[str] = "EEG",
         name: str = "slowwaves",
@@ -47,7 +47,7 @@ class SlowWavesDetection(BaseMarker):
             Positive peak amplitude threshold for artifact removal (µV).
         reference_channels : tuple, default=("TP7", "TP8")
             Reference channel names for re-referencing.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Method to aggregate across channels: 'mean', 'std', 'median', etc.
             If None, keeps per-channel events.
         epoch_aggregation_method : str, optional
@@ -63,7 +63,7 @@ class SlowWavesDetection(BaseMarker):
         self.freq_threshold = freq_threshold
         self.artifact_threshold = artifact_threshold
         self.reference_channels = reference_channels
-        self.channel_aggregation_method = channel_aggregation_method
+        self.channel_method = channel_method
         self.epoch_aggregation_method = epoch_aggregation_method
 
         super().__init__(on=on, name=name)
@@ -216,7 +216,7 @@ class SlowWavesDetection(BaseMarker):
 
         # Apply aggregation if specified (following SpectralPower pattern)
         if (
-            self.channel_aggregation_method is not None
+            self.channel_method is not None
             or self.epoch_aggregation_method is not None
         ):
             tensor = self._apply_aggregation(tensor)
@@ -226,7 +226,7 @@ class SlowWavesDetection(BaseMarker):
 
         # Include col_names only for non-aggregated data (like SpectralPower)
         if (
-            self.channel_aggregation_method is None
+            self.channel_method is None
             and self.epoch_aggregation_method is None
         ):
             result["slowwavesdetection"]["col_names"] = ch_names
@@ -292,9 +292,9 @@ class SlowWavesDetection(BaseMarker):
         result_data = tensor
 
         # Channel aggregation (axis=2 for channels)
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             result_data = aggregate_data(
-                result_data, self.channel_aggregation_method, axis=2
+                result_data, self.channel_method, axis=2
             )
 
         # Epoch aggregation (axis=1 for epochs)
@@ -320,14 +320,14 @@ class SlowWavesDetection(BaseMarker):
         """
         # No aggregation → 3D tensor (features, epochs, channels) → timeseries
         if (
-            self.channel_aggregation_method is None
+            self.channel_method is None
             and self.epoch_aggregation_method is None
         ):
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
         if (
-            self.channel_aggregation_method is not None
+            self.channel_method is not None
             and self.epoch_aggregation_method is not None
         ):
             return "scalar_table"

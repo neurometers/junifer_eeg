@@ -260,6 +260,176 @@ def aggregate_data(
     raise ValueError(f"Unknown aggregation method: {method}")
 
 
+def apply_channel_trial_aggregation(
+    data: np.ndarray,
+    channel_method: str | None,
+    trial_method: str | None,
+) -> np.ndarray:
+    """Apply channel and trial aggregation to EEG marker data.
+
+    This is a unified helper to reduce code duplication across markers that
+    need to aggregate across channels and/or trials/epochs.
+
+    Handles data shapes:
+    - 2D: (n_epochs, n_channels) - simple epoch/channel data
+    - 3D: (n_bands, n_epochs, n_channels) - multi-band/tau data
+
+    Parameters
+    ----------
+    data : np.ndarray
+        Input data with shape (n_epochs, n_channels) or (n_bands, n_epochs, n_channels)
+    channel_method : str or None
+        Method to aggregate across channels ('mean', 'std', 'median', etc.)
+        If None, no channel aggregation is applied.
+    trial_method : str or None
+        Method to aggregate across trials/epochs ('mean', 'std', 'median', etc.)
+        If None, no trial aggregation is applied.
+
+    Returns
+    -------
+    np.ndarray
+        Aggregated data. Shape depends on aggregation applied:
+        - No aggregation: same as input
+        - Channel only: (n_epochs,) or (n_bands, n_epochs)
+        - Trial only: (n_channels,) or (n_bands, n_channels)
+        - Both: scalar or (n_bands,)
+
+    Notes
+    -----
+    This helper implements the common aggregation pattern used by:
+    - SpectralPowerBands
+    - PermutationEntropy
+    - TimeLockedTopography
+    - KolmogorovComplexity
+    - PowerSpectralDensitySummary
+    - EEGROIAggregation
+    """
+    result_data = data
+
+    # Step 1: Channel aggregation (always last axis)
+    if channel_method is not None:
+        if result_data.ndim == 3:
+            # (n_bands, n_epochs, n_channels) -> (n_bands, n_epochs)
+            result_data = aggregate_data(result_data, channel_method, axis=2)
+        elif result_data.ndim == 2:
+            # (n_epochs, n_channels) -> (n_epochs,)
+            result_data = aggregate_data(result_data, channel_method, axis=1)
+
+    # Step 2: Trial aggregation (middle axis for 3D, first for 2D)
+    if trial_method is not None:
+        if result_data.ndim == 3:
+            # (n_bands, n_epochs, n_channels) -> (n_bands, n_channels)
+            result_data = aggregate_data(result_data, trial_method, axis=1)
+        elif result_data.ndim == 2:
+            if channel_method is None:
+                # (n_epochs, n_channels) -> (n_channels,)
+                result_data = aggregate_data(result_data, trial_method, axis=0)
+            else:
+                # (n_bands, n_epochs) -> (n_bands,) [after channel agg on 3D]
+                result_data = aggregate_data(result_data, trial_method, axis=1)
+        elif result_data.ndim == 1:
+            # (n_epochs,) -> scalar
+            result_data = aggregate_data(result_data, trial_method, axis=None)
+
+    return result_data
+
+
+def apply_roi_filtering_to_epochs(
+    epochs,
+    rois: List[str | int],
+    equipment: str = "egi256",
+    marker_name: str = "Marker",
+):
+    """Apply ROI filtering to an MNE Epochs object.
+
+    This is a common utility to reduce code duplication across markers that
+    need to filter epochs by ROI before computation.
+
+    Parameters
+    ----------
+    epochs : mne.Epochs
+        Input epochs object
+    rois : list of str or int
+        ROI specification for channel filtering
+    equipment : str, default="egi256"
+        Equipment type for electrode mapping
+    marker_name : str, default="Marker"
+        Name of the calling marker for error messages
+
+    Returns
+    -------
+    epochs_filtered : mne.Epochs
+        New Epochs object with only the ROI-filtered channels
+    ch_names_filtered : list of str
+        Updated channel names after filtering
+
+    Notes
+    -----
+    This helper implements the common transpose/filter/transpose-back pattern
+    used by SpectralPowerBands, PermutationEntropy, SymbolicMutualInformation,
+    and other markers that need ROI filtering before computation.
+    """
+    import mne
+
+    ch_names = list(epochs.ch_names)
+    sfreq = epochs.info["sfreq"]
+
+    # Get equipment from data metadata or fallback
+    description = epochs.info.get("description") or ""
+    if "equipment=" in description:
+        equipment = description.replace("equipment=", "")
+
+    # Get data as (n_epochs, n_channels, n_times)
+    data_array = epochs.get_data()
+
+    # Transpose to (n_channels, n_epochs, n_times) for ROI filtering
+    data_transposed = data_array.transpose(1, 0, 2)
+
+    # Get ROI-filtered data
+    roi_data_dict = get_data_for_rois(
+        data_transposed,
+        ch_names,
+        rois,
+        equipment,
+    )
+
+    # Extract the filtered data
+    if "selected_channels" not in roi_data_dict:
+        raise ValueError(f"ROI filtering failed for rois: {rois}")
+
+    data_filtered = roi_data_dict["selected_channels"]
+    # Transpose back to (n_epochs, n_channels, n_times)
+    data_filtered = data_filtered.transpose(1, 0, 2)
+
+    # Validate that ROI count matches filtered data shape
+    n_channels_filtered = data_filtered.shape[1]
+    if len(rois) != n_channels_filtered:
+        raise ValueError(
+            f"ROI count mismatch: {len(rois)} != {n_channels_filtered} in {marker_name}"
+        )
+
+    # Create minimal info for filtered channels
+    # Use actual ROI channel names to preserve channel identity
+    info = mne.create_info(
+        ch_names=list(rois)
+        if not all(isinstance(r, str) for r in rois)
+        else rois,
+        sfreq=sfreq,
+        ch_types="eeg",
+    )
+
+    # Create new Epochs object with filtered channels
+    epochs_filtered = mne.EpochsArray(
+        data_filtered,
+        info,
+        events=epochs.events,
+        tmin=epochs.tmin,
+        verbose=False,
+    )
+
+    return epochs_filtered, list(epochs_filtered.ch_names)
+
+
 def create_connectivity_pair_column_names(
     channel_names: List[str],
 ) -> list[str]:

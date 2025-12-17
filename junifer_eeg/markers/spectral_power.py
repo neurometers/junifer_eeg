@@ -1,11 +1,28 @@
-"""Simple spectral power marker using MNE."""
+"""Simple spectral power marker using MNE.
 
+.. deprecated::
+    This module is deprecated. Use the refactored markers instead:
+    - :class:`SpectralPowerBands` for band power without aggregation
+    - :class:`SpectralPowerBandsROIs` for band power with ROI aggregation
+
+    Import from spectral_power_new:
+    ``from junifer_eeg.markers.spectral_power_new import SpectralPowerBands``
+"""
+
+import warnings
 from typing import Any, ClassVar, List, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 from scipy import stats
+
+warnings.warn(
+    "SpectralPower is deprecated. Use SpectralPowerBands or SpectralPowerBandsROIs "
+    "from spectral_power_new instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def trim_mean80(data, axis=None):
@@ -54,8 +71,8 @@ class SpectralPower(BaseMarker):
         n_overlap: Optional[int] = None,
         db_threshold: Optional[float] = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -98,9 +115,9 @@ class SpectralPower(BaseMarker):
             - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp')
 
             If None, uses all channels.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Methods to aggregate across ROI electrodes: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Methods to aggregate across trials/epochs: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
         equipment : str, default="egi256"
             Equipment configuration for ROI resolution.
@@ -122,8 +139,8 @@ class SpectralPower(BaseMarker):
         self.n_overlap = n_overlap
         self.db_threshold = db_threshold
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
 
         # Validate entropy usage
@@ -141,17 +158,11 @@ class SpectralPower(BaseMarker):
         - 'scalar_table': scalar value (both aggregations applied)
         """
         # No aggregation → 2D/3D tensor (epochs, channels) or (bands, epochs, channels) → timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
@@ -406,10 +417,7 @@ class SpectralPower(BaseMarker):
                 all_band_powers[band_name] = 10 * np.log10(band_data)
 
         # Check if we should return raw PSD data (no aggregation)
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel results without any aggregation
             if len(all_band_powers) == 1:
                 band_name = next(iter(all_band_powers.keys()))
@@ -459,20 +467,20 @@ class SpectralPower(BaseMarker):
             result_data = band_data
 
             # Channel aggregation
-            if self.channel_aggregation_method is not None:
+            if self.channel_method is not None:
                 result_data = aggregate_data(
-                    result_data, self.channel_aggregation_method, axis=1
+                    result_data, self.channel_method, axis=1
                 )
 
             # Trial aggregation
-            if self.trial_aggregation_method is not None:
+            if self.trial_method is not None:
                 if result_data.ndim == 1:
                     result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=None
+                        result_data, self.trial_method, axis=None
                     )
                 else:
                     result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=0
+                        result_data, self.trial_method, axis=0
                     )
 
             # Store result with proper structure - NO FLATTENING

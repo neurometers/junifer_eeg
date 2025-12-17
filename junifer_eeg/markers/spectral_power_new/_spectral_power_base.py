@@ -1,6 +1,5 @@
 """Base PSD computation with caching for spectral power markers."""
 
-from functools import lru_cache
 from typing import TYPE_CHECKING, ClassVar, Optional, Tuple
 
 import numpy as np
@@ -18,46 +17,26 @@ __all__ = ["SpectralPowerBase"]
 class SpectralPowerBase(metaclass=Singleton):
     """Base PSD computation with caching.
 
-    Singleton class that computes Power Spectral Density (PSD) with LRU
-    caching for efficient reuse across multiple markers.
+    Singleton class that computes Power Spectral Density (PSD) with
+    internal caching for efficient reuse across multiple markers.
+
+    The caching uses (epochs_id, params) as key - valid while the
+    epochs object exists in memory. This follows Fede's pattern but
+    adapted for in-memory EEG data instead of file paths.
 
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy"}
 
+    # Internal cache: {(epochs_id, params_tuple): (psds, freqs)}
+    _cache: ClassVar[dict] = {}
+
     def __del__(self) -> None:  # pragma: no cover
         """Terminate the class and clear cache."""
         logger.debug("Clearing cache for PSD computation")
-        SpectralPowerBase.compute.cache_clear()
+        SpectralPowerBase._cache.clear()
 
-    @staticmethod
-    @lru_cache(maxsize=None, typed=True)
     def compute(
-        epochs_id: int,
-        n_fft: Optional[int],
-        n_per_seg: Optional[int],
-        n_overlap: Optional[int],
-        tmin: Optional[float],
-        tmax: Optional[float],
-        fmin: float,
-        fmax: float,
-        sfreq: float,
-        n_epochs: int,
-        n_channels: int,
-        n_times: int,
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute PSD with caching - delegates to actual computation.
-
-        This method is cached based on parameters only. The actual epochs
-        data is passed separately to the _compute_psd method.
-
-        """
-        # This is just a cache wrapper - actual computation happens
-        # in the calling marker with real epochs data
-        logger.debug(f"PSD cache key: epochs_id={epochs_id}")
-        return None, None  # Placeholder
-
-    def _compute_psd(
         self,
         epochs: "mne.Epochs",
         n_fft: Optional[int],
@@ -68,7 +47,11 @@ class SpectralPowerBase(metaclass=Singleton):
         fmin: float,
         fmax: float,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Compute PSD for real epochs data.
+        """Compute PSD with caching for real epochs data.
+
+        This method follows Fede's pattern (like AFNIReHo) but adapted for
+        in-memory EEG data. The cache key is (epochs_id, params) - valid
+        while the epochs object exists in memory.
 
         Parameters
         ----------
@@ -97,22 +80,43 @@ class SpectralPowerBase(metaclass=Singleton):
             Frequencies (n_freqs,).
 
         """
+        # Build cache key from hashable parameters (like Fede's input_path)
+        cache_key = (
+            id(epochs),
+            n_fft,
+            n_per_seg,
+            n_overlap,
+            tmin,
+            tmax,
+            fmin,
+            fmax,
+        )
+
+        # Check cache first
+        if cache_key in self._cache:
+            logger.debug(f"PSD cache hit: epochs_id={id(epochs)}")
+            return self._cache[cache_key]
+
+        logger.debug(f"PSD cache miss: epochs_id={id(epochs)}, computing...")
+
         epochs_data = epochs.get_data()
         n_samples = epochs_data.shape[2]
 
         # Adaptive parameters
-        if n_per_seg is None:
-            n_per_seg = min(64, n_samples // 2)
-        if n_overlap is None:
-            n_overlap = min(32, n_per_seg // 2)
+        effective_n_per_seg = n_per_seg
+        effective_n_overlap = n_overlap
+        if effective_n_per_seg is None:
+            effective_n_per_seg = min(64, n_samples // 2)
+        if effective_n_overlap is None:
+            effective_n_overlap = min(32, effective_n_per_seg // 2)
 
         # Build PSD parameters
         psd_params = {
             "method": "welch",
             "fmin": fmin,
             "fmax": fmax,
-            "n_per_seg": n_per_seg,
-            "n_overlap": n_overlap,
+            "n_per_seg": effective_n_per_seg,
+            "n_overlap": effective_n_overlap,
             "verbose": False,
         }
 
@@ -126,5 +130,8 @@ class SpectralPowerBase(metaclass=Singleton):
         # Compute PSD
         psd = epochs.compute_psd(**psd_params)
         psds, freqs = psd.get_data(return_freqs=True)
+
+        # Store in cache
+        self._cache[cache_key] = (psds, freqs)
 
         return psds, freqs

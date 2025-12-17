@@ -51,8 +51,8 @@ def test_numerical_equivalence():
         "tmin": 0.0,
         "tmax": 0.6,
         "nbins": 16,
-        "channel_aggregation_method": None,
-        "trial_aggregation_method": None,
+        "channel_method": None,
+        "trial_method": None,
     }
 
     print("Testing original implementation...")
@@ -86,12 +86,12 @@ def test_numerical_equivalence():
 
     # Check if results are identical (within floating point precision)
     tolerance = 1e-10
-    if max_abs_diff < tolerance:
-        print("✅ PERFECT MATCH: Results are numerically identical!")
-        return True
-    else:
-        print(f"❌ MISMATCH: Results differ by more than {tolerance}")
-        return False
+    assert max_abs_diff < tolerance, (
+        f"MISMATCH: Results differ by more than {tolerance}"
+    )
+    print(
+        f"✅ Numerical equivalence: PERFECT MATCH (max diff: {max_abs_diff:.10f})"
+    )
 
 
 def test_aggregation_methods():
@@ -102,20 +102,20 @@ def test_aggregation_methods():
     # Test different aggregation combinations
     test_cases = [
         {
-            "channel_aggregation_method": "mean",
-            "trial_aggregation_method": None,
+            "channel_method": "mean",
+            "trial_method": None,
         },
         {
-            "channel_aggregation_method": None,
-            "trial_aggregation_method": "mean",
+            "channel_method": None,
+            "trial_method": "mean",
         },
         {
-            "channel_aggregation_method": "mean",
-            "trial_aggregation_method": "mean",
+            "channel_method": "mean",
+            "trial_method": "mean",
         },
         {
-            "channel_aggregation_method": "std",
-            "trial_aggregation_method": "median",
+            "channel_method": "std",
+            "trial_method": "median",
         },
     ]
 
@@ -131,18 +131,12 @@ def test_aggregation_methods():
         orig_result = original_marker.compute({"data": epochs})
         refact_result = refactored_marker.compute({"data": epochs})
 
-        orig_data = orig_result["kolmogorovcomplexity"]["data"]
-        refact_data = refact_result["kolmogorovcomplexity"]["data"]
-
-        if np.allclose(orig_data, refact_data, atol=1e-10):
-            print("    ✅ PASS")
-        else:
-            print(
-                f"    ❌ FAIL - Max diff: {np.max(np.abs(orig_data - refact_data)):.10f}"
-            )
-            return False
-
-    return True
+        assert np.allclose(
+            orig_result["kolmogorovcomplexity"]["data"],
+            refact_result["kolmogorovcomplexity"]["data"],
+            rtol=1e-10,
+            atol=1e-10,
+        ), f"{params} aggregation failed - Results don't match"
 
 
 def test_roi_filtering():
@@ -156,8 +150,8 @@ def test_roi_filtering():
         "tmax": 0.6,
         "nbins": 16,
         "rois": ["E1", "E2", "E3"],  # Select first 3 channels
-        "channel_aggregation_method": None,
-        "trial_aggregation_method": None,
+        "channel_method": None,
+        "trial_method": None,
     }
 
     original_marker = OriginalKC(**params)
@@ -172,14 +166,12 @@ def test_roi_filtering():
     print(f"Original shape with ROI: {orig_data.shape}")
     print(f"Refactored shape with ROI: {refact_data.shape}")
 
-    if np.allclose(orig_data, refact_data, atol=1e-10):
-        print("✅ ROI filtering works correctly!")
-        return True
-    else:
-        print(
-            f"❌ ROI filtering failed - Max diff: {np.max(np.abs(orig_data - refact_data)):.10f}"
-        )
-        return False
+    assert np.allclose(orig_data, refact_data, atol=1e-10), (
+        f"ROI filtering failed - Max diff: {np.max(np.abs(orig_data - refact_data)):.10f}"
+    )
+    print(
+        f"✅ ROI filtering: PERFECT MATCH (max diff: {np.max(np.abs(orig_data - refact_data)):.10f})"
+    )
 
 
 if __name__ == "__main__":
@@ -190,9 +182,23 @@ if __name__ == "__main__":
     success = True
 
     # Run all tests
-    success &= test_numerical_equivalence()
-    success &= test_aggregation_methods()
-    success &= test_roi_filtering()
+    try:
+        test_numerical_equivalence()
+    except AssertionError as e:
+        print(f"❌ Numerical equivalence test failed: {e}")
+        success = False
+
+    try:
+        test_aggregation_methods()
+    except AssertionError as e:
+        print(f"❌ Aggregation methods test failed: {e}")
+        success = False
+
+    try:
+        test_roi_filtering()
+    except AssertionError as e:
+        print(f"❌ ROI filtering test failed: {e}")
+        success = False
 
     print("\n" + "=" * 60)
     if success:

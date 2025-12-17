@@ -263,8 +263,8 @@ class SymbolicMutualInformation(EEGEpochsMarker):
                     f"but {min_samples} needed for kernel={self.kernel}, tau={tau}"
                 )
 
-            # Compute SMI using base class
-            connectivity_matrix = smi_base._compute_smi(
+            # Compute SMI using base class (with caching)
+            connectivity_matrix = smi_base.compute(
                 fdata_masked, self.kernel, tau, self.weighted
             )
 

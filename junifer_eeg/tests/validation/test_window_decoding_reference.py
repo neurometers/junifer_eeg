@@ -68,28 +68,16 @@ def check_window_decoding_equivalence(
     print(f"  Absolute difference: {abs_diff:.6e}")
     print(f"  Relative error:      {rel_diff:.4f}%")
 
-    if rel_diff < tolerance:
-        print(
-            f"\n✅ PERFECT MATCH: {marker_name} ({rel_diff:.4f}% < {tolerance}%)"
-        )
-        return True
-    elif rel_diff < 1.0:
-        print(f"\n✅ EXCELLENT MATCH: {marker_name} ({rel_diff:.4f}% error)")
-        return True
+    assert rel_diff < 1.0, (
+        f"MISMATCH: {marker_name} ({rel_diff:.4f}% error)\n\nDiagnostics:\n  NICE score: {nice_mean:.6f}\n  Junifer score: {junifer_scalar:.6f}\n  Absolute difference: {abs_diff:.6f}\n  Relative difference: {rel_diff:.4f}%"
+    )
+
+    if rel_diff < 0.01:
+        print(f"\n✅ PERFECT MATCH: {marker_name} ({rel_diff:.4f}% error)")
     else:
-        print(f"\n❌ MISMATCH: {marker_name} ({rel_diff:.4f}% error)")
+        print(f"\n✅ EXCELLENT MATCH: {marker_name} ({rel_diff:.4f}% error)")
 
-        # Additional diagnostics
-        print("\nDiagnostics:")
-        print(
-            f"  NICE min/max:  {np.min(nice_output):.6f} / {np.max(nice_output):.6f}"
-        )
-        print(f"  NICE std:      {np.std(nice_output):.6f}")
-        print(
-            "  Expected:      NICE and Junifer should have identical mean scores"
-        )
-
-        return False
+    return True
 
 
 class TestWindowDecodingReference:

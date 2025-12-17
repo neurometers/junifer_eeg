@@ -112,12 +112,10 @@ def test_time_decoding_equivalence():
 
     # Check if results are identical (within floating point precision)
     tolerance = 1e-10
-    if max_abs_diff < tolerance:
-        print("✅ TimeDecoding: PERFECT MATCH")
-        return True
-    else:
-        print(f"❌ TimeDecoding: MISMATCH (tolerance {tolerance})")
-        return False
+    assert max_abs_diff < tolerance, (
+        f"TimeDecoding: MISMATCH (tolerance {tolerance})"
+    )
+    print("✅ TimeDecoding: PERFECT MATCH")
 
 
 def test_window_decoding_equivalence():
@@ -177,12 +175,10 @@ def test_window_decoding_equivalence():
 
     # Check if results are identical (within floating point precision)
     tolerance = 1e-10
-    if abs_diff < tolerance:
-        print("✅ WindowDecoding: PERFECT MATCH")
-        return True
-    else:
-        print(f"❌ WindowDecoding: MISMATCH (tolerance {tolerance})")
-        return False
+    assert abs_diff < tolerance, (
+        f"WindowDecoding: MISMATCH (tolerance {tolerance})"
+    )
+    print("✅ WindowDecoding: PERFECT MATCH")
 
 
 def test_time_decoding_roi():
@@ -211,14 +207,11 @@ def test_time_decoding_roi():
     orig_scores = orig_result["timedecoding"]["data"]
     refact_scores = refact_result["timedecoding"]["data"]
 
-    if np.allclose(orig_scores, refact_scores, atol=1e-10):
-        print("✅ TimeDecoding ROI filtering works correctly!")
-        return True
-    else:
-        print(
-            f"❌ TimeDecoding ROI filtering failed - Max diff: {np.max(np.abs(orig_scores - refact_scores)):.10f}"
-        )
-        return False
+    max_diff = np.max(np.abs(orig_scores - refact_scores))
+    assert max_diff < 1e-10, (
+        f"TimeDecoding ROI filtering failed - Max diff: {max_diff:.10f}"
+    )
+    print("✅ TimeDecoding ROI filtering works correctly!")
 
 
 def test_window_decoding_roi():
@@ -247,14 +240,11 @@ def test_window_decoding_roi():
     orig_score = orig_result["windowdecoding"]["data"][0]
     refact_score = refact_result["windowdecoding"]["data"][0]
 
-    if abs(orig_score - refact_score) < 1e-10:
-        print("✅ WindowDecoding ROI filtering works correctly!")
-        return True
-    else:
-        print(
-            f"❌ WindowDecoding ROI filtering failed - Diff: {abs(orig_score - refact_score):.10f}"
-        )
-        return False
+    diff = abs(orig_score - refact_score)
+    assert diff < 1e-10, (
+        f"WindowDecoding ROI filtering failed - Diff: {diff:.10f}"
+    )
+    print("✅ WindowDecoding ROI filtering works correctly!")
 
 
 def test_missing_conditions():

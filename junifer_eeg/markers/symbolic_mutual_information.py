@@ -1,6 +1,16 @@
-"""Symbolic mutual information marker for EEG analysis."""
+"""Symbolic mutual information marker for EEG analysis.
+
+.. deprecated::
+    This module is deprecated. Use the refactored markers instead:
+    - :class:`SymbolicMutualInformation` from symbolic_mutual_information_new
+    - :class:`SymbolicMutualInformationROIs` for ROI aggregation
+
+    Import from symbolic_mutual_information_new:
+    ``from junifer_eeg.markers.symbolic_mutual_information_new import SymbolicMutualInformation``
+"""
 
 import math
+import warnings
 from itertools import permutations
 from typing import Any, ClassVar, Dict, List, Optional, Union
 
@@ -8,6 +18,13 @@ import numba
 import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers.base import BaseMarker
+
+warnings.warn(
+    "This SymbolicMutualInformation module is deprecated. Use SymbolicMutualInformation "
+    "or SymbolicMutualInformationROIs from symbolic_mutual_information_new instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def _define_symbols(kernel):
@@ -177,8 +194,8 @@ class SymbolicMutualInformation(BaseMarker):
         anti_aliasing: bool = True,
         rois: Union[List[str], List[int], None] = None,
         connectivity_aggregation_method: Optional[str | List[str]] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         epoch_length: Optional[float] = None,
         overlap: float = 0.0,
         fmin: Optional[float] = None,
@@ -208,10 +225,10 @@ class SymbolicMutualInformation(BaseMarker):
             Method(s) to aggregate across the second connectivity dimension (channels_y).
             Options: 'median', 'mean', 'std', 'trim_mean80', etc.
             For NICE compatibility, use 'median'. If None, no aggregation on channels_y.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Method(s) to aggregate across channels dimension.
             For NICE compatibility, use 'mean'. If None, no aggregation on channels.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Method(s) to aggregate across epochs dimension.
             For NICE compatibility, use 'trim_mean80'. If None, no aggregation on epochs.
         csd : bool, optional
@@ -233,8 +250,8 @@ class SymbolicMutualInformation(BaseMarker):
         self.anti_aliasing = anti_aliasing
         self.rois = rois
         self.connectivity_aggregation_method = connectivity_aggregation_method
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.epoch_length = epoch_length
         self.overlap = overlap
         self.fmin = fmin
@@ -263,8 +280,8 @@ class SymbolicMutualInformation(BaseMarker):
         agg_count = sum(
             [
                 self.connectivity_aggregation_method is not None,
-                self.channel_aggregation_method is not None,
-                self.trial_aggregation_method is not None,
+                self.channel_method is not None,
+                self.trial_method is not None,
             ]
         )
 
@@ -528,8 +545,8 @@ class SymbolicMutualInformation(BaseMarker):
         # Check if we should apply configurable aggregation pipeline
         if (
             self.connectivity_aggregation_method is not None
-            or self.channel_aggregation_method is not None
-            or self.trial_aggregation_method is not None
+            or self.channel_method is not None
+            or self.trial_method is not None
         ):
             # Apply configurable reduction pipeline on symmetrized data
             # result shape: (n_channels, n_channels, n_epochs)
@@ -580,8 +597,8 @@ class SymbolicMutualInformation(BaseMarker):
 
         Applies aggregation in the order specified by NICE:
         1. connectivity_aggregation_method across channels_y dimension (axis=1)
-        2. channel_aggregation_method across channels dimension (axis=0)
-        3. trial_aggregation_method across epochs dimension
+        2. channel_method across channels dimension (axis=0)
+        3. trial_method across epochs dimension
 
         Parameters
         ----------
@@ -608,9 +625,9 @@ class SymbolicMutualInformation(BaseMarker):
             # After first aggregation: (n_channels, n_epochs)
 
         # Step 2: Aggregate across channels (first dimension, axis=0)
-        if self.channel_aggregation_method is not None:
+        if self.channel_method is not None:
             current_data = aggregate_data(
-                current_data, self.channel_aggregation_method, axis=0
+                current_data, self.channel_method, axis=0
             )
 
         else:
@@ -621,7 +638,7 @@ class SymbolicMutualInformation(BaseMarker):
                 current_data = current_data.T  # Now (n_epochs, n_channels)
 
         # Step 3: Aggregate across epochs (axis depends on current shape)
-        if self.trial_aggregation_method is not None:
+        if self.trial_method is not None:
             if current_data.ndim > 0:
                 # Determine correct axis based on shape:
                 # - 3D (n_channels, n_channels, n_epochs): aggregate axis=2 (epochs)
@@ -636,7 +653,7 @@ class SymbolicMutualInformation(BaseMarker):
 
                 current_data = aggregate_data(
                     current_data,
-                    self.trial_aggregation_method,
+                    self.trial_method,
                     axis=epoch_axis,
                 )
                 # After aggregation:

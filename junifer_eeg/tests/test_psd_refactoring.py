@@ -199,12 +199,10 @@ def test_estimator_equivalence_raw():
 
     # Check if results are identical (within floating point precision)
     tolerance = 1e-12
-    if max_abs_diff < tolerance:
-        print("✅ PSD data: PERFECT MATCH")
-        return True
-    else:
-        print(f"❌ PSD data: MISMATCH (tolerance {tolerance})")
-        return False
+    assert max_abs_diff < tolerance, (
+        f"PSD data: MISMATCH (tolerance {tolerance})"
+    )
+    print("✅ PSD data: PERFECT MATCH")
 
 
 def test_summary_equivalence():
@@ -222,8 +220,8 @@ def test_summary_equivalence():
         "n_fft": 256,
         "n_per_seg": 128,
         "n_overlap": 64,
-        "channel_aggregation_method": None,
-        "trial_aggregation_method": None,
+        "channel_method": None,
+        "trial_method": None,
     }
 
     original_marker = OriginalSummary(**params)
@@ -255,12 +253,10 @@ def test_summary_equivalence():
 
     # Check if results are identical (within floating point precision)
     tolerance = 1e-10
-    if max_abs_diff < tolerance:
-        print("✅ SEF data: PERFECT MATCH")
-        return True
-    else:
-        print(f"❌ SEF data: MISMATCH (tolerance {tolerance})")
-        return False
+    assert max_abs_diff < tolerance, (
+        f"SEF data: MISMATCH (tolerance {tolerance})"
+    )
+    print("✅ SEF data: PERFECT MATCH")
 
 
 def test_summary_aggregation():
@@ -272,30 +268,29 @@ def test_summary_aggregation():
     test_cases = [
         {
             "percentile": 0.9,
-            "channel_aggregation_method": "mean",
-            "trial_aggregation_method": None,
+            "channel_method": "mean",
+            "trial_method": None,
         },
         {
             "percentile": 0.25,
-            "channel_aggregation_method": None,
-            "trial_aggregation_method": "mean",
+            "channel_method": None,
+            "trial_method": "mean",
         },
         {
             "percentile": 0.75,
-            "channel_aggregation_method": "mean",
-            "trial_aggregation_method": "mean",
+            "channel_method": "mean",
+            "trial_method": "mean",
         },
         {
             "percentile": 0.5,
-            "channel_aggregation_method": "std",
-            "trial_aggregation_method": "median",
+            "channel_method": "std",
+            "trial_method": "median",
         },
     ]
 
-    success = True
     for i, params in enumerate(test_cases):
         print(
-            f"  Test case {i + 1}: percentile={params['percentile']}, agg={params.get('channel_aggregation_method', 'None')}/{params.get('trial_aggregation_method', 'None')}"
+            f"  Test case {i + 1}: percentile={params['percentile']}, agg={params.get('channel_method', 'None')}/{params.get('trial_method', 'None')}"
         )
 
         base_params = {
@@ -318,15 +313,10 @@ def test_summary_aggregation():
         orig_sef = orig_result["psdsummary"]["data"]
         refact_sef = refact_result["psdsummary"]["data"]
 
-        if np.allclose(orig_sef, refact_sef, atol=1e-10):
-            print("    ✅ PASS")
-        else:
-            print(
-                f"    ❌ FAIL - Max diff: {np.max(np.abs(orig_sef - refact_sef)):.10f}"
-            )
-            success = False
-
-    return success
+        assert np.allclose(orig_sef, refact_sef, atol=1e-10), (
+            f"Test case {i + 1} failed - Max diff: {np.max(np.abs(orig_sef - refact_sef)):.10f}"
+        )
+        print("    ✅ PASS")
 
 
 def test_summary_roi():
@@ -342,8 +332,8 @@ def test_summary_roi():
         "fmin": 1.0,
         "fmax": 50.0,
         "rois": ["E1", "E2", "E3"],  # Select first 3 channels
-        "channel_aggregation_method": None,
-        "trial_aggregation_method": None,
+        "channel_method": None,
+        "trial_method": None,
     }
 
     original_marker = OriginalSummary(**params)
@@ -358,14 +348,10 @@ def test_summary_roi():
     print(f"Original SEF shape with ROI: {orig_sef.shape}")
     print(f"Refactored SEF shape with ROI: {refact_sef.shape}")
 
-    if np.allclose(orig_sef, refact_sef, atol=1e-10):
-        print("✅ ROI filtering works correctly!")
-        return True
-    else:
-        print(
-            f"❌ ROI filtering failed - Max diff: {np.max(np.abs(orig_sef - refact_sef)):.10f}"
-        )
-        return False
+    assert np.allclose(orig_sef, refact_sef, atol=1e-10), (
+        f"ROI filtering failed - Max diff: {np.max(np.abs(orig_sef - refact_sef)):.10f}"
+    )
+    print("✅ ROI filtering works correctly!")
 
 
 if __name__ == "__main__":
@@ -376,11 +362,35 @@ if __name__ == "__main__":
     success = True
 
     # Run all tests
-    success &= test_estimator_equivalence_epochs()
-    success &= test_estimator_equivalence_raw()
-    success &= test_summary_equivalence()
-    success &= test_summary_aggregation()
-    success &= test_summary_roi()
+    try:
+        test_estimator_equivalence_epochs()
+    except AssertionError as e:
+        print(f"❌ Estimator equivalence (epochs) test failed: {e}")
+        success = False
+
+    try:
+        test_estimator_equivalence_raw()
+    except AssertionError as e:
+        print(f"❌ Estimator equivalence (raw) test failed: {e}")
+        success = False
+
+    try:
+        test_summary_equivalence()
+    except AssertionError as e:
+        print(f"❌ Summary equivalence test failed: {e}")
+        success = False
+
+    try:
+        test_summary_aggregation()
+    except AssertionError as e:
+        print(f"❌ Summary aggregation test failed: {e}")
+        success = False
+
+    try:
+        test_summary_roi()
+    except AssertionError as e:
+        print(f"❌ Summary ROI test failed: {e}")
+        success = False
 
     print("\n" + "=" * 70)
     if success:

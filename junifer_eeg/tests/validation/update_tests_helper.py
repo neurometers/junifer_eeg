@@ -1,39 +1,64 @@
 """Helper to convert old marker parameters to new hierarchical marker format."""
 
+from typing import Any
 
-def convert_spectral_power_params(old_params):
-    """Convert old SpectralPower parameters to SpectralPowerBandsROIs format.
+
+def convert_legacy_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Convert legacy parameter names to new standardized names.
+
+    This handles the renaming of aggregation parameters:
+    - channel_aggregation_method -> channel_method
+    - trial_aggregation_method -> trial_method
 
     Parameters
     ----------
-    old_params : dict
-        Parameters for old SpectralPower marker.
+    params : dict
+        Parameters dict that may contain old parameter names.
 
     Returns
     -------
     dict
-        Parameters for new SpectralPowerBandsROIs marker.
+        Parameters dict with standardized parameter names.
+    """
+    new_params = params.copy()
+
+    # Map old parameter names to new ones
+    if "channel_aggregation_method" in new_params:
+        new_params["channel_method"] = new_params.pop(
+            "channel_aggregation_method"
+        )
+
+    if "trial_aggregation_method" in new_params:
+        new_params["trial_method"] = new_params.pop("trial_aggregation_method")
+
+    return new_params
+
+
+def convert_to_spectral_power_bands_rois(
+    old_params: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert old SpectralPower parameters to SpectralPowerBands format.
+
+    Parameters
+    ----------
+    old_params : dict
+        Parameters from old SpectralPower marker.
+
+    Returns
+    -------
+    dict
+        Parameters for new SpectralPowerBands marker.
     """
     new_params = old_params.copy()
 
     # Map old parameter names to new ones
     if "channel_aggregation_method" in new_params:
-        channel_method = new_params.pop("channel_aggregation_method")
-        if channel_method == "trim_mean80":
-            new_params["channel_method"] = "trim_mean"
-            if "channel_method_params" not in new_params:
-                new_params["channel_method_params"] = {"proportiontocut": 0.1}
-        else:
-            new_params["channel_method"] = channel_method
+        new_params["channel_method"] = new_params.pop(
+            "channel_aggregation_method"
+        )
 
     if "trial_aggregation_method" in new_params:
-        trial_method = new_params.pop("trial_aggregation_method")
-        if trial_method == "trim_mean80":
-            new_params["trial_method"] = "trim_mean"
-            if "trial_method_params" not in new_params:
-                new_params["trial_method_params"] = {"proportiontocut": 0.1}
-        else:
-            new_params["trial_method"] = trial_method
+        new_params["trial_method"] = new_params.pop("trial_aggregation_method")
 
     # Convert fmin/fmax to bands if present
     if "fmin" in new_params or "fmax" in new_params:
@@ -62,39 +87,31 @@ def convert_spectral_power_params(old_params):
     return new_params
 
 
-def convert_permutation_entropy_params(old_params):
-    """Convert old PermutationEntropy parameters to PermutationEntropyROIs format.
+def convert_to_permutation_entropy_rois(
+    old_params: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert old PermutationEntropy parameters to PermutationEntropy format.
 
     Parameters
     ----------
     old_params : dict
-        Parameters for old PermutationEntropy marker.
+        Parameters from old PermutationEntropy marker.
 
     Returns
     -------
     dict
-        Parameters for new PermutationEntropyROIs marker.
+        Parameters for new PermutationEntropy marker.
     """
     new_params = old_params.copy()
 
     # Map old parameter names to new ones
     if "channel_aggregation_method" in new_params:
-        channel_method = new_params.pop("channel_aggregation_method")
-        if channel_method == "trim_mean80":
-            new_params["channel_method"] = "trim_mean"
-            if "channel_method_params" not in new_params:
-                new_params["channel_method_params"] = {"proportiontocut": 0.1}
-        else:
-            new_params["channel_method"] = channel_method
+        new_params["channel_method"] = new_params.pop(
+            "channel_aggregation_method"
+        )
 
     if "trial_aggregation_method" in new_params:
-        trial_method = new_params.pop("trial_aggregation_method")
-        if trial_method == "trim_mean80":
-            new_params["trial_method"] = "trim_mean"
-            if "trial_method_params" not in new_params:
-                new_params["trial_method_params"] = {"proportiontocut": 0.1}
-        else:
-            new_params["trial_method"] = trial_method
+        new_params["trial_method"] = new_params.pop("trial_aggregation_method")
 
     # Convert single tau to taus for new API
     if "tau" in new_params and "taus" not in new_params:

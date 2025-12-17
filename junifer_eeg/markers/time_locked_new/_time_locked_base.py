@@ -8,12 +8,12 @@ refactoring.
 from typing import Any, List, Tuple, Union
 
 import numpy as np
-from junifer.markers import BaseMarker
 
-from .utils import get_data_for_rois
+from ..base import EEGEpochsMarker
+from ..utils import get_data_for_rois
 
 
-class TimeLockedBase(BaseMarker):
+class TimeLockedBase(EEGEpochsMarker):
     """Base class for time-locked markers with shared data preparation helpers.
 
     This class provides common functionality for time-locked markers including:
@@ -173,3 +173,76 @@ class TimeLockedBase(BaseMarker):
         n_times = data.shape[2]
 
         return ch_names, n_epochs, n_channels, n_times
+
+    def _apply_reference(self, epochs: Any, reference: Any) -> Any:
+        """Apply EEG re-referencing using flexible channel specification.
+
+        Parameters
+        ----------
+        epochs : mne.Epochs
+            Epochs to re-reference
+        reference : str or list of str
+            Reference specification
+
+        Returns
+        -------
+        epochs : mne.Epochs
+            Re-referenced epochs
+
+        Notes
+        -----
+        Reference can be specified as:
+        - 'average': Average reference across all channels
+        - String channel name: Single channel (e.g., 'Cz', 'TP9')
+        - List of channel names: Multiple channels (e.g., ['TP9', 'TP10'])
+        - Reference channels are resolved from actual data, like ROIs
+        """
+        ch_names = epochs.ch_names
+
+        # Handle special case: 'average' reference
+        if reference == "average":
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels="average"
+            )
+            return epochs_reref
+
+        # Handle single string channel name
+        if isinstance(reference, str):
+            if reference in ch_names:
+                # Valid channel name
+                epochs_reref = epochs.copy().set_eeg_reference(
+                    ref_channels=reference
+                )
+                return epochs_reref
+            else:
+                raise ValueError(
+                    f"Reference channel '{reference}' not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+        # Handle list of channel names
+        if isinstance(reference, list):
+            # Validate all channels exist in data
+            invalid_channels = [ch for ch in reference if ch not in ch_names]
+            if invalid_channels:
+                raise ValueError(
+                    f"Reference channel(s) {invalid_channels} not found in data. "
+                    f"Available channels: {ch_names[:20]}... "
+                    f"(showing first 20 of {len(ch_names)})"
+                )
+
+            # All channels valid
+            epochs_reref = epochs.copy().set_eeg_reference(
+                ref_channels=reference
+            )
+            return epochs_reref
+
+        # Should not reach here, but handle unexpected types
+        raise TypeError(
+            f"Reference must be 'average', string channel name, or list of channel names. "
+            f"Got: {type(reference)}"
+        )
+
+
+__all__ = ["TimeLockedBase"]

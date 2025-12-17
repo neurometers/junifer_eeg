@@ -1,6 +1,6 @@
 """Spectral power with frequency band extraction."""
 
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Optional, Union
 
 import numpy as np
 from junifer.api.decorators import register_marker
@@ -15,10 +15,10 @@ __all__ = ["SpectralPowerBands"]
 
 @register_marker
 class SpectralPowerBands(EEGEpochsMarker):
-    """Spectral power with frequency band extraction.
+    """Spectral power with frequency band extraction and optional aggregation.
 
-    Computes PSD and extracts power in frequency bands. Does not perform
-    any channel or trial aggregation - use SpectralPowerBandsROIs for that.
+    Computes PSD and extracts power in frequency bands, with optional
+    channel and trial aggregation.
 
     Parameters
     ----------
@@ -32,6 +32,12 @@ class SpectralPowerBands(EEGEpochsMarker):
         - int: channel index (e.g., 0, 1, 223)
         - str: channel name (e.g., 'E1', 'E224') OR semantic ROI (e.g., 'scalp')
         If None, uses all channels.
+    channel_method : str, optional
+        Method for channel aggregation: 'mean', 'median', 'std', 'trim_mean80',
+        'trim_mean90', etc. If None, no channel aggregation.
+    trial_method : str, optional
+        Method for trial aggregation: 'mean', 'median', 'std', 'trim_mean80',
+        'trim_mean90', etc. If None, no trial aggregation.
     normalize : bool, default=False
         If True, normalize power by total power (relative power).
     dB : bool, default=True
@@ -66,7 +72,9 @@ class SpectralPowerBands(EEGEpochsMarker):
     def __init__(
         self,
         bands: Optional[dict] = None,
-        rois: Optional[list[str] | list[int]] = None,
+        rois: Union[list[str], list[int], None] = None,
+        channel_method: Optional[str] = None,
+        trial_method: Optional[str] = None,
         normalize: bool = False,
         dB: bool = True,
         entropy: bool = False,
@@ -87,6 +95,8 @@ class SpectralPowerBands(EEGEpochsMarker):
 
         self.bands = bands
         self.rois = rois
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.normalize = normalize
         self.dB = dB
         self.entropy = entropy
@@ -135,60 +145,14 @@ class SpectralPowerBands(EEGEpochsMarker):
 
         # Apply ROI filtering BEFORE computation if specified
         if self.rois is not None:
-            import mne
+            from ..utils import apply_roi_filtering_to_epochs
 
-            from ..utils import get_data_for_rois
-
-            # Get equipment from data metadata
-            description = data_obj.info.get("description") or ""
-            if "equipment=" in description:
-                equipment = description.replace("equipment=", "")
-            else:
-                equipment = self.equipment
-
-            # Get data as (n_epochs, n_channels, n_times)
-            data_array = data_obj.get_data()
-
-            # Transpose to (n_channels, n_epochs, n_times)
-            data_transposed = data_array.transpose(1, 0, 2)
-
-            # Get ROI-filtered data
-            roi_data_dict = get_data_for_rois(
-                data_transposed,
-                ch_names,
+            data_obj, ch_names = apply_roi_filtering_to_epochs(
+                data_obj,
                 self.rois,
-                equipment,
+                self.equipment,
+                marker_name="SpectralPowerBands",
             )
-
-            # Extract the filtered data
-            if "selected_channels" in roi_data_dict:
-                data_filtered = roi_data_dict["selected_channels"]
-                # Transpose back to (n_epochs, n_channels, n_times)
-                data_filtered = data_filtered.transpose(1, 0, 2)
-
-                # Create minimal info for filtered channels
-                n_channels_filtered = data_filtered.shape[1]
-                # Validate that ROI count matches filtered data shape
-                if len(self.rois) != n_channels_filtered:
-                    raise ValueError(
-                        f"ROI count mismatch: {len(self.rois)} != {n_channels_filtered} in SpectralPower"
-                    )
-                # Use actual ROI channel names instead of default 'ch_0' names to preserve channel identity
-                info = mne.create_info(
-                    ch_names=self.rois,
-                    sfreq=sfreq,
-                    ch_types="eeg",
-                )
-
-                # Create new Epochs object with filtered channels
-                data_obj = mne.EpochsArray(
-                    data_filtered,
-                    info,
-                    events=data_obj.events,
-                    tmin=data_obj.tmin,
-                    verbose=False,
-                )
-                ch_names = data_obj.ch_names
 
         # Get standard bands if not specified
         if self.bands is None:
@@ -213,8 +177,8 @@ class SpectralPowerBands(EEGEpochsMarker):
             fmax = max(band[1] for band in self.bands.values())
             fmax = min(fmax, sfreq / 2 - 1)
 
-        # Use base to compute PSD
-        psds, freqs = psd_base._compute_psd(
+        # Use base to compute PSD (with caching)
+        psds, freqs = psd_base.compute(
             data_obj,
             self.n_fft,
             self.n_per_seg,
@@ -283,27 +247,32 @@ class SpectralPowerBands(EEGEpochsMarker):
                 band_data = np.maximum(band_data, threshold)
                 all_band_powers[band_name] = 10 * np.log10(band_data)
 
-        # Format output
+        # Format output - unify single and multiple bands then apply aggregation
         if len(all_band_powers) == 1:
-            # Single band
+            # Single band - shape (n_epochs, n_channels)
             band_name = next(iter(all_band_powers.keys()))
-            return {
-                "spectralpower": {
-                    "data": all_band_powers[band_name],
-                    "col_names": ch_names,
-                }
-            }
+            output_data = all_band_powers[band_name]
+        else:
+            # Multiple bands - stack into tensor (n_bands, n_epochs, n_channels)
+            band_order = list(all_band_powers.keys())
+            output_data = np.stack(
+                [all_band_powers[band] for band in band_order],
+                axis=0,
+            )
 
-        # Multiple bands - stack into tensor
-        band_order = list(all_band_powers.keys())
-        tensor = np.stack(
-            [all_band_powers[band] for band in band_order],
-            axis=0,
+        output_ch_names = ch_names
+
+        # Apply aggregation using common helper
+        from ..utils import apply_channel_trial_aggregation
+
+        output_data = apply_channel_trial_aggregation(
+            output_data, self.channel_method, self.trial_method
         )
+        if self.channel_method is not None:
+            output_ch_names = None
 
-        return {
-            "spectralpower": {
-                "data": tensor,
-                "col_names": ch_names,
-            }
-        }
+        result = {"spectralpower": {"data": output_data}}
+        if output_ch_names is not None:
+            result["spectralpower"]["col_names"] = output_ch_names
+
+        return result

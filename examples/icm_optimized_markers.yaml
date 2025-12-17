@@ -1,0 +1,304 @@
+---
+
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-01_task-lg_acq-01_epo.fif"
+      space: "native"
+  replacements: ["subject"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: output/icm_optimized_features.h5
+  single_output: true
+
+markers:
+
+  # ========================================
+  # 1. SPECTRAL POWER - NON-NORMALIZED (5 bands in 1 marker!)
+  # ========================================
+  # OLD: 5 separate markers, each computing PSD
+  # NEW: 1 marker computes PSD once, extracts all 5 bands
+  
+  - kind: SpectralPowerBands
+    name: spectral_power_db
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: false
+    dB: true
+    db_threshold: 1.0e-12
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null  # No ROI aggregation - keep per-channel
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 2. SPECTRAL POWER - NORMALIZED (5 bands + broadband in 1 marker!)
+  # ========================================
+  # OLD: 6 separate markers
+  # NEW: 1 marker computes PSD once, extracts all bands normalized
+  
+  - kind: SpectralPowerBands
+    name: spectral_power_normalized
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+      broadband: [1.0, 45.0]  # For Shannon entropy calculation
+    normalize: true
+    dB: false
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 3. PSD SUMMARY MARKERS (3 total)
+  # ========================================
+  # These use the cached PSD from SpectralPower computation
+  
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_msf
+    percentile: 0.5
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_sef90
+    percentile: 0.9
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_sef95
+    percentile: 0.95
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 4. PERMUTATION ENTROPY (4 taus in 1 marker!)
+  # ========================================
+  # OLD: 4 separate markers (theta/alpha/beta/gamma)
+  # NEW: 1 marker computes PE for all tau values at once
+  # tau=8 (theta), tau=4 (alpha), tau=2 (beta), tau=1 (gamma)
+  
+  - kind: PermutationEntropy
+    name: permutation_entropy_multiscale
+    taus: [8, 4, 2, 1]  # theta, alpha, beta, gamma timescales
+    kernel: 3
+    tmin: null
+    tmax: 0.6
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 5. SYMBOLIC MUTUAL INFORMATION (4 taus in 1 marker!)
+  # ========================================
+  # OLD: 4 separate markers (theta/alpha/beta/gamma)
+  # NEW: 1 marker computes SMI for all tau values at once
+  
+  - kind: SymbolicMutualInformationROIs
+    name: wsmi_multiscale
+    kernel: 3
+    taus: [8, 4, 2, 1]  # theta, alpha, beta, gamma timescales
+    weighted: true
+    csd: true
+    tmin: null
+    tmax: 0.6
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 6. KOLMOGOROV COMPLEXITY (1 marker - unchanged)
+  # ========================================
+  
+  - kind: KolmogorovComplexity
+    name: kolmogorov_complexity
+    tmin: null
+    tmax: 0.6
+    nbins: 32
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 7. CONTINGENT NEGATIVE VARIATION (1 marker - unchanged)
+  # ========================================
+  
+  - kind: ContingentNegativeVariation
+    name: cnv_detailed
+    tmin: -0.004
+    tmax: 0.596
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 8. TIME-LOCKED TOPOGRAPHY (3 markers - unchanged)
+  # ========================================
+  
+  - kind: TimeLockedTopography
+    name: p1_topography
+    tmin: 0.064
+    tmax: 0.112
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3a_topography
+    tmin: 0.876
+    tmax: 0.936
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3b_topography
+    tmin: 0.996
+    tmax: 1.196
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 9. TIME-LOCKED CONTRAST (7 markers - unchanged)
+  # ========================================
+  
+  - kind: TimeLockedContrast
+    name: tlc_lsgs_ldgd
+    tmin: null
+    tmax: null
+    condition_a: ["LSGS"]
+    condition_b: ["LDGD"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_lsgd_ldgs
+    tmin: null
+    tmax: null
+    condition_a: ["LSGD"]
+    condition_b: ["LDGS"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_ld_ls
+    tmin: null
+    tmax: null
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_mmn
+    tmin: 0.736
+    tmax: 0.788
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_p3a
+    tmin: 0.876
+    tmax: 0.936
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_gd_gs
+    tmin: null
+    tmax: null
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_p3b
+    tmin: 0.996
+    tmax: 1.196
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 10. WINDOW DECODING (2 markers - unchanged)
+  # ========================================
+  
+  - kind: WindowDecoding
+    name: window_decoding_local
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    tmin: 0.6
+    tmax: 0.967
+    on: EEG
+
+  - kind: WindowDecoding
+    name: window_decoding_global
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    tmin: 0.967
+    tmax: 1.336
+    on: EEG

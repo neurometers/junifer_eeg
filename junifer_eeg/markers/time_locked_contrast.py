@@ -17,7 +17,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 import numpy as np
 from junifer.api.decorators import register_marker
 
-from ._time_locked_base import TimeLockedBase
+from .time_locked_new._time_locked_base import TimeLockedBase
 from .utils import aggregate_data
 
 
@@ -57,8 +57,8 @@ class TimeLockedContrast(TimeLockedBase):
         reference: str | list[str] | None = None,
         comment: str | None = None,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         on: str | None = None,
         name: str | None = None,
@@ -83,9 +83,9 @@ class TimeLockedContrast(TimeLockedBase):
             Comment for the analysis (not used in computation).
         rois : list of str or int, optional
             ROI specification for channel filtering.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Method to aggregate across channels.
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Method to aggregate across epochs.
         equipment : str, default="egi256"
             Equipment type for electrode mapping.
@@ -102,8 +102,8 @@ class TimeLockedContrast(TimeLockedBase):
         self.reference = reference
         self.comment = comment
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
         super().__init__(on=on, name=name)
 
@@ -237,29 +237,52 @@ class TimeLockedContrast(TimeLockedBase):
         _ = epochs.copy()
 
         # Filter epochs by conditions using original implementation approach
-        def get_epochs_for_condition(epochs, condition):
-            """Get epochs for condition using MNE's built-in filtering."""
-            # Handle both string and integer condition IDs
-            if condition in epochs.event_id:
-                # Condition exists as-is in event_id
-                return epochs[condition]
-            elif str(condition) in epochs.event_id:
-                # Try string conversion
-                return epochs[str(condition)]
-            else:
-                # Try integer conversion
-                try:
-                    int_condition = int(condition)
-                    if int_condition in epochs.event_id:
-                        return epochs[int_condition]
-                except (ValueError, TypeError):
-                    pass
+        def get_epochs_for_condition(epochs, conditions):
+            """Get epochs for condition(s) using MNE's built-in filtering.
 
-                # Condition not found
+            Parameters
+            ----------
+            epochs : mne.Epochs
+                The epochs object
+            conditions : str, int, or list
+                Condition(s) to select. Can be a single condition or list.
+
+            Returns
+            -------
+            mne.Epochs
+                Epochs matching the condition(s)
+            """
+            # Convert to list if single condition
+            if isinstance(conditions, (str, int)):
+                conditions = [conditions]
+            else:
+                # Convert from YAML CommentedSeq to regular list
+                conditions = list(conditions)
+
+            # Find matching conditions in event_id
+            matching_conditions = []
+            for condition in conditions:
+                if condition in epochs.event_id:
+                    matching_conditions.append(condition)
+                elif str(condition) in epochs.event_id:
+                    matching_conditions.append(str(condition))
+                else:
+                    # Try integer conversion
+                    try:
+                        int_condition = int(condition)
+                        if int_condition in epochs.event_id:
+                            matching_conditions.append(int_condition)
+                    except (ValueError, TypeError):
+                        pass
+
+            if not matching_conditions:
                 raise ValueError(
-                    f"Condition {condition} not found or empty in epochs. "
+                    f"No conditions from {conditions} found in epochs. "
                     f"Available event IDs: {list(epochs.event_id.keys())}"
                 )
+
+            # Select epochs matching any of the conditions
+            return epochs[matching_conditions]
 
         epochs_a = get_epochs_for_condition(epochs, self.condition_a)
         epochs_b = get_epochs_for_condition(epochs, self.condition_b)
@@ -286,10 +309,7 @@ class TimeLockedContrast(TimeLockedBase):
             return time_averaged, ch_names
 
         # Check if we should return raw temporal data without aggregation
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             # Return raw data from both conditions combined (matching NICE)
             # NICE stores all epochs from both conditions with FULL time range (not cropped)
             # Get raw data for both conditions (use full epochs, not cropped)
@@ -320,20 +340,20 @@ class TimeLockedContrast(TimeLockedBase):
             result_data = data
 
             # Channel aggregation
-            if self.channel_aggregation_method is not None:
+            if self.channel_method is not None:
                 result_data = aggregate_data(
-                    result_data, self.channel_aggregation_method, axis=1
+                    result_data, self.channel_method, axis=1
                 )
 
             # Trial aggregation
-            if self.trial_aggregation_method is not None:
+            if self.trial_method is not None:
                 if result_data.ndim == 1:
                     result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=None
+                        result_data, self.trial_method, axis=None
                     )
                 else:
                     result_data = aggregate_data(
-                        result_data, self.trial_aggregation_method, axis=0
+                        result_data, self.trial_method, axis=0
                     )
 
             return result_data
@@ -346,18 +366,15 @@ class TimeLockedContrast(TimeLockedBase):
         contrast_result = result_a - result_b
 
         # Generate column names based on aggregation and result shape
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             col_names = ["all_channels_all_trials"]
-        elif self.channel_aggregation_method is not None:
+        elif self.channel_method is not None:
             # result_data shape: (n_trials,) after channel aggregation
             n_trials = (
                 contrast_result.shape[0] if contrast_result.ndim >= 1 else 1
             )
             col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_aggregation_method is not None:
+        elif self.trial_method is not None:
             col_names = [f"{ch}" for ch in ch_names_a]
         else:
             col_names = [f"{ch}" for ch in ch_names_a]

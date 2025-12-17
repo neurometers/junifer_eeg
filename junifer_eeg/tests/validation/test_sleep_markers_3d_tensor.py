@@ -99,7 +99,7 @@ class TestSpindlesDetection3DTensor:
         marker = SpindlesDetection(
             freq_sp=(11, 16),
             freq_broad=(1, 30),
-            channel_aggregation_method=None,
+            channel_method=None,
             epoch_aggregation_method=None,
         )
 
@@ -136,7 +136,7 @@ class TestSpindlesDetection3DTensor:
         marker = SpindlesDetection(
             freq_sp=(11, 16),
             freq_broad=(1, 30),
-            channel_aggregation_method="mean",
+            channel_method="mean",
             epoch_aggregation_method=None,
         )
 
@@ -155,7 +155,7 @@ class TestSpindlesDetection3DTensor:
         marker = SpindlesDetection(
             freq_sp=(11, 16),
             freq_broad=(1, 30),
-            channel_aggregation_method="mean",
+            channel_method="mean",
             epoch_aggregation_method="mean",
         )
 
@@ -187,14 +187,14 @@ class TestSpindlesDetection3DTensor:
         )
 
         # Channel aggregation only
-        marker_chan = SpindlesDetection(channel_aggregation_method="mean")
+        marker_chan = SpindlesDetection(channel_method="mean")
         assert (
             marker_chan.get_output_type("EEG", "spindlesdetection") == "vector"
         )
 
         # Both aggregations
         marker_both = SpindlesDetection(
-            channel_aggregation_method="mean", epoch_aggregation_method="mean"
+            channel_method="mean", epoch_aggregation_method="mean"
         )
         assert (
             marker_both.get_output_type("EEG", "spindlesdetection")
@@ -210,7 +210,7 @@ class TestSlowWavesDetection3DTensor:
         # Initialize marker
         marker = SlowWavesDetection(
             freq_sw=(0.5, 4),
-            channel_aggregation_method=None,
+            channel_method=None,
             epoch_aggregation_method=None,
         )
 
@@ -246,7 +246,7 @@ class TestSlowWavesDetection3DTensor:
         # Initialize marker with channel aggregation
         marker = SlowWavesDetection(
             freq_sw=(0.5, 4),
-            channel_aggregation_method="mean",
+            channel_method="mean",
             epoch_aggregation_method=None,
         )
 
@@ -264,7 +264,7 @@ class TestSlowWavesDetection3DTensor:
         # Initialize marker with both aggregations
         marker = SlowWavesDetection(
             freq_sw=(0.5, 4),
-            channel_aggregation_method="mean",
+            channel_method="mean",
             epoch_aggregation_method="mean",
         )
 
@@ -296,7 +296,7 @@ class TestSlowWavesDetection3DTensor:
         )
 
         # Channel aggregation only
-        marker_chan = SlowWavesDetection(channel_aggregation_method="mean")
+        marker_chan = SlowWavesDetection(channel_method="mean")
         assert (
             marker_chan.get_output_type("EEG", "slowwavesdetection")
             == "vector"
@@ -304,7 +304,7 @@ class TestSlowWavesDetection3DTensor:
 
         # Both aggregations
         marker_both = SlowWavesDetection(
-            channel_aggregation_method="mean", epoch_aggregation_method="mean"
+            channel_method="mean", epoch_aggregation_method="mean"
         )
         assert (
             marker_both.get_output_type("EEG", "slowwavesdetection")
@@ -318,7 +318,7 @@ class TestSleepMarkersAggregationEdgeCases:
     def test_aggregation_with_all_nan_data(self, empty_epochs):
         """Test aggregation handles all-NaN data correctly."""
         # Test channel aggregation on all-NaN data
-        spindles_chan = SpindlesDetection(channel_aggregation_method="mean")
+        spindles_chan = SpindlesDetection(channel_method="mean")
         result_chan = spindles_chan.compute({"data": empty_epochs})
         assert result_chan["spindlesdetection"]["data"].shape == (
             4,
@@ -341,7 +341,7 @@ class TestSleepMarkersAggregationEdgeCases:
 
         # Test both aggregations on all-NaN data
         spindles_both = SpindlesDetection(
-            channel_aggregation_method="mean", epoch_aggregation_method="mean"
+            channel_method="mean", epoch_aggregation_method="mean"
         )
         result_both = spindles_both.compute({"data": empty_epochs})
         assert result_both["spindlesdetection"]["data"].shape == (
@@ -360,7 +360,7 @@ class TestSleepMarkersAggregationEdgeCases:
         # Test channel aggregation with different methods using empty data
         # This tests that aggregation methods handle NaN properly
         marker = SpindlesDetection(
-            channel_aggregation_method=aggregation_method,
+            channel_method=aggregation_method,
             epoch_aggregation_method=None,
         )
         result = marker.compute({"data": empty_epochs})

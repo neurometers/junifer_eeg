@@ -25,8 +25,8 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
         self,
         percentile: float = 0.5,
         rois: Union[List[str], List[int], None] = None,
-        channel_aggregation_method: str | None = None,
-        trial_aggregation_method: str | None = None,
+        channel_method: str | None = None,
+        trial_method: str | None = None,
         equipment: str = "egi256",
         **kwargs,
     ) -> None:
@@ -43,9 +43,9 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
             - str: channel name (e.g., 'E1') OR semantic ROI (e.g., 'scalp')
 
             If None, uses all channels.
-        channel_aggregation_method : str, optional
+        channel_method : str, optional
             Aggregation method for ROIs ('mean', 'std', 'median', 'min', 'max').
-        trial_aggregation_method : str, optional
+        trial_method : str, optional
             Aggregation method for trials ('mean', 'std', 'median', 'min', 'max').
         equipment : str, default="egi256"
             Equipment configuration for ROI resolution.
@@ -55,8 +55,8 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
         # Use percentile directly as fraction (0-1) to match original implementation
         self.percentile = percentile
         self.rois = rois
-        self.channel_aggregation_method = channel_aggregation_method
-        self.trial_aggregation_method = trial_aggregation_method
+        self.channel_method = channel_method
+        self.trial_method = trial_method
         self.equipment = equipment
         super().__init__(**kwargs)
 
@@ -69,17 +69,11 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
         - 'scalar_table': scalar value (both aggregations applied)
         """
         # No aggregation → 2D tensor (epochs, channels) → use timeseries
-        if (
-            self.channel_aggregation_method is None
-            and self.trial_aggregation_method is None
-        ):
+        if self.channel_method is None and self.trial_method is None:
             return "timeseries"
 
         # Both aggregations → scalar → use scalar_table
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             return "scalar_table"
 
         # One aggregation → 1D array → use vector
@@ -225,10 +219,7 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
         # SPECIAL HANDLING for PowerSpectralDensitySummary:
         # Clinical literature requires computing percentiles per channel, then aggregating
         # (not combining channels before computing percentiles)
-        if (
-            self.channel_aggregation_method is not None
-            and self.trial_aggregation_method is not None
-        ):
+        if self.channel_method is not None and self.trial_method is not None:
             # Both channel and trial aggregation: compute single scalar value
 
             # Step 1: Trial aggregation per channel
@@ -237,7 +228,7 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
                     [
                         aggregate_data(
                             psd_summary_values[:, ch_idx],
-                            self.trial_aggregation_method,
+                            self.trial_method,
                         )
                         for ch_idx in range(psd_summary_values.shape[1])
                     ]
@@ -247,12 +238,10 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
                 channel_values = psd_summary_values[0, :]
 
             # Step 2: Channel aggregation across all channels
-            final_value = aggregate_data(
-                channel_values, self.channel_aggregation_method
-            )
+            final_value = aggregate_data(channel_values, self.channel_method)
 
             # Return single scalar result without unnecessary reshaping
-            agg_name = f"trial_{self.trial_aggregation_method}_roi_{self.channel_aggregation_method}"
+            agg_name = f"trial_{self.trial_method}_roi_{self.channel_method}"
             return {
                 "data": float(final_value),  # Return scalar, not (1, 1) array
                 "col_names": [f"all_channels_{agg_name}"],
@@ -260,10 +249,7 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
         else:
             # Standard aggregation: apply aggregation manually
             # Check for no aggregation
-            if (
-                self.channel_aggregation_method is None
-                and self.trial_aggregation_method is None
-            ):
+            if self.channel_method is None and self.trial_method is None:
                 col_names = [f"{ch}" for ch in ch_names]
                 return {
                     "data": psd_summary_values,
@@ -274,22 +260,22 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
                 result_data = psd_summary_values
 
                 # Channel aggregation
-                if self.channel_aggregation_method is not None:
+                if self.channel_method is not None:
                     result_data = aggregate_data(
-                        result_data, self.channel_aggregation_method, axis=1
+                        result_data, self.channel_method, axis=1
                     )
 
                 # Trial aggregation
-                if self.trial_aggregation_method is not None:
+                if self.trial_method is not None:
                     if result_data.ndim == 1:
                         result_data = aggregate_data(
                             result_data,
-                            self.trial_aggregation_method,
+                            self.trial_method,
                             axis=None,
                         )
                     else:
                         result_data = aggregate_data(
-                            result_data, self.trial_aggregation_method, axis=0
+                            result_data, self.trial_method, axis=0
                         )
 
                 # Return result data without unnecessary reshaping - preserve tensor structure
@@ -299,17 +285,17 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
 
                 # Generate column names based on aggregation and result shape
                 if (
-                    self.channel_aggregation_method is not None
-                    and self.trial_aggregation_method is not None
+                    self.channel_method is not None
+                    and self.trial_method is not None
                 ):
                     col_names = ["all_channels_all_trials"]
-                elif self.channel_aggregation_method is not None:
+                elif self.channel_method is not None:
                     # result_data shape: (n_trials,) after channel aggregation
                     n_trials = (
                         result_data.shape[0] if result_data.ndim >= 1 else 1
                     )
                     col_names = [f"trial_{i}" for i in range(n_trials)]
-                elif self.trial_aggregation_method is not None:
+                elif self.trial_method is not None:
                     col_names = [f"{ch}" for ch in ch_names]
                 else:
                     col_names = [f"{ch}" for ch in ch_names]

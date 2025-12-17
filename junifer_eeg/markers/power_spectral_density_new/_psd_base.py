@@ -13,10 +13,11 @@ Structure:
 from typing import Any, ClassVar, Tuple
 
 import numpy as np
-from junifer.markers import BaseMarker
+
+from ..base import EEGBaseMarker
 
 
-class PowerSpectralDensityBase(BaseMarker):
+class PowerSpectralDensityBase(EEGBaseMarker):
     """Base class for Power Spectral Density markers with common functionality.
 
     Provides shared functionality for PSD computation including time masking,
@@ -24,6 +25,20 @@ class PowerSpectralDensityBase(BaseMarker):
     """
 
     _DEPENDENCIES: ClassVar = {"mne", "numpy"}
+
+    def _validate_input(self, data_obj) -> None:
+        """Validate input is Raw or Epochs data.
+
+        PSD can work with both Raw and Epochs data.
+        """
+        # PSD works with both Raw and Epochs - just check it's an MNE object
+        if not hasattr(data_obj, "info"):
+            from junifer.utils import raise_error
+
+            raise_error(
+                msg=f"{self.__class__.__name__} requires MNE Raw or Epochs data.",
+                klass=ValueError,
+            )
 
     def __init__(
         self,
@@ -63,15 +78,13 @@ class PowerSpectralDensityBase(BaseMarker):
         name : str, optional
             Name of the marker.
         """
-        self.tmin = tmin
-        self.tmax = tmax
         self.fmin = fmin
         self.fmax = fmax
         self.psd_method = psd_method
         self.n_per_seg = n_per_seg
         self.n_overlap = n_overlap
         self.n_fft = n_fft
-        super().__init__(on=on, name=name)
+        super().__init__(tmin=tmin, tmax=tmax, on=on, name=name)
 
     def _prepare_data(self, input: dict[str, Any]) -> Tuple[Any, list]:
         """Prepare and filter data for PSD computation.
