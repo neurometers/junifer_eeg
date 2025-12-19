@@ -1,0 +1,94 @@
+---
+
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-01_task-lg_acq-01_epo.fif"
+      space: "native"
+  replacements: ["subject"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: output/icm_optimized_features_part2.h5
+  single_output: true
+
+markers:
+
+  # ========================================
+  # 1. SPECTRAL POWER - NON-NORMALIZED (5 bands in 1 marker!)
+  # ========================================
+  # OLD: 5 separate markers, each computing PSD
+  # NEW: 1 marker computes PSD once, extracts all 5 bands
+  
+  - kind: SpectralPowerBands
+    name: spectral_power_db
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+    normalize: false
+    dB: true
+    db_threshold: 1.0e-12
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null  # No ROI aggregation - keep per-channel
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 2. SPECTRAL POWER - NORMALIZED (5 bands + broadband in 1 marker!)
+  # ========================================
+  # OLD: 6 separate markers
+  # NEW: 1 marker computes PSD once, extracts all bands normalized
+  
+  - kind: SpectralPowerBands
+    name: spectral_power_normalized
+    bands:
+      delta: [1.0, 4.0]
+      theta: [4.0, 8.0]
+      alpha: [8.0, 12.0]
+      beta: [12.0, 30.0]
+      gamma: [30.0, 45.0]
+      broadband: [1.0, 45.0]  # For Shannon entropy calculation
+    normalize: true
+    dB: false
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
+
+  # ========================================
+  # 3. PSD SUMMARY MARKERS (3 total)
+  # ========================================
+  # These use the cached PSD from SpectralPower computation
+  
+  - kind: PowerSpectralDensitySummary
+    name: per_channel_msf
+    percentile: 0.5
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG

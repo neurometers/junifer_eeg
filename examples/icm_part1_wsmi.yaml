@@ -1,0 +1,45 @@
+---
+
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-01_task-lg_acq-01_epo.fif"
+      space: "native"
+  replacements: ["subject"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: output/icm_optimized_features_part1.h5
+  single_output: true
+
+markers:
+
+  # ========================================
+  # 5. SYMBOLIC MUTUAL INFORMATION (4 taus in 1 marker!)
+  # ========================================
+  # OLD: 4 separate markers (theta/alpha/beta/gamma)
+  # NEW: 1 marker computes SMI for all tau values at once
+  
+  - kind: SymbolicMutualInformationROIs
+    name: wsmi_multiscale
+    kernel: 3
+    taus: [8, 4, 2, 1]  # theta, alpha, beta, gamma timescales
+    weighted: true
+    csd: true
+    tmin: null
+    tmax: 0.6
+    channel_method: null
+    trial_method: "trim_mean80"
+    on: EEG
