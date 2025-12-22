@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Optional, Union
 import numpy as np
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ._decoding_base import DecodingBase
 
 
@@ -210,10 +211,10 @@ class WindowDecoding(DecodingBase):
         # Mean score across folds
         mean_score = np.mean(scores)
 
-        # Return single scalar result
-        return {
-            "windowdecoding": {
-                "data": np.array([mean_score]),
-                "col_names": ["score"],
-            }
-        }
+        # Return single scalar result using centralized format_marker_result
+        return format_marker_result(
+            feature_name="windowdecoding",
+            data=np.array([mean_score]),
+            col_names=["score"],
+            channel_aggregated=True,  # Window decoding aggregates across channels
+        )

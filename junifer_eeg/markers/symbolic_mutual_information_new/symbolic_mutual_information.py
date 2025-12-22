@@ -8,7 +8,7 @@ from junifer.utils import logger
 from mne.utils import _time_mask
 from scipy.signal import butter, filtfilt
 
-from ..base import EEGEpochsMarker
+from ..base import EEGEpochsMarker, format_marker_result
 from ..utils import (
     create_connectivity_pair_column_names,
     filter_to_eeg_channels,
@@ -280,16 +280,16 @@ class SymbolicMutualInformation(EEGEpochsMarker):
 
             all_tau_smi[f"tau_{tau}"] = np.array(epoch_data)
 
-        # Format output
+        # Format output using centralized format_marker_result
         if len(all_tau_smi) == 1:
             # Single tau - return 2D array (n_epochs, n_channel_pairs)
             tau_name = next(iter(all_tau_smi.keys()))
-            return {
-                "symbolicmutualinformation": {
-                    "data": all_tau_smi[tau_name],
-                    "col_names": col_names,
-                }
-            }
+            return format_marker_result(
+                feature_name="symbolicmutualinformation",
+                data=all_tau_smi[tau_name],
+                col_names=col_names,
+                channel_aggregated=False,
+            )
 
         # Multiple taus - stack into 3D tensor (n_taus, n_epochs, n_channel_pairs)
         tau_order = [f"tau_{tau}" for tau in self.taus]
@@ -298,9 +298,9 @@ class SymbolicMutualInformation(EEGEpochsMarker):
             axis=0,
         )
 
-        return {
-            "symbolicmutualinformation": {
-                "data": tensor,
-                "col_names": col_names,
-            }
-        }
+        return format_marker_result(
+            feature_name="symbolicmutualinformation",
+            data=tensor,
+            col_names=col_names,
+            channel_aggregated=False,
+        )

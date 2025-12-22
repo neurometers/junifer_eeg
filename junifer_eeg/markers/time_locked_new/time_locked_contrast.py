@@ -17,6 +17,7 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 import numpy as np
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ._time_locked_base import TimeLockedBase
 
 
@@ -261,11 +262,13 @@ class TimeLockedContrast(TimeLockedBase):
             all_data = np.concatenate([data_a, data_b], axis=0)
             # Shape: (n_epochs_a + n_epochs_b, n_channels, n_times)
 
-            return {
-                "timelockedcontrast": {
-                    "data": all_data,  # Keep full temporal dimension (not cropped)
-                }
-            }
+            # Use centralized format_marker_result - include ch_names for consistency
+            return format_marker_result(
+                feature_name="timelockedcontrast",
+                data=all_data,
+                col_names=list(epochs.ch_names),
+                channel_aggregated=False,
+            )
 
         # For aggregation case, process conditions separately
         data_a, ch_names_a = process_condition(epochs_a)
@@ -298,9 +301,10 @@ class TimeLockedContrast(TimeLockedBase):
         else:
             col_names = [f"{ch}" for ch in ch_names_a]
 
-        return {
-            "timelockedcontrast": {
-                "data": contrast_result,
-                "col_names": col_names,
-            }
-        }
+        # Use centralized format_marker_result to ensure consistent col_names storage
+        return format_marker_result(
+            feature_name="timelockedcontrast",
+            data=contrast_result,
+            col_names=col_names,
+            channel_aggregated=(self.channel_method is not None),
+        )

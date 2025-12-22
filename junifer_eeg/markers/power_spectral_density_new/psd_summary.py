@@ -5,6 +5,7 @@ from typing import Any, ClassVar, List, Union
 import numpy as np
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ..utils import aggregate_data, get_data_for_rois
 from ._psd_base import PowerSpectralDensityBase
 
@@ -240,21 +241,29 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
             # Step 2: Channel aggregation across all channels
             final_value = aggregate_data(channel_values, self.channel_method)
 
-            # Return single scalar result without unnecessary reshaping
+            # Return single scalar result using format_marker_result
             agg_name = f"trial_{self.trial_method}_roi_{self.channel_method}"
-            return {
-                "data": float(final_value),  # Return scalar, not (1, 1) array
-                "col_names": [f"all_channels_{agg_name}"],
-            }
+            # Extract inner dict from format_marker_result
+            result = format_marker_result(
+                feature_name="_temp",
+                data=float(final_value),
+                col_names=[f"all_channels_{agg_name}"],
+                channel_aggregated=True,
+            )
+            return result["_temp"]
         else:
             # Standard aggregation: apply aggregation manually
             # Check for no aggregation
             if self.channel_method is None and self.trial_method is None:
                 col_names = [f"{ch}" for ch in ch_names]
-                return {
-                    "data": psd_summary_values,
-                    "col_names": col_names,
-                }
+                # Use format_marker_result and extract inner dict
+                result = format_marker_result(
+                    feature_name="_temp",
+                    data=psd_summary_values,
+                    col_names=col_names,
+                    channel_aggregated=False,
+                )
+                return result["_temp"]
             else:
                 # Apply aggregation
                 result_data = psd_summary_values
@@ -300,7 +309,11 @@ class PowerSpectralDensitySummary(PowerSpectralDensityBase):
                 else:
                     col_names = [f"{ch}" for ch in ch_names]
 
-                return {
-                    "data": result_data,
-                    "col_names": col_names,
-                }
+                # Use format_marker_result and extract inner dict
+                result = format_marker_result(
+                    feature_name="_temp",
+                    data=result_data,
+                    col_names=col_names,
+                    channel_aggregated=(self.channel_method is not None),
+                )
+                return result["_temp"]

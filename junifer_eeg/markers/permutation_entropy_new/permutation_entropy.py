@@ -6,7 +6,7 @@ import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
-from ..base import EEGEpochsMarker
+from ..base import EEGEpochsMarker, format_marker_result
 from ..utils import filter_to_eeg_channels
 from ._permutation_entropy_base import PermutationEntropyBase
 
@@ -169,11 +169,11 @@ class PermutationEntropy(EEGEpochsMarker):
         output_data = apply_channel_trial_aggregation(
             output_data, self.channel_method, self.trial_method
         )
-        if self.channel_method is not None:
-            output_ch_names = None
 
-        result = {"permutationentropy": {"data": output_data}}
-        if output_ch_names is not None:
-            result["permutationentropy"]["col_names"] = output_ch_names
-
-        return result
+        # Use centralized format_marker_result to ensure consistent col_names storage
+        return format_marker_result(
+            feature_name="permutationentropy",
+            data=output_data,
+            col_names=output_ch_names,
+            channel_aggregated=(self.channel_method is not None),
+        )

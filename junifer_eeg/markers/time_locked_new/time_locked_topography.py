@@ -10,6 +10,7 @@ from typing import Any, ClassVar, List, Union
 
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ._time_locked_base import TimeLockedBase
 
 
@@ -193,11 +194,13 @@ class TimeLockedTopography(TimeLockedBase):
         if self.channel_method is None and self.trial_method is None:
             # Return raw per-epoch, per-channel, per-time results (matching NICE)
             # Shape: (n_epochs, n_channels, n_times)
-            return {
-                "timelockedtopo": {
-                    "data": data,  # Keep full temporal dimension
-                }
-            }
+            # Use centralized format_marker_result to ensure consistent col_names storage
+            return format_marker_result(
+                feature_name="timelockedtopo",
+                data=data,
+                col_names=ch_names,
+                channel_aggregated=False,
+            )
 
         # For aggregation, average across time first using base class helper
         time_averaged = self._average_across_time(
@@ -223,9 +226,10 @@ class TimeLockedTopography(TimeLockedBase):
         else:
             col_names = [f"{ch}" for ch in ch_names]
 
-        return {
-            "timelockedtopo": {
-                "data": result_data,
-                "col_names": col_names,
-            }
-        }
+        # Use centralized format_marker_result to ensure consistent col_names storage
+        return format_marker_result(
+            feature_name="timelockedtopo",
+            data=result_data,
+            col_names=col_names,
+            channel_aggregated=(self.channel_method is not None),
+        )

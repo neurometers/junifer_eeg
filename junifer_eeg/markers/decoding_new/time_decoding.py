@@ -5,6 +5,7 @@ from typing import Any, ClassVar, Dict, Optional
 import numpy as np
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ._decoding_base import DecodingBase
 
 
@@ -146,10 +147,10 @@ class TimeDecoding(DecodingBase):
         # Mean across folds: (n_times,)
         mean_scores = np.mean(scores, axis=0)
 
-        # Return as row vector: (1, n_times)
-        return {
-            "timedecoding": {
-                "data": mean_scores.reshape(1, -1),
-                "col_names": [f"t_{i}" for i in range(len(mean_scores))],
-            }
-        }
+        # Return as row vector using centralized format_marker_result
+        return format_marker_result(
+            feature_name="timedecoding",
+            data=mean_scores.reshape(1, -1),
+            col_names=[f"t_{i}" for i in range(len(mean_scores))],
+            channel_aggregated=True,  # Time decoding aggregates across channels
+        )

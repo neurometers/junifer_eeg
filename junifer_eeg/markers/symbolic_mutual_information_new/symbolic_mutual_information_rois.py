@@ -6,7 +6,7 @@ import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
-from ..base import EEGEpochsMarker
+from ..base import EEGEpochsMarker, format_marker_result
 from .symbolic_mutual_information import SymbolicMutualInformation
 
 __all__ = ["SymbolicMutualInformationROIs"]
@@ -177,8 +177,15 @@ class SymbolicMutualInformationROIs(EEGEpochsMarker):
             # Multiple taus: (n_taus, n_epochs, n_pairs)
             output_data = self._aggregate_multiple_taus(connectivity_data)
 
-        # Format output
-        return {"symbolicmutualinformation": {"data": output_data}}
+        # Format output using centralized format_marker_result
+        # Note: SMI with ROI aggregation doesn't have meaningful col_names
+        # since connectivity dimension has been aggregated
+        return format_marker_result(
+            feature_name="symbolicmutualinformation",
+            data=output_data,
+            col_names=None,
+            channel_aggregated=True,  # Connectivity aggregation applied
+        )
 
     def _aggregate_single_tau(
         self, connectivity_data: np.ndarray

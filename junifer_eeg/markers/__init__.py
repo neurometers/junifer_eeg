@@ -1,7 +1,12 @@
 """EEG markers module."""
 
 # Core infrastructure
-from .base import EEGBaseMarker, EEGEpochsMarker, EEGRawMarker
+from .base import (
+    EEGBaseMarker,
+    EEGEpochsMarker,
+    EEGRawMarker,
+    format_marker_result,
+)
 
 # Legacy markers (to be deprecated)
 from .contingent_negative_variation import ContingentNegativeVariation
@@ -83,4 +88,5 @@ __all__ = [
     "TimeLockedTopography",  # New refactored marker
     "TimeLockedTopographyOld",  # Legacy
     "WindowDecoding",
+    "format_marker_result",
 ]

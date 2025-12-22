@@ -1,12 +1,92 @@
 """Abstract base classes for EEG markers."""
 
 from abc import abstractmethod
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
+import numpy as np
 from junifer.markers import BaseMarker
 from junifer.utils import raise_error
 
-__all__ = ["EEGBaseMarker", "EEGEpochsMarker", "EEGRawMarker"]
+__all__ = [
+    "EEGBaseMarker",
+    "EEGEpochsMarker",
+    "EEGRawMarker",
+    "format_marker_result",
+]
+
+
+def format_marker_result(
+    feature_name: str,
+    data: np.ndarray,
+    col_names: Optional[List[str]] = None,
+    channel_aggregated: bool = False,
+) -> Dict[str, Dict[str, Any]]:
+    """Format marker result with consistent col_names handling.
+
+    This is the SINGLE SOURCE OF TRUTH for formatting marker outputs.
+    All markers should use this function to ensure consistent storage
+    of channel/column names alongside data.
+
+    The col_names are CRITICAL for:
+    1. Preserving epoch/channel ordering from input to output
+    2. Enabling the reader to correctly interpret dimensions
+    3. Ensuring data traceability back to original channels
+
+    Parameters
+    ----------
+    feature_name : str
+        Name of the output feature (e.g., 'spectralpower', 'permutationentropy').
+    data : np.ndarray
+        The computed marker data.
+    col_names : list of str, optional
+        Column/channel names. Should be provided when channel dimension exists.
+        Typically this is the list of channel names from the input data.
+    channel_aggregated : bool, default=False
+        Whether channel aggregation was applied. If True, col_names will NOT
+        be stored since they no longer correspond to individual channels.
+
+    Returns
+    -------
+    dict
+        Formatted result dictionary ready for storage:
+        {feature_name: {'data': data, 'col_names': col_names}}  # if col_names valid
+        {feature_name: {'data': data}}  # if no col_names or channel_aggregated
+
+    Examples
+    --------
+    >>> # Marker without aggregation - ALWAYS include col_names
+    >>> result = format_marker_result(
+    ...     'spectralpower',
+    ...     data,  # shape: (n_epochs, n_channels)
+    ...     col_names=ch_names,  # ['E1', 'E2', ..., 'E256']
+    ...     channel_aggregated=False
+    ... )
+
+    >>> # Marker with channel aggregation - col_names not stored
+    >>> result = format_marker_result(
+    ...     'spectralpower',
+    ...     data,  # shape: (n_epochs,) after channel mean
+    ...     col_names=ch_names,  # Will be ignored
+    ...     channel_aggregated=True
+    ... )
+
+    """
+    result: Dict[str, Any] = {"data": data}
+
+    # Only store col_names if:
+    # 1. They are provided
+    # 2. Channel aggregation was NOT applied
+    # 3. Data is not scalar
+    if (
+        col_names is not None
+        and not channel_aggregated
+        and not np.isscalar(data)
+        and (hasattr(data, "ndim") and data.ndim > 0)
+    ):
+        # Ensure col_names is a list (not tuple or other)
+        result["col_names"] = list(col_names)
+
+    return {feature_name: result}
 
 
 class EEGBaseMarker(BaseMarker):

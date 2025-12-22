@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from junifer.api.decorators import register_marker
 
+from ..base import format_marker_result
 from ._psd_base import PowerSpectralDensityBase
 
 
@@ -56,20 +57,35 @@ class PowerSpectralDensityEstimator(PowerSpectralDensityBase):
         # Generate column names for frequencies
         freq_names = [f"freq_{freq:.2f}Hz" for freq in freqs]
 
-        # Return data in junifer format
+        # Return data using centralized format_marker_result
+        # Note: PSD Estimator outputs multiple features, each with different structure
+        psd_result = format_marker_result(
+            feature_name="psd_data",
+            data=psd_data,  # Shape: (n_channels, n_freqs)
+            col_names=freq_names,
+            channel_aggregated=False,
+        )
+        # Add row_names for channel dimension
+        psd_result["psd_data"]["row_names"] = ch_names
+
+        freqs_result = format_marker_result(
+            feature_name="psd_freqs",
+            data=freqs.reshape(1, -1),  # Shape: (1, n_freqs)
+            col_names=freq_names,
+            channel_aggregated=True,  # No channel dim
+        )
+
+        norm_result = format_marker_result(
+            feature_name="psd_data_norm",
+            data=psd_data_norm,  # Shape: (n_channels, n_freqs)
+            col_names=freq_names,
+            channel_aggregated=False,
+        )
+        norm_result["psd_data_norm"]["row_names"] = ch_names
+
+        # Combine all results
         return {
-            "psd_data": {
-                "data": psd_data,  # Shape: (n_channels, n_freqs)
-                "col_names": freq_names,
-                "row_names": ch_names,
-            },
-            "psd_freqs": {
-                "data": freqs.reshape(1, -1),  # Shape: (1, n_freqs)
-                "col_names": freq_names,
-            },
-            "psd_data_norm": {
-                "data": psd_data_norm,  # Shape: (n_channels, n_freqs)
-                "col_names": freq_names,
-                "row_names": ch_names,
-            },
+            **psd_result,
+            **freqs_result,
+            **norm_result,
         }
