@@ -23,25 +23,25 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 from junifer_eeg.markers.contingent_negative_variation import (
     ContingentNegativeVariation,
 )
-from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+from junifer_eeg.markers.kolmogorov_complexity.kolmogorov_complexity import (
     KolmogorovComplexity,
 )
-from junifer_eeg.markers.permutation_entropy_new import (
+from junifer_eeg.markers.permutation_entropy import (
     PermutationEntropy as PermutationEntropyROIs,
 )
-from junifer_eeg.markers.power_spectral_density_new.psd_summary import (
+from junifer_eeg.markers.power_spectral_density.psd_summary import (
     PowerSpectralDensitySummary,
 )
-from junifer_eeg.markers.spectral_power_new import (
+from junifer_eeg.markers.spectral_power import (
     SpectralPowerBands as SpectralPowerBandsROIs,
 )
-from junifer_eeg.markers.symbolic_mutual_information_new.symbolic_mutual_information import (
+from junifer_eeg.markers.symbolic_mutual_information.symbolic_mutual_information import (
     SymbolicMutualInformation,
 )
-from junifer_eeg.markers.time_locked_new.time_locked_contrast import (
+from junifer_eeg.markers.time_locked.time_locked_contrast import (
     TimeLockedContrast,
 )
-from junifer_eeg.markers.time_locked_new.time_locked_topography import (
+from junifer_eeg.markers.time_locked.time_locked_topography import (
     TimeLockedTopography,
 )
 from junifer_eeg.tests.validation.update_tests_helper import (

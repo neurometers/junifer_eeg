@@ -12,10 +12,10 @@ from junifer_eeg.markers.power_spectral_density import (
 from junifer_eeg.markers.power_spectral_density import (
     PowerSpectralDensitySummary as OriginalSummary,
 )
-from junifer_eeg.markers.power_spectral_density_new.psd_estimator import (
+from junifer_eeg.markers.power_spectral_density.psd_estimator import (
     PowerSpectralDensityEstimator as RefactoredEstimator,
 )
-from junifer_eeg.markers.power_spectral_density_new.psd_summary import (
+from junifer_eeg.markers.power_spectral_density.psd_summary import (
     PowerSpectralDensitySummary as RefactoredSummary,
 )
 

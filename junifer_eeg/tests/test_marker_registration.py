@@ -10,7 +10,7 @@ def test_marker_registration():
         from junifer_eeg.markers.kolmogorov_complexity import (
             KolmogorovComplexity as OriginalKC,
         )
-        from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+        from junifer_eeg.markers.kolmogorov_complexity.kolmogorov_complexity import (
             KolmogorovComplexity as NewKC,
         )
 
@@ -45,7 +45,7 @@ def test_output_type_method():
     """Test that markers can be instantiated with different aggregation parameters."""
     print("\nTesting marker instantiation...")
 
-    from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+    from junifer_eeg.markers.kolmogorov_complexity.kolmogorov_complexity import (
         KolmogorovComplexity,
     )
 

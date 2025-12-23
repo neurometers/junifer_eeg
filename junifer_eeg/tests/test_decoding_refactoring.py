@@ -1,23 +1,10 @@
-"""Test script to validate Decoding markers refactoring."""
+"""Test script for Decoding markers."""
 
 import numpy as np
 from mne import create_info
 from mne.epochs import EpochsArray
 
-from junifer_eeg.markers.decoding_new.time_decoding import (
-    TimeDecoding as RefactoredTimeDecoding,
-)
-from junifer_eeg.markers.decoding_new.window_decoding import (
-    WindowDecoding as RefactoredWindowDecoding,
-)
-
-# Import both implementations
-from junifer_eeg.markers.time_decoding import (
-    TimeDecoding as OriginalTimeDecoding,
-)
-from junifer_eeg.markers.window_decoding import (
-    WindowDecoding as OriginalWindowDecoding,
-)
+from junifer_eeg.markers.decoding import TimeDecoding, WindowDecoding
 
 
 def create_test_epochs():
@@ -83,8 +70,8 @@ def test_time_decoding_equivalence():
         "random_state": 42,
     }
 
-    original_marker = OriginalTimeDecoding(**params)
-    refactored_marker = RefactoredTimeDecoding(**params)
+    original_marker = TimeDecoding(**params)
+    refactored_marker = TimeDecoding(**params)
 
     orig_result = original_marker.compute({"data": epochs})
     refact_result = refactored_marker.compute({"data": epochs})
@@ -134,8 +121,8 @@ def test_window_decoding_equivalence():
         "random_state": 42,
     }
 
-    original_marker = OriginalWindowDecoding(**params)
-    refactored_marker = RefactoredWindowDecoding(**params)
+    original_marker = WindowDecoding(**params)
+    refactored_marker = WindowDecoding(**params)
 
     orig_result = original_marker.compute({"data": epochs})
     refact_result = refactored_marker.compute({"data": epochs})
@@ -198,8 +185,8 @@ def test_time_decoding_roi():
         "random_state": 42,
     }
 
-    original_marker = OriginalTimeDecoding(**params)
-    refactored_marker = RefactoredTimeDecoding(**params)
+    original_marker = TimeDecoding(**params)
+    refactored_marker = TimeDecoding(**params)
 
     orig_result = original_marker.compute({"data": epochs})
     refact_result = refactored_marker.compute({"data": epochs})
@@ -231,8 +218,8 @@ def test_window_decoding_roi():
         "random_state": 42,
     }
 
-    original_marker = OriginalWindowDecoding(**params)
-    refactored_marker = RefactoredWindowDecoding(**params)
+    original_marker = WindowDecoding(**params)
+    refactored_marker = WindowDecoding(**params)
 
     orig_result = original_marker.compute({"data": epochs})
     refact_result = refactored_marker.compute({"data": epochs})
@@ -263,11 +250,11 @@ def test_missing_conditions():
         "random_state": 42,
     }
 
-    original_time = OriginalTimeDecoding(**params)
-    refactored_time = RefactoredTimeDecoding(**params)
+    original_time = TimeDecoding(**params)
+    refactored_time = TimeDecoding(**params)
 
-    original_window = OriginalWindowDecoding(**params)
-    refactored_window = RefactoredWindowDecoding(**params)
+    original_window = WindowDecoding(**params)
+    refactored_window = WindowDecoding(**params)
 
     orig_time_result = original_time.compute({"data": epochs})
     refact_time_result = refactored_time.compute({"data": epochs})

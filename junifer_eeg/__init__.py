@@ -13,7 +13,7 @@ from . import (
 )
 from .datagrabber import EEGDataGrabber
 from .markers import (
-    SpectralPower,
+    SpectralPowerBands,
     TimeLockedContrast,
     TimeLockedTopography,
     WindowDecoding,
@@ -47,7 +47,7 @@ __all__ = [
     "EEGFilter",
     "EEGInterpolation",
     "EEGReference",
-    "SpectralPower",
+    "SpectralPowerBands",
     "TimeLockedContrast",
     "TimeLockedTopography",
     "WindowDecoding",

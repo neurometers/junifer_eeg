@@ -8,7 +8,7 @@ from mne.epochs import EpochsArray
 from junifer_eeg.markers.kolmogorov_complexity import (
     KolmogorovComplexity as OriginalKC,
 )
-from junifer_eeg.markers.kolmogorov_complexity_new.kolmogorov_complexity import (
+from junifer_eeg.markers.kolmogorov_complexity.kolmogorov_complexity import (
     KolmogorovComplexity as RefactoredKC,
 )
 

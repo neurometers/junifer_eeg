@@ -1,7 +1,7 @@
 """Test that all markers consistently store col_names via format_marker_result.
 
 This test suite validates that:
-1. All _new markers use the centralized format_marker_result function
+1. All  markers use the centralized format_marker_result function
 2. col_names are stored correctly when no channel aggregation is applied
 3. col_names are NOT stored when channel aggregation IS applied
 4. Data can be read back correctly via JuniferH5Reader
@@ -21,10 +21,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from junifer_eeg.markers.base import format_marker_result
-from junifer_eeg.markers.kolmogorov_complexity_new import KolmogorovComplexity
-from junifer_eeg.markers.permutation_entropy_new import PermutationEntropy
-from junifer_eeg.markers.spectral_power_new import SpectralPowerBands
-from junifer_eeg.markers.time_locked_new import (
+from junifer_eeg.markers.kolmogorov_complexity import KolmogorovComplexity
+from junifer_eeg.markers.permutation_entropy import PermutationEntropy
+from junifer_eeg.markers.spectral_power import SpectralPowerBands
+from junifer_eeg.markers.time_locked import (
     TimeLockedTopography,
 )
 
@@ -94,7 +94,7 @@ class TestFormatMarkerResult:
 
 
 class TestMarkersUseFormatMarkerResult:
-    """Test that all _new markers use format_marker_result consistently."""
+    """Test that all  markers use format_marker_result consistently."""
 
     @pytest.fixture
     def synthetic_epochs(self):

@@ -8,85 +8,84 @@ from .base import (
     format_marker_result,
 )
 
-# Legacy markers (to be deprecated)
+# Standalone markers (not refactored to folder structure)
 from .contingent_negative_variation import ContingentNegativeVariation
+
+# Decoding markers
+from .decoding import TimeDecoding, WindowDecoding
 from .eeg_roi_aggregation import EEGROIAggregation
+
+# Kolmogorov Complexity
 from .kolmogorov_complexity import KolmogorovComplexity
-from .permutation_entropy import (
-    PermutationEntropy as PermutationEntropyOld,  # Old marker
+from .kolmogorov_complexity._kolmogorov_complexity_base import (
+    KolmogorovComplexityBase,
 )
 
-# Refactored hierarchical markers
-from .permutation_entropy_new import (
-    PermutationEntropy,  # New refactored marker (now includes aggregation)
-)
-from .permutation_entropy_new._permutation_entropy_base import (
+# Permutation Entropy
+from .permutation_entropy import PermutationEntropy
+from .permutation_entropy._permutation_entropy_base import (
     PermutationEntropyBase,
 )
+
+# Power Spectral Density
 from .power_spectral_density import (
     PowerSpectralDensityEstimator,
     PowerSpectralDensitySummary,
 )
-from .slow_waves_detection import SlowWavesDetection
-from .spectral_power import SpectralPower  # Old marker from .py file
-from .spectral_power_new import (
-    SpectralPowerBands,  # Now includes aggregation
-    SpectralPowerBase,
+
+# Slow Waves Detection
+from .slow_waves_detection import (
+    SLOW_WAVE_FEATURES,
+    SlowWavesDetection,
+    SlowWavesDetectionBase,
 )
-from .spindles_detection import SpindlesDetection
+
+# Spectral Power
+from .spectral_power import SpectralPowerBands, SpectralPowerBase
+
+# Spindles Detection
+from .spindles_detection import (
+    SPINDLE_FEATURES,
+    SpindlesDetection,
+    SpindlesDetectionBase,
+)
+
+# Symbolic Mutual Information
 from .symbolic_mutual_information import (
-    SymbolicMutualInformation as SymbolicMutualInformationOld,
-)
-from .symbolic_mutual_information_new._symbolic_mutual_information_base import (
-    SymbolicMutualInformationBase,
-)
-from .symbolic_mutual_information_new.symbolic_mutual_information import (
     SymbolicMutualInformation,
-)
-from .symbolic_mutual_information_new.symbolic_mutual_information_rois import (
+    SymbolicMutualInformationBase,
     SymbolicMutualInformationROIs,
 )
-from .time_decoding import TimeDecoding
-from .time_locked_contrast import (
-    TimeLockedContrast as TimeLockedContrastOld,  # Legacy
-)
-from .time_locked_new.time_locked_contrast import (
-    TimeLockedContrast,  # New refactored marker (primary)
-)
-from .time_locked_new.time_locked_topography import (
-    TimeLockedTopography,  # New refactored marker (primary)
-)
-from .time_locked_topography import (
-    TimeLockedTopography as TimeLockedTopographyOld,  # Legacy
-)
-from .window_decoding import WindowDecoding
+
+# Time-Locked markers
+from .time_locked import TimeLockedContrast, TimeLockedTopography
 
 __all__ = [
+    "SLOW_WAVE_FEATURES",
+    "SPINDLE_FEATURES",
     "ContingentNegativeVariation",
     "EEGBaseMarker",
     "EEGEpochsMarker",
     "EEGROIAggregation",
     "EEGRawMarker",
     "KolmogorovComplexity",
-    "PermutationEntropy",  # New refactored marker
+    "KolmogorovComplexityBase",
+    "PermutationEntropy",
     "PermutationEntropyBase",
-    "PermutationEntropyOld",  # Legacy
     "PowerSpectralDensityEstimator",
     "PowerSpectralDensitySummary",
     "SlowWavesDetection",
-    "SpectralPower",
+    "SlowWavesDetectionBase",
     "SpectralPowerBands",
     "SpectralPowerBase",
     "SpindlesDetection",
-    "SymbolicMutualInformation",  # New refactored marker
+    "SpindlesDetectionBase",
+    "SymbolicMutualInformation",
     "SymbolicMutualInformationBase",
-    "SymbolicMutualInformationOld",  # Legacy
     "SymbolicMutualInformationROIs",
     "TimeDecoding",
-    "TimeLockedContrast",  # New refactored marker
-    "TimeLockedContrastOld",  # Legacy
-    "TimeLockedTopography",  # New refactored marker
-    "TimeLockedTopographyOld",  # Legacy
+    "TimeLockedContrast",
+    "TimeLockedTopography",
     "WindowDecoding",
     "format_marker_result",
 ]
