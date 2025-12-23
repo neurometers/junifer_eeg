@@ -511,12 +511,23 @@ class JuniferH5Reader:
     def _get_or_infer_schema(
         self, marker_name: str, raw_data: Dict, data: np.ndarray
     ) -> TensorSchema:
-        """Get explicit schema or infer from data."""
+        """Get explicit schema or infer from data using marker class metadata."""
         # Check for explicit schema in raw_data
         if "tensor_schema" in raw_data:
             return TensorSchema.from_dict(raw_data["tensor_schema"])
 
-        # Infer schema from marker type and data shape
+        # Get marker class and params from HDF5 metadata (AUTHORITATIVE)
+        md5 = self._md5_map.get(marker_name)
+        marker_class = None
+        marker_params = None
+        if md5 and md5 in self._features:
+            marker_meta = self._features[md5].get("marker", {})
+            marker_class = marker_meta.get(
+                "class"
+            )  # e.g., 'SymbolicMutualInformation'
+            marker_params = marker_meta  # Full params dict
+
+        # Infer schema using marker class (no name-based guessing)
         col_names = self._extract_col_names(raw_data)
         row_names = raw_data.get("row_headers")
         kind = raw_data.get("kind")
@@ -527,6 +538,8 @@ class JuniferH5Reader:
             col_names=col_names,
             row_names=row_names,
             kind=kind,
+            marker_class=marker_class,
+            marker_params=marker_params,
         )
 
     def _extract_col_names(self, raw_data: Dict) -> Optional[List[str]]:
@@ -636,6 +649,219 @@ class JuniferH5Reader:
     def __iter__(self):
         """Iterate over marker names."""
         return iter(self.markers.keys())
+
+    def dump_to_pkl(self, output_path: Union[str, Path]) -> Dict[str, Any]:
+        """Dump all markers and metadata to a pickle file.
+
+        This method exhaustively exports ALL information from the HDF5 file
+        to a pickle file that can be easily loaded by any Python user.
+
+        Parameters
+        ----------
+        output_path : str or Path
+            Path to save the pickle file.
+
+        Returns
+        -------
+        dict
+            The dumped data dictionary (same as what's saved to pickle).
+
+        Notes
+        -----
+        The output pickle contains a dictionary with:
+        - 'source_file': Original HDF5 file path
+        - 'markers': Dict mapping marker names to marker info dictionaries
+        - 'summary': Human-readable summary string
+
+        Each marker info dictionary contains:
+        - 'name': Marker name
+        - 'full_name': Full feature name in HDF5
+        - 'data': numpy array with the marker data
+        - 'shape': Tuple with data shape
+        - 'dtype': Data type string
+        - 'dimensions': List of dimension descriptions
+        - 'dimension_labels': Dict mapping dimension names to their labels
+        - 'schema_description': Human-readable schema description
+        - 'aggregation': Dict with aggregation info
+        - 'parameters': Marker-specific parameters (if available)
+        - 'raw_metadata': Original HDF5 metadata
+        """
+        import pickle
+
+        output_path = Path(output_path)
+
+        # Build the dump dictionary
+        dump_data = {
+            "source_file": str(self.path.absolute()),
+            "source_filename": self.path.name,
+            "markers": {},
+            "marker_list": [],
+        }
+
+        # Process each marker
+        for marker_name in self.list_markers():
+            try:
+                marker_data = self.get(marker_name, use_cache=False)
+
+                # Build dimension descriptions
+                dimensions = []
+                dimension_labels = {}
+
+                for i, dim in enumerate(marker_data.schema.dimensions):
+                    dim_desc = {
+                        "axis": i,
+                        "type": dim.dim_type.name,
+                        "size": dim.size,
+                        "description": self._get_dimension_description(
+                            dim.dim_type
+                        ),
+                    }
+                    dimensions.append(dim_desc)
+
+                    # Store labels if available
+                    if dim.labels is not None:
+                        dimension_labels[f"axis_{i}_{dim.dim_type.name}"] = (
+                            dim.labels
+                        )
+
+                # Build marker info
+                marker_info = {
+                    "name": marker_name,
+                    "full_name": self.markers.get(marker_name, marker_name),
+                    "data": marker_data.data,
+                    "shape": marker_data.shape,
+                    "dtype": str(marker_data.data.dtype),
+                    "dimensions": dimensions,
+                    "dimension_labels": dimension_labels,
+                    "schema_description": marker_data.schema.describe(),
+                    "aggregation": {
+                        "channel_method": marker_data.schema.aggregation.channel_method,
+                        "trial_method": marker_data.schema.aggregation.trial_method,
+                        "connectivity_method": marker_data.schema.aggregation.connectivity_method,
+                        "time_method": marker_data.schema.aggregation.time_method,
+                        "band_method": marker_data.schema.aggregation.band_method,
+                    },
+                    "parameters": marker_data.schema.parameters,
+                    "raw_metadata": self._serialize_metadata(
+                        marker_data.raw_metadata
+                    ),
+                }
+
+                dump_data["markers"][marker_name] = marker_info
+                dump_data["marker_list"].append(marker_name)
+
+            except Exception as e:
+                # Include error info for failed markers
+                dump_data["markers"][marker_name] = {
+                    "name": marker_name,
+                    "error": str(e),
+                    "data": None,
+                }
+                dump_data["marker_list"].append(marker_name)
+
+        # Add summary
+        dump_data["summary"] = self._generate_dump_summary(dump_data)
+
+        # Save to pickle
+        with open(output_path, "wb") as f:
+            pickle.dump(dump_data, f)
+
+        return dump_data
+
+    def _get_dimension_description(self, dim_type: DimensionType) -> str:
+        """Get human-readable description for a dimension type."""
+        descriptions = {
+            DimensionType.EPOCHS: "Trial/epoch index (each epoch is one time window of EEG data)",
+            DimensionType.CHANNELS: "EEG channel (electrode position)",
+            DimensionType.TIMES: "Time point within epoch (in seconds)",
+            DimensionType.FREQUENCIES: "Frequency bin (in Hz)",
+            DimensionType.BANDS: "Frequency band (e.g., delta, theta, alpha, beta, gamma)",
+            DimensionType.CHANNEL_PAIRS: "Channel pair for connectivity (flattened upper triangle)",
+            DimensionType.CHANNELS_I: "First channel in connectivity matrix",
+            DimensionType.CHANNELS_J: "Second channel in connectivity matrix",
+            DimensionType.FEATURES: "Feature index (marker-specific features)",
+            DimensionType.SCALAR: "Scalar value (fully aggregated)",
+            DimensionType.ELEMENTS: "Element index (subject/session)",
+        }
+        return descriptions.get(
+            dim_type, f"Unknown dimension type: {dim_type.name}"
+        )
+
+    def _serialize_metadata(self, metadata: Dict) -> Dict:
+        """Serialize metadata to be pickle-compatible."""
+        import pickle
+
+        result = {}
+        for key, value in metadata.items():
+            if isinstance(value, np.ndarray):
+                result[key] = value.tolist()
+            elif isinstance(value, (list, tuple)):
+                result[key] = [
+                    v.tolist() if isinstance(v, np.ndarray) else v
+                    for v in value
+                ]
+            elif isinstance(value, dict):
+                result[key] = self._serialize_metadata(value)
+            else:
+                try:
+                    pickle.dumps(value)
+                    result[key] = value
+                except Exception:
+                    result[key] = str(value)
+        return result
+
+    def _generate_dump_summary(self, dump_data: Dict) -> str:
+        """Generate human-readable summary of dumped data."""
+        lines = [
+            "=" * 70,
+            "Junifer HDF5 Data Dump",
+            f"Source: {dump_data['source_filename']}",
+            "=" * 70,
+            "",
+            f"Total markers: {len(dump_data['marker_list'])}",
+            "",
+            "MARKERS:",
+            "-" * 40,
+        ]
+
+        for name in dump_data["marker_list"]:
+            info = dump_data["markers"][name]
+            if info.get("error"):
+                lines.append(f"  {name}: ERROR - {info['error']}")
+            else:
+                lines.append(f"  {name}:")
+                lines.append(f"    Shape: {info['shape']}")
+                lines.append(f"    Dtype: {info['dtype']}")
+                lines.append("    Dimensions:")
+                for dim in info["dimensions"]:
+                    lines.append(
+                        f"      [{dim['axis']}] {dim['type']}: "
+                        f"size={dim['size']}"
+                    )
+                    lines.append(f"          {dim['description']}")
+                lines.append("")
+
+        lines.extend(
+            [
+                "=" * 70,
+                "HOW TO USE THIS FILE:",
+                "-" * 40,
+                "  import pickle",
+                "  with open('output.pkl', 'rb') as f:",
+                "      data = pickle.load(f)",
+                "",
+                "  # List all markers",
+                "  print(data['marker_list'])",
+                "",
+                "  # Get a specific marker's data",
+                "  marker = data['markers']['marker_name']",
+                "  numpy_array = marker['data']",
+                "  print(marker['schema_description'])",
+                "=" * 70,
+            ]
+        )
+
+        return "\n".join(lines)
 
 
 def read_h5(path: Union[str, Path]) -> JuniferH5Reader:

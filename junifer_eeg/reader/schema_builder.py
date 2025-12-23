@@ -423,12 +423,14 @@ def build_connectivity_schema(
     channel_names: Optional[List[str]] = None,
     flattened: bool = True,
     pair_names: Optional[List[str]] = None,
+    n_channel_pairs: Optional[int] = None,
+    tau_names: Optional[List[str]] = None,
     connectivity_method: Optional[str] = None,
     channel_method: Optional[str] = None,
     trial_method: Optional[str] = None,
     **params,
 ) -> TensorSchema:
-    """Build schema for connectivity markers.
+    """Build schema for connectivity markers (WSMI, SMI, coherence, etc.).
 
     Parameters
     ----------
@@ -444,6 +446,11 @@ def build_connectivity_schema(
         Whether connectivity is flattened to pairs.
     pair_names : list of str, optional
         Pair names for flattened connectivity.
+    n_channel_pairs : int, optional
+        Number of channel pairs (if different from n_channels*(n_channels-1)//2).
+    tau_names : list of str, optional
+        Names for tau/timescale dimension (for multi-tau WSMI).
+        If provided, adds a BANDS dimension for the taus.
     connectivity_method : str, optional
         Connectivity aggregation method.
     channel_method : str, optional
@@ -457,8 +464,30 @@ def build_connectivity_schema(
     -------
     TensorSchema
         Built schema.
+
+    Examples
+    --------
+    >>> # Single-tau WSMI: shape (n_epochs, n_channel_pairs)
+    >>> schema = build_connectivity_schema(
+    ...     marker_name='wsmi_theta',
+    ...     n_epochs=100,
+    ...     n_channels=256,
+    ... )
+
+    >>> # Multi-tau WSMI: shape (n_taus, n_epochs, n_channel_pairs)
+    >>> schema = build_connectivity_schema(
+    ...     marker_name='wsmi_multiscale',
+    ...     n_epochs=100,
+    ...     n_channels=256,
+    ...     tau_names=['tau_8_theta', 'tau_4_alpha', 'tau_2_beta', 'tau_1_gamma'],
+    ... )
     """
     builder = SchemaBuilder("connectivity", marker_name)
+
+    # Add tau/timescale dimension if multi-tau (WSMI with multiple taus)
+    # This comes FIRST because shape is (n_taus, n_epochs, n_channel_pairs)
+    if tau_names is not None and len(tau_names) > 0:
+        builder.add_bands(tau_names)
 
     # Add epochs if not aggregated
     if trial_method is None:
@@ -466,8 +495,9 @@ def build_connectivity_schema(
 
     # Add connectivity dimensions
     if flattened:
-        n_pairs = n_channels * (n_channels - 1) // 2
-        builder.add_channel_pairs(n_pairs, pair_names)
+        if n_channel_pairs is None:
+            n_channel_pairs = n_channels * (n_channels - 1) // 2
+        builder.add_channel_pairs(n_channel_pairs, pair_names)
     else:
         if connectivity_method is None:
             builder.add_connectivity_matrix(n_channels, channel_names)

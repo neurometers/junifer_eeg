@@ -1,0 +1,132 @@
+---
+# Comprehensive marker test - verifies reader correctly identifies marker types
+# from HDF5 metadata (marker['class']) WITHOUT relying on marker names
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}_task-Sart1_desc-evoked_epo.fif"
+      space: "native"
+  replacements: ["subject"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/nico/data"
+
+preprocess: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: output/comprehensive_marker_test.h5
+  single_output: true
+
+markers:
+  # ============================================
+  # WSMI - intentionally named "weird_name" to prove we don't use names
+  # ============================================
+  - kind: SymbolicMutualInformation
+    name: weird_name_single_tau  # NOT "wsmi" - proves class-based detection
+    kernel: 3
+    taus: 8
+    weighted: true
+    csd: false
+    tmax: 0.5
+    "on": "EEG"
+
+  - kind: SymbolicMutualInformation
+    name: another_weird_name_multi_tau  # Multi-tau WSMI
+    kernel: 3
+    taus: [8, 4, 2, 1]
+    weighted: true
+    csd: false
+    tmax: 0.5
+    "on": "EEG"
+
+  # ============================================
+  # Spectral Power - named "bazqux" to prove class detection
+  # ============================================
+  - kind: SpectralPowerBands
+    name: bazqux_power_multi_band  # NOT "psd" or "spectral"
+    bands:
+      theta: [4, 8]
+      alpha: [8, 13]
+      beta: [13, 30]
+    tmin: null
+    tmax: 0.5
+    "on": "EEG"
+
+  - kind: SpectralPowerBands
+    name: bazqux_power_single_band  # Single band
+    bands:
+      alpha: [8, 13]
+    tmin: null
+    tmax: 0.5
+    "on": "EEG"
+
+  # ============================================
+  # Kolmogorov Complexity - no aggregation
+  # ============================================
+  - kind: KolmogorovComplexity
+    name: kc_no_agg
+    nbins: 16
+    tmax: 0.5
+    "on": "EEG"
+
+  # ============================================
+  # Kolmogorov Complexity - channel aggregation only
+  # ============================================
+  - kind: KolmogorovComplexity
+    name: kc_channel_agg
+    nbins: 16
+    tmax: 0.5
+    channel_method: "mean"
+    "on": "EEG"
+
+  # ============================================
+  # Kolmogorov Complexity - trial aggregation only
+  # ============================================
+  - kind: KolmogorovComplexity
+    name: kc_trial_agg
+    nbins: 16
+    tmax: 0.5
+    trial_method: "trim_mean80"
+    "on": "EEG"
+
+  # ============================================
+  # Kolmogorov Complexity - both aggregations
+  # ============================================
+  - kind: KolmogorovComplexity
+    name: kc_both_agg
+    nbins: 16
+    tmax: 0.5
+    channel_method: "std"
+    trial_method: "trim_mean80"
+    "on": "EEG"
+
+  # ============================================
+  # Spectral Power - with channel aggregation
+  # ============================================
+  - kind: SpectralPowerBands
+    name: spectral_channel_agg
+    bands:
+      alpha: [8, 13]
+      beta: [13, 30]
+    tmax: 0.5
+    channel_method: "mean"
+    "on": "EEG"
+
+  # ============================================
+  # Spectral Power - with trial aggregation
+  # ============================================
+  - kind: SpectralPowerBands
+    name: spectral_trial_agg
+    bands:
+      alpha: [8, 13]
+    tmax: 0.5
+    trial_method: "mean"
+    "on": "EEG"

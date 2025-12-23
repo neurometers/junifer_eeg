@@ -1,0 +1,35 @@
+---
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-01_task-lg_acq-01_epo.fif"
+      space: "native"
+  replacements: ["subject"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: HDF5FeatureStorage
+  uri: output/wsmi_results.h5
+  single_output: true
+
+markers:
+  - kind: SymbolicMutualInformation
+    name: wsmi_multiscale
+    kernel: 3
+    taus: [8, 4, 2, 1]  # theta, alpha, beta, gamma timescales
+    weighted: true
+    csd: true
+    tmin: null
+    tmax: 0.6
+    "on": "EEG"
