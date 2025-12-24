@@ -3,15 +3,19 @@
 # docker-junifer.sh - Convenience script to run junifer-eeg in Docker
 # 
 # Usage:
-#   ./docker-junifer.sh run path/to/config.yaml
+#   ./docker-junifer.sh run path/to/config.yaml [--dump]
 #   ./docker-junifer.sh --help
 #   ./docker-junifer.sh selftest
+#
+# Options:
+#   --dump    After running the pipeline, convert HDF5 output to pickle and delete HDF5
 
 set -e
 
 # Configuration
 IMAGE_NAME="junifer-eeg:latest"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DUMP_MODE=false
 
 # Check if Docker is available
 if ! command -v docker &> /dev/null; then
@@ -28,6 +32,22 @@ fi
 # Parse arguments
 COMMAND="$1"
 shift || true
+
+# Check for --dump flag in remaining arguments
+REMAINING_ARGS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dump)
+            DUMP_MODE=true
+            shift
+            ;;
+        *)
+            REMAINING_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${REMAINING_ARGS[@]}"
 
 # Function to extract paths from YAML
 extract_paths_from_yaml() {
@@ -193,4 +213,70 @@ echo ""
 
 # Execute the command
 eval $DOCKER_CMD
+
+# If --dump flag was set and we ran the 'run' command, dump HDF5 to pickle
+if [ "$DUMP_MODE" = true ] && [ "$COMMAND" = "run" ] && [ -n "$YAML_FILE" ]; then
+    echo ""
+    echo "=== Dumping HDF5 to Pickle ==="
+    
+    # Extract HDF5 output path from YAML
+    H5_FILE=$(grep -E '^\s*uri:' "$YAML_FILE" | sed -E 's/.*uri:\s*["'"'"']?([^"'"'"']+)["'"'"']?.*/\1/' | head -1 | tr -d ' ')
+    
+    if [ -z "$H5_FILE" ]; then
+        echo "Warning: Could not find 'uri:' in YAML file. Skipping dump."
+    else
+        # Convert relative path to absolute
+        if [[ "$H5_FILE" != /* ]]; then
+            H5_FILE="$REPO_ROOT/$H5_FILE"
+        fi
+        
+        if [ ! -f "$H5_FILE" ]; then
+            echo "Warning: HDF5 file not found: $H5_FILE. Skipping dump."
+        else
+            # Create pickle filename (same path, .pkl extension)
+            PKL_FILE="${H5_FILE%.h5}.pkl"
+            
+            H5_FILE_ABS="$H5_FILE"
+            H5_DIR="$(dirname "$H5_FILE_ABS")"
+            H5_NAME="$(basename "$H5_FILE_ABS")"
+            PKL_DIR="$(dirname "$PKL_FILE")"
+            PKL_NAME="$(basename "$PKL_FILE")"
+            
+            echo "Reading: $H5_FILE"
+            echo "Writing: $PKL_FILE"
+            
+            # Run the dump inside Docker
+            docker run --rm \
+                --user "$(id -u):$(id -g)" \
+                -v "$H5_DIR:/input:ro" \
+                -v "$PKL_DIR:/output" \
+                -v "$REPO_ROOT/junifer_eeg:/app/junifer_eeg:ro" \
+                -v "$CACHE_DIR:/cache" \
+                -e HOME=/cache \
+                --entrypoint python \
+                "$IMAGE_NAME" \
+                -c "
+from junifer_eeg.reader import read_h5
+reader = read_h5('/input/$H5_NAME')
+markers = reader.list_markers()
+print(f'Found {len(markers)} markers: {', '.join(markers)}')
+reader.dump_all_to_pkl('/output/$PKL_NAME')
+print('Successfully dumped all markers to pickle file')
+"
+            
+            # Delete HDF5 file
+            if [ -f "$PKL_FILE" ]; then
+                echo ""
+                echo "Pickle file created successfully. Deleting HDF5 file..."
+                rm "$H5_FILE"
+                echo "Deleted: $H5_FILE"
+                echo ""
+                echo "Done! Pickle file saved to: $PKL_FILE"
+            else
+                echo "Error: Pickle file was not created. Keeping HDF5 file."
+                exit 1
+            fi
+        fi
+    fi
+fi
 
