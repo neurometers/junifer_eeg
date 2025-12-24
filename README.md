@@ -1,175 +1,126 @@
-# JUnifer EEG
+# junifer-eeg
 
-JUnifer EEG is an extension for the JUelich NeuroImaging FEature extractoR (junifer) that provides EEG-specific components for electrophysiological data analysis.
+EEG extension for the JUelich NeuroImaging FEature extractoR (junifer) providing comprehensive electrophysiological data analysis capabilities.
 
 ## Overview
 
-This extension adds EEG support to junifer by:
+junifer-eeg extends junifer with EEG-specific components:
 
-- **Custom datagrabber** - `EEGDataGrabber` with EEG file format support (.vhdr, .edf, .fif) via global reader registry
-- **Equipment detection** - Automatic detection and montage setting for Biosemi, BrainVision, EGI systems
-- **Preprocessing** - Filtering, epoching, artifact rejection, and interpolation
-- **Feature extraction** - Spectral power, connectivity, complexity, and ERP markers
-- **HDF5 storage** - Uses junifer's recommended storage format
+- **Data Support**: .vhdr, .edf, .fif, .mff formats via global reader registry
+- **Equipment Handling**: Automatic detection and montage setting for Biosemi, BrainVision, EGI systems
+- **Preprocessing**: Filtering, epoching, artifact rejection, interpolation, CSD computation
+- **Feature Extraction**: 15+ marker types including spectral, connectivity, complexity, ERP, and decoding
+- **Storage**: HDF5-based feature storage with junifer integration
+
+## Markers
+
+### Spectral Analysis
+- **SpectralPowerBands** - Power in delta, theta, alpha, beta, gamma bands
+- **PowerSpectralDensityEstimator** - Full PSD with customizable parameters
+- **PowerSpectralDensitySummary** - Band power summaries and statistics
+
+### Connectivity
+- **SymbolicMutualInformation** - SMI and weighted SMI (WSMI) connectivity
+- **SymbolicMutualInformationROIs** - Region-based connectivity analysis
+
+### Complexity
+- **PermutationEntropy** - Frequency-band specific entropy analysis
+- **KolmogorovComplexity** - Compression-based complexity measures
+
+### Event-Related
+- **TimeLockedTopography** - ERP topographies and time courses
+- **TimeLockedContrast** - Condition contrasts and differential analysis
+- **ContingentNegativeVariation** - CNV component detection
+
+### Decoding
+- **TimeDecoding** - Temporal decoding with sliding estimator
+- **WindowDecoding** - Fixed window decoding analysis
+
+### Oscillation Detection
+- **SpindlesDetection** - Sleep spindle detection and characterization
+- **SlowWavesDetection** - Slow wave identification and analysis
+
+## Quick Start
+
+### Docker (Recommended)
+
+```bash
+# Build image
+docker build -t junifer-eeg:latest .
+
+# Run with smart path detection
+./docker-junifer.sh run examples/icm_complete_individual_markers.yaml
+
+# With HDF5 to pickle conversion
+./docker-junifer.sh run examples/icm_complete_individual_markers.yaml --dump
+```
+
+### Local Installation
+
+```bash
+# Create environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install junifer-eeg
+pip install -e .
+```
+
+## Example Configurations
+
+The `examples/` directory contains ready-to-use YAML configurations:
+
+- **`icm_complete_individual_markers.yaml`** - Full ICM pipeline with all markers
+- **`icm_aggregated_markers.yaml`** - Optimized pipeline with ROI aggregation
+- **`icm_optimized_markers.yaml`** - Fast pipeline with essential markers
+- **`wsmi_only.yaml`** - Connectivity-only analysis
+- **`sevo_pipeline.yaml`** - Sevoflurane analysis pipeline
+
+Run with:
+```bash
+junifer run examples/your_config.yaml
+```
 
 ## Architecture
-
-This extension follows junifer's pattern:
 
 ```
 EEGDataGrabber → Preprocessors → Markers → HDF5FeatureStorage
 ```
 
-The global reader registry automatically handles montage setting for all EEG formats, enabling CSD computation and proper channel localization.
-
-## Installation
-
-### Option 1: Docker (Recommended)
-
-The easiest way to use junifer-eeg is with Docker. The smart `docker-junifer.sh` script automatically detects and mounts all required paths from your YAML file!
-
-```bash
-# Build the Docker image (one-time)
-docker build -t junifer-eeg:latest .
-
-# Run with the smart script - works with ANY yaml!
-./docker-junifer.sh run examples/icm_preprocessing_only.yaml
-```
-
-**Two Ways to Run Docker:**
-
-#### Smart Script (Easiest) - Works with Your Existing YAMLs
-Use your existing YAML files as-is, even with absolute paths:
-
-```bash
-# Your local YAML with absolute paths - works directly!
-./docker-junifer.sh run examples/icm_preprocessing_only.yaml
-```
-
-The script automatically:
-- Parses your YAML to find all paths (`datadir`, `uri`, `dump_location`, etc.)
-- Creates the necessary Docker volume mounts
-- Handles both relative and absolute paths intelligently
-- Creates output directories if needed
-
-#### Manual Docker Run (For Custom Setups)
-For manual control, create a Docker-specific YAML with relative paths:
-
-```yaml
-# examples/icm_preprocessing_only_docker.yaml
-datadir: "./data"
-dump_location: ./output
-uri: ./output/results.h5
-```
-
-Then run with manual mounts:
-```bash
-docker run --rm \
-  --user $(id -u):$(id -g) \
-  -v $(pwd)/examples/icm_preprocessing_only_docker.yaml:/app/config.yaml \
-  -v $(pwd)/site/bckp/ground_truth:/app/data \
-  -v $(pwd)/output:/app/output \
-  -v $(pwd)/.docker_cache:/cache \
-  -e HOME=/cache \
-  -e TEMPLATEFLOW_HOME=/cache/templateflow \
-  junifer-eeg:latest run /app/config.yaml
-```
-
-**See [DOCKER_USAGE.md](DOCKER_USAGE.md) for detailed Docker instructions and examples.**
-
-### Option 2: Local Installation
-
-# Create a virtual environment (works with UV tools also) 
-
-```bash
-python3 -m venv venv
-```
-# Install requiremetns
-
-```bash
-pip install -r requirements.txt
-```
-# Finally install junifer-eeg
-
-```bash
-pip install -e .
-```
-
-## Quick Start
-
-### Docker Quick Start
-
-```bash
-# 1. Build the image (first time only)
-docker build -t junifer-eeg:latest .
-
-# 2. Run with your existing YAML
-./docker-junifer.sh run examples/icm_preprocessing_only.yaml
-
-# 3. Check results
-ls -lh examples/  # Output files will be here
-```
-
-### Local Quick Start
-
-1. **Install**: Follow local installation instructions above
-2. **Prepare Data**: Use EEG in .mff / .edf / .fif
-3. **Copy Example**: `cp examples/icm_complete_individual_markers.yaml my_analysis.yaml`
-4. **Edit Config**: Update `my_analysis.yaml` with your desired path, preprocessing and markers
-5. **Run**: `junifer run my_analysis.yaml`
-6. **Results**: Features saved in the path specified in your yaml
-
-## Example YAML Files
-
-The `examples/` directory contains two versions of configuration files to demonstrate different usage patterns:
-
-### For Local/Smart Docker Script Use
-- **`icm_preprocessing_only.yaml`** - Uses absolute paths (your normal workflow)
-- **`icm_complete_individual_markers.yaml`** - Full pipeline with local paths
-- **`icm_gamma_21.yaml`** - Gamma band analysis example
-
-**These work directly with:**
-```bash
-# Local
-junifer run examples/icm_preprocessing_only.yaml
-
-# Docker smart script
-./docker-junifer.sh run examples/icm_preprocessing_only.yaml
-```
-
-### For Manual Docker Run
-- **`icm_preprocessing_only_docker.yaml`** - Uses relative paths like `./data`, `./output`
-
-**For manual docker run with custom mounts:**
-```bash
-docker run --rm \
-  --user $(id -u):$(id -g) \
-  -v $(pwd)/examples/icm_preprocessing_only_docker.yaml:/app/config.yaml \
-  -v $(pwd)/site/bckp/ground_truth:/app/data \
-  -v $(pwd)/output:/app/output \
-  -v $(pwd)/.docker_cache:/cache \
-  -e HOME=/cache \
-  -e TEMPLATEFLOW_HOME=/cache/templateflow \
-  junifer-eeg:latest run /app/config.yaml
-```
+Key preprocessors:
+- **ICMEquipmentFilter** - Equipment-specific filtering and resampling
+- **ICMLGEpoching** - ICM paradigm epoching with event mapping
+- **ICMAdaptiveArtifactRejection** - Adaptive bad channel/epoch detection
 
 ## Testing
 
 ```bash
-# Run all tests  
+# Run all tests
 pytest junifer_eeg/tests/
 
 # Run validation tests
-pytest junifer_eeg/tests/validation/ 
+pytest junifer_eeg/tests/validation/
+
+# Run with coverage
+pytest --cov=junifer_eeg junifer_eeg/tests/
 ```
+
+## Docker Guide
+
+See [DOCKER_GUIDE.md](DOCKER_GUIDE.md) for comprehensive Docker usage instructions including:
+- Smart script with automatic path mounting
+- Manual Docker run examples
+- YAML configuration strategies
+- Troubleshooting
 
 ## Contributing
 
-This extension follows junifer's architectural patterns. When contributing:
-
-1. Use junifer's existing components when possible
-2. Include comprehensive tests
+1. Follow junifer's architectural patterns
+2. Add comprehensive tests for new markers
 3. Use HDF5 for data storage
-
-
+4. Ensure proper equipment handling
+5. Maintain backward compatibility
 
