@@ -185,8 +185,13 @@ class SimplifiedH5Reader:
         # Get marker class from metadata
         marker_class = self._get_marker_class(marker_name)
 
-        # Map dimensions based on marker class
-        dim_names = self._infer_dimensions(marker_class, data.shape, col_names)
+        # Get dimension names from MARKER_DIMENSIONS dict
+        dim_names = MARKER_DIMENSIONS.get(
+            marker_class,
+            [
+                f"dim{i}" for i in range(data.ndim)
+            ],  # Fallback if unknown marker
+        )
 
         # Get full metadata
         metadata = {
@@ -224,63 +229,6 @@ class SimplifiedH5Reader:
                 # Fallback for simple string storage
                 return marker_meta if isinstance(marker_meta, str) else None
         return None
-
-    def _infer_dimensions(
-        self,
-        marker_class: Optional[str],
-        shape: tuple,
-        col_names: Optional[List[str]],
-    ) -> List[str]:
-        """Infer dimension names from marker class and shape.
-
-        Parameters
-        ----------
-        marker_class : str or None
-            Marker class name.
-        shape : tuple
-            Data shape.
-        col_names : list or None
-            Column names (typically channel names).
-
-        Returns
-        -------
-        list of str
-            Dimension names for each axis.
-        """
-        # If we have marker class, use the mapping
-        if marker_class and marker_class in MARKER_DIMENSIONS:
-            expected_dims = MARKER_DIMENSIONS[marker_class]
-
-            # Handle size-1 dimensions from aggregation
-            # Markers always preserve dimensions, so shape matches expected
-            if len(shape) == len(expected_dims):
-                return expected_dims
-
-        # Fallback: infer from shape patterns
-        ndim = len(shape)
-
-        if ndim == 0:
-            return []  # Scalar
-        elif ndim == 1:
-            # Could be times, channels, or features
-            if shape[0] == 1:
-                return ["scalar"]
-            return ["times"]  # Most common 1D
-        elif ndim == 2:
-            # (epochs, channels) most common
-            return ["epochs", "channels"]
-        elif ndim == 3:
-            # Could be (bands, epochs, channels) or (taus, epochs, channels)
-            # Check if first dim is small (likely bands/taus)
-            if shape[0] <= 10:
-                return ["bands", "epochs", "channels"]
-            return ["epochs", "channels", "times"]
-        elif ndim == 4:
-            # (taus, epochs, channels_i, channels_j) for connectivity
-            return ["taus", "epochs", "channels_i", "channels_j"]
-
-        # Ultimate fallback
-        return [f"dim{i}" for i in range(ndim)]
 
     def dump_all_to_pkl(self, filepath: Union[str, Path]) -> None:
         """Dump all markers to a single pickle file.
