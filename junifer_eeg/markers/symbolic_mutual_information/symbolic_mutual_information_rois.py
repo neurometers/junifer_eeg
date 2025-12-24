@@ -2,11 +2,11 @@
 
 from typing import Any, ClassVar, Optional
 
-import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
 from ..base import EEGEpochsMarker, format_marker_result
+from ..utils import apply_aggregation_preserve_dims
 from .symbolic_mutual_information import SymbolicMutualInformation
 
 __all__ = ["SymbolicMutualInformationROIs"]
@@ -14,12 +14,17 @@ __all__ = ["SymbolicMutualInformationROIs"]
 
 @register_marker
 class SymbolicMutualInformationROIs(EEGEpochsMarker):
-    """Symbolic mutual information with ROI/channel/trial aggregation.
+    """Symbolic mutual information with ROI aggregation.
 
-    Combines SymbolicMutualInformation with aggregation pipeline for:
-    - Connectivity dimension aggregation (across channel_y)
-    - Channel dimension aggregation (across channel_x)
-    - Trial/epoch aggregation
+    Always returns a 4D tensor with shape (n_taus, n_epochs, n_channels, n_channels).
+    Aggregation parameters control which dimensions have size 1, but the structure
+    is preserved for consistency.
+
+    Examples:
+    - No aggregation: (n_taus, n_epochs, n_channels, n_channels)
+    - Channel aggregation: (n_taus, n_epochs, 1, n_channels)
+    - Epoch aggregation: (n_taus, 1, n_channels, n_channels)
+    - Full aggregation: (1, 1, 1, 1) for scalar values
 
     Parameters
     ----------
@@ -70,7 +75,7 @@ class SymbolicMutualInformationROIs(EEGEpochsMarker):
         "mne-connectivity",
     }
     _MARKER_INOUT_MAPPINGS: ClassVar = {
-        "EEG": {"symbolicmutualinformation": "vector"}
+        "EEG": {"symbolicmutualinformation": "timeseries"}
     }
 
     def __init__(
@@ -103,39 +108,15 @@ class SymbolicMutualInformationROIs(EEGEpochsMarker):
         self.channel_method = channel_method
         self.trial_method = trial_method
 
-    def get_output_type(self, input_type: str, output_feature: str) -> str:
-        """Get output type based on aggregation settings.
-
-        Returns
-        -------
-        str
-            - 'timeseries': 2D/3D tensor (0-1 aggregations)
-            - 'vector': 1D array (2 aggregations)
-            - 'scalar_table': scalar (all 3 aggregations)
-
-        """
-        # Count active aggregations
-        agg_count = sum(
-            [
-                self.connectivity_method is not None,
-                self.channel_method is not None,
-                self.trial_method is not None,
-            ]
-        )
-
-        if agg_count <= 1:
-            return "timeseries"
-        elif agg_count == 3:
-            return "scalar_table"
-        else:
-            return "vector"
-
     def compute(
         self,
         input: dict[str, Any],
         extra_input: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """Compute SMI with aggregation.
+
+        Always returns a 4D tensor with shape (n_taus, n_epochs, n_channels, n_channels).
+        Aggregation methods control which dimensions have size 1.
 
         Parameters
         ----------
@@ -147,7 +128,7 @@ class SymbolicMutualInformationROIs(EEGEpochsMarker):
         Returns
         -------
         dict
-            Aggregated SMI results.
+            Aggregated SMI results as 4D tensor.
 
         """
         logger.debug("Computing SMI with ROI aggregation")
@@ -166,125 +147,22 @@ class SymbolicMutualInformationROIs(EEGEpochsMarker):
         )
         result = smi_marker.compute(input, extra_input)
 
-        # Get connectivity data (pairs format) from base marker
+        # Get the 4D tensor from base marker: (n_taus, n_epochs, n_channels, n_channels)
         connectivity_data = result["symbolicmutualinformation"]["data"]
 
-        # Handle single vs multiple taus
-        if connectivity_data.ndim == 2:
-            # Single tau: (n_epochs, n_pairs)
-            output_data = self._aggregate_single_tau(connectivity_data)
-        else:
-            # Multiple taus: (n_taus, n_epochs, n_pairs)
-            output_data = self._aggregate_multiple_taus(connectivity_data)
+        # Apply aggregation while preserving 4D structure
+        output_data = apply_aggregation_preserve_dims(
+            connectivity_data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+            connectivity_method=self.connectivity_method,
+        )
 
         # Format output using centralized format_marker_result
-        # Note: SMI with ROI aggregation doesn't have meaningful col_names
-        # since connectivity dimension has been aggregated
+        # Use channel names for the full matrix representation
         return format_marker_result(
             feature_name="symbolicmutualinformation",
             data=output_data,
-            col_names=None,
-            channel_aggregated=True,  # Connectivity aggregation applied
+            col_names=result["symbolicmutualinformation"]["col_names"],
+            channel_aggregated=True,  # Some form of aggregation may be applied
         )
-
-    def _aggregate_single_tau(
-        self, connectivity_data: np.ndarray
-    ) -> np.ndarray:
-        """Aggregate connectivity data for single tau.
-
-        Follows the same 3-step aggregation as the test helper:
-        1. Reconstruct full matrix and apply connectivity_method (→ per-channel)
-        2. Apply channel_method across channels
-        3. Apply trial_method across epochs
-        """
-        from ..utils import aggregate_data
-
-        n_epochs, n_pairs = connectivity_data.shape
-
-        # If no aggregation requested, return raw connectivity pairs
-        if (
-            self.connectivity_method is None
-            and self.channel_method is None
-            and self.trial_method is None
-        ):
-            return connectivity_data
-
-        # Step 1: Reconstruct full matrix and apply connectivity_method
-        # This converts (n_epochs, n_pairs) → (n_epochs, n_channels)
-        # by reconstructing the matrix and averaging across connections
-
-        # Determine number of channels from n_pairs
-        n_channels = int((1 + np.sqrt(1 + 8 * n_pairs)) / 2)
-
-        # Reconstruct full connectivity matrices
-        indices_use = np.triu_indices(n_channels, k=1)
-        connectivity_tensor = np.zeros((n_epochs, n_channels, n_channels))
-
-        for epoch_idx in range(n_epochs):
-            connectivity_tensor[epoch_idx][indices_use] = connectivity_data[
-                epoch_idx
-            ]
-            # Symmetrize
-            connectivity_tensor[epoch_idx] = (
-                connectivity_tensor[epoch_idx]
-                + connectivity_tensor[epoch_idx].T
-            )
-
-        # Apply connectivity_method: aggregate across connections (axis=2)
-        # (n_epochs, n_channels, n_channels) → (n_epochs, n_channels)
-        if self.connectivity_method is not None:
-            current_data = aggregate_data(
-                connectivity_tensor, self.connectivity_method, axis=2
-            )
-        else:
-            # Default: mean across connections (like test helper)
-            current_data = np.mean(connectivity_tensor, axis=2)
-
-        # Step 2: Apply channel_method (same as SpectralPowerBands)
-        if self.channel_method is not None:
-            # (n_epochs, n_channels) → (n_epochs,)
-            current_data = aggregate_data(
-                current_data, self.channel_method, axis=1
-            )
-
-        # Step 3: Apply trial_method (same as SpectralPowerBands)
-        if self.trial_method is not None:
-            if current_data.ndim == 2:
-                # (n_epochs, n_channels) → (n_channels,)
-                current_data = aggregate_data(
-                    current_data, self.trial_method, axis=0
-                )
-            elif current_data.ndim == 1:
-                # (n_epochs,) → scalar
-                current_data = aggregate_data(
-                    current_data, self.trial_method, axis=None
-                )
-
-        return current_data
-
-    def _aggregate_multiple_taus(
-        self, connectivity_data: np.ndarray
-    ) -> np.ndarray:
-        """Aggregate connectivity data for multiple taus.
-
-        Follows SpectralPowerBands pattern: process each tau, then stack.
-        """
-        n_taus = connectivity_data.shape[0]
-
-        # Process each tau through single tau aggregation
-        tau_results = []
-        for tau_idx in range(n_taus):
-            tau_data = connectivity_data[tau_idx]  # (n_epochs, n_pairs)
-            tau_result = self._aggregate_single_tau(tau_data)
-            tau_results.append(tau_result)
-
-        # Stack results - shape depends on aggregation
-        first_result = tau_results[0]
-        if np.isscalar(first_result) or (
-            hasattr(first_result, "ndim") and first_result.ndim == 0
-        ):
-            # Each tau → scalar, stack to (n_taus,)
-            return np.array([float(r) for r in tau_results])
-        else:
-            # Each tau → array, stack to (n_taus, ...)
-            return np.stack(tau_results, axis=0)

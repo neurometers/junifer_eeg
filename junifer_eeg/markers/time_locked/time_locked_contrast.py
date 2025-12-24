@@ -14,10 +14,10 @@ Refactored to use TimeLockedBase for common data preparation operations.
 
 from typing import Any, ClassVar, Dict, List, Optional, Union
 
-import numpy as np
 from junifer.api.decorators import register_marker
 
 from ..base import format_marker_result
+from ..utils import apply_aggregation_preserve_dims
 from ._time_locked_base import TimeLockedBase
 
 
@@ -173,6 +173,13 @@ class TimeLockedContrast(TimeLockedBase):
         # Filter epochs by conditions using original implementation approach
         def get_epochs_for_condition(epochs, condition):
             """Get epochs for condition using MNE's built-in filtering."""
+            # First try MNE's native indexing which supports hierarchical matching
+            # epochs["go"] will match all events starting with "go/"
+            try:
+                return epochs[condition]
+            except (KeyError, ValueError):
+                pass
+
             # Handle list of conditions (e.g., ['60', '50'])
             if isinstance(condition, list):
                 # MNE supports list indexing directly
@@ -247,64 +254,32 @@ class TimeLockedContrast(TimeLockedBase):
             return time_averaged, ch_names
 
         # Check if we should return raw temporal data without aggregation
-        if self.channel_method is None and self.trial_method is None:
-            # Return raw data from both conditions combined (matching NICE)
-            # NICE stores all epochs from both conditions with FULL time range (not cropped)
-            # Get raw data for both conditions (use full epochs, not cropped)
-            data_a = (
-                epochs_a.get_data()
-            )  # Shape: (n_epochs_a, n_channels, n_times)
-            data_b = (
-                epochs_b.get_data()
-            )  # Shape: (n_epochs_b, n_channels, n_times)
-
-            # Concatenate both conditions to match NICE behavior
-            all_data = np.concatenate([data_a, data_b], axis=0)
-            # Shape: (n_epochs_a + n_epochs_b, n_channels, n_times)
-
-            # Use centralized format_marker_result - include ch_names for consistency
-            return format_marker_result(
-                feature_name="timelockedcontrast",
-                data=all_data,
-                col_names=list(epochs.ch_names),
-                channel_aggregated=False,
-            )
-
-        # For aggregation case, process conditions separately
+        # Always process conditions separately with time averaging
         data_a, ch_names_a = process_condition(epochs_a)
         data_b, ch_names_b = process_condition(epochs_b)
 
-        # Aggregate both conditions using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        result_a = apply_channel_trial_aggregation(
-            data_a, self.channel_method, self.trial_method
-        )
-        result_b = apply_channel_trial_aggregation(
-            data_b, self.channel_method, self.trial_method
-        )
-
-        # Compute contrast: A - B
-        contrast_result = result_a - result_b
-
-        # Generate column names based on aggregation and result shape
-        if self.channel_method is not None and self.trial_method is not None:
-            col_names = ["all_channels_all_trials"]
-        elif self.channel_method is not None:
-            # result_data shape: (n_trials,) after channel aggregation
-            n_trials = (
-                contrast_result.shape[0] if contrast_result.ndim >= 1 else 1
+        # Check if both conditions have the same number of epochs
+        if data_a.shape[0] != data_b.shape[0]:
+            raise ValueError(
+                f"Conditions must have the same number of epochs. "
+                f"Condition A has {data_a.shape[0]} epochs, "
+                f"Condition B has {data_b.shape[0]} epochs."
             )
-            col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_method is not None:
-            col_names = [f"{ch}" for ch in ch_names_a]
-        else:
-            col_names = [f"{ch}" for ch in ch_names_a]
+
+        # Now compute contrast: A - B (per epoch, per channel)
+        contrast_result = data_a - data_b  # Shape: (n_epochs, n_channels)
+
+        # Apply aggregation while preserving 2D structure
+        contrast_result = apply_aggregation_preserve_dims(
+            contrast_result,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+        )
 
         # Use centralized format_marker_result to ensure consistent col_names storage
         return format_marker_result(
             feature_name="timelockedcontrast",
             data=contrast_result,
-            col_names=col_names,
+            col_names=ch_names_a,
             channel_aggregated=(self.channel_method is not None),
         )

@@ -1,4 +1,9 @@
-"""Permutation entropy at multiple temporal scales."""
+"""Permutation entropy at multiple temporal scales.
+
+Structure (2-file, matching kolmogorov_complexity):
+- _permutation_entropy_base.py: Singleton with caching + compute logic
+- permutation_entropy.py: Main marker extending EEGEpochsMarker (this file)
+"""
 
 from typing import Any, ClassVar, Optional, Union
 
@@ -7,7 +12,7 @@ from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
 from ..base import EEGEpochsMarker, format_marker_result
-from ..utils import filter_to_eeg_channels
+from ..utils import apply_aggregation_preserve_dims, filter_to_eeg_channels
 from ._permutation_entropy_base import PermutationEntropyBase
 
 __all__ = ["PermutationEntropy"]
@@ -15,10 +20,15 @@ __all__ = ["PermutationEntropy"]
 
 @register_marker
 class PermutationEntropy(EEGEpochsMarker):
-    """Permutation entropy at multiple temporal scales with optional aggregation.
+    """Permutation entropy at multiple temporal scales with flexible aggregation.
 
     Computes permutation entropy at different temporal scales (tau values).
     Uses adaptive lowpass filtering: filter_freq = sfreq / (kernel * tau).
+
+    Supports channel-wise computation with flexible ROI and trial aggregation.
+
+    Uses singleton pattern with caching - multiple PE markers with different
+    aggregation methods on the same epochs will reuse cached PE values.
 
     Parameters
     ----------
@@ -89,6 +99,11 @@ class PermutationEntropy(EEGEpochsMarker):
     ) -> dict[str, Any]:
         """Compute permutation entropy at multiple temporal scales.
 
+        Always returns a tensor with preserved dimensions:
+        - Single tau: 2D tensor (n_epochs, n_channels)
+        - Multiple taus: 3D tensor (n_taus, n_epochs, n_channels)
+        Even when dimensions have size 1, they are preserved for consistency.
+
         Parameters
         ----------
         input : dict
@@ -148,32 +163,27 @@ class PermutationEntropy(EEGEpochsMarker):
 
             all_tau_pe[f"tau_{tau}"] = pe_values
 
-        # Format output - unify single and multiple taus then apply aggregation
-        if len(all_tau_pe) == 1:
-            # Single tau - shape (n_epochs, n_channels)
-            tau_name = next(iter(all_tau_pe.keys()))
-            output_data = all_tau_pe[tau_name]
-        else:
-            # Multiple taus - stack into tensor (n_taus, n_epochs, n_channels)
-            tau_order = [f"tau_{tau}" for tau in self.taus]
-            output_data = np.stack(
-                [all_tau_pe[tau_name] for tau_name in tau_order],
-                axis=0,
-            )
+        # Format output - always return 3D tensor (n_taus, n_epochs, n_channels)
+        # Even with single tau, we maintain 3D structure for consistency
+        tau_order = [f"tau_{tau}" for tau in self.taus]
+        output_data = np.stack(
+            [all_tau_pe[tau_name] for tau_name in tau_order],
+            axis=0,
+        )
 
         output_ch_names = ch_names
 
-        # Apply aggregation using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        output_data = apply_channel_trial_aggregation(
-            output_data, self.channel_method, self.trial_method
+        # Apply aggregation while preserving tensor structure
+        output_data = apply_aggregation_preserve_dims(
+            output_data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
         )
 
         # Use centralized format_marker_result to ensure consistent col_names storage
         return format_marker_result(
             feature_name="permutationentropy",
             data=output_data,
-            col_names=output_ch_names,
+            col_names=list(output_ch_names),
             channel_aggregated=(self.channel_method is not None),
         )

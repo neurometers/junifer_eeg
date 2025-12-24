@@ -11,7 +11,7 @@ from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
 from ..base import EEGEpochsMarker, format_marker_result
-from ..utils import filter_to_eeg_channels
+from ..utils import apply_aggregation_preserve_dims, filter_to_eeg_channels
 from ._kolmogorov_complexity_base import KolmogorovComplexityBase
 
 __all__ = ["KolmogorovComplexity"]
@@ -93,6 +93,9 @@ class KolmogorovComplexity(EEGEpochsMarker):
     ) -> dict[str, Any]:
         """Compute Kolmogorov complexity with flexible aggregation.
 
+        Always returns a 2D tensor with shape (n_epochs, n_channels).
+        Even when dimensions have size 1, they are preserved for consistency.
+
         Parameters
         ----------
         input : dict
@@ -106,6 +109,7 @@ class KolmogorovComplexity(EEGEpochsMarker):
             Computed Kolmogorov complexity features with keys:
             - 'data': array of shape (n_epochs, n_channels)
             - 'col_names': channel names
+
         """
         logger.debug("Computing Kolmogorov complexity")
 
@@ -137,14 +141,15 @@ class KolmogorovComplexity(EEGEpochsMarker):
             self.tmax,
         )
 
+        # Keep as 2D tensor: (n_epochs, n_channels)
         output_data = kc_values
         output_ch_names = ch_names
 
-        # Apply aggregation using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        output_data = apply_channel_trial_aggregation(
-            output_data, self.channel_method, self.trial_method
+        # Apply aggregation while preserving 2D structure
+        output_data = apply_aggregation_preserve_dims(
+            output_data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
         )
 
         # Use centralized format_marker_result to ensure consistent col_names storage

@@ -11,7 +11,7 @@ from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
 from ..base import EEGEpochsMarker, format_marker_result
-from ..utils import filter_to_eeg_channels
+from ..utils import apply_aggregation_preserve_dims, filter_to_eeg_channels
 from ._slow_waves_detection_base import (
     SLOW_WAVE_FEATURES,
     SlowWavesDetectionBase,
@@ -170,36 +170,28 @@ class SlowWavesDetection(EEGEpochsMarker):
         # Extract the requested feature
         output_data = all_features[self.feature]
 
-        # Apply aggregation using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        output_data = apply_channel_trial_aggregation(
-            output_data, self.channel_method, self.trial_method
+        # Apply aggregation while preserving 2D structure
+        # Use trial→channel order (matches original NICE behavior)
+        output_data = apply_aggregation_preserve_dims(
+            output_data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+            aggregation_order="trial_channel",
         )
 
         # Use centralized format_marker_result
         return format_marker_result(
             feature_name="slowwavesdetection",
-            data=output_data,
+            data=output_data,  # Shape: (n_epochs, n_channels) with size-1 for aggregated dims
             col_names=ch_names,
             channel_aggregated=(self.channel_method is not None),
         )
 
     def get_output_type(self, input_type: str, output_feature: str) -> str:
-        """Get output type based on aggregation settings.
+        """Get output type - always returns timeseries for 2D tensor data.
 
-        Returns
-        -------
-        str
-            Output type based on aggregation state.
+        Always returns 'timeseries' since we now always return
+        2D tensors with shape (n_epochs, n_channels)
+        where dimensions can be size 1 when aggregated.
         """
-        # No aggregation → 2D tensor (epochs, channels) → timeseries
-        if self.channel_method is None and self.trial_method is None:
-            return "timeseries"
-
-        # Both aggregations → scalar → scalar_table
-        if self.channel_method is not None and self.trial_method is not None:
-            return "scalar_table"
-
-        # One aggregation → 1D array → vector
-        return "vector"
+        return "timeseries"

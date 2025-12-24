@@ -164,7 +164,7 @@ class TestSpindlesDetectionAggregation:
     """Test aggregation methods work correctly."""
 
     def test_channel_aggregation(self, synthetic_sleep_epochs):
-        """Test channel aggregation reduces dimensions."""
+        """Test channel aggregation preserves 2D with size 1."""
         marker = SpindlesDetection(
             feature="Duration",
             channel_method="mean",
@@ -173,11 +173,11 @@ class TestSpindlesDetectionAggregation:
         result = marker.compute({"data": synthetic_sleep_epochs})
         data = result["spindlesdetection"]["data"]
 
-        # After channel aggregation: (n_epochs,)
-        assert data.shape == (5,), f"Expected (5,), got {data.shape}"
+        # After channel aggregation: (n_epochs, 1) - preserved dimensions
+        assert data.shape == (5, 1), f"Expected (5, 1), got {data.shape}"
 
     def test_trial_aggregation(self, synthetic_sleep_epochs):
-        """Test trial aggregation reduces dimensions."""
+        """Test trial aggregation preserves 2D with size 1."""
         marker = SpindlesDetection(
             feature="Duration",
             channel_method=None,
@@ -186,11 +186,11 @@ class TestSpindlesDetectionAggregation:
         result = marker.compute({"data": synthetic_sleep_epochs})
         data = result["spindlesdetection"]["data"]
 
-        # After trial aggregation: (n_channels,)
-        assert data.shape == (8,), f"Expected (8,), got {data.shape}"
+        # After trial aggregation: (1, n_channels) - preserved dimensions
+        assert data.shape == (1, 8), f"Expected (1, 8), got {data.shape}"
 
     def test_both_aggregations(self, synthetic_sleep_epochs):
-        """Test both aggregations produce scalar."""
+        """Test both aggregations preserve 2D with size (1, 1)."""
         marker = SpindlesDetection(
             feature="Duration",
             channel_method="mean",
@@ -199,10 +199,8 @@ class TestSpindlesDetectionAggregation:
         result = marker.compute({"data": synthetic_sleep_epochs})
         data = result["spindlesdetection"]["data"]
 
-        # After both aggregations: scalar
-        assert np.isscalar(data) or data.shape == (), (
-            f"Expected scalar, got {data.shape}"
-        )
+        # After both aggregations: (1, 1) - preserved dimensions
+        assert data.shape == (1, 1), f"Expected (1, 1), got {data.shape}"
 
     @pytest.mark.parametrize(
         "method", ["mean", "std", "median", "trim_mean80", "trim_mean90"]
@@ -227,26 +225,29 @@ class TestSpindlesDetectionOutputType:
             marker.get_output_type("EEG", "spindlesdetection") == "timeseries"
         )
 
-    def test_channel_aggregation_returns_vector(self):
-        """Test channel aggregation returns vector."""
+    def test_channel_aggregation_returns_timeseries(self):
+        """Test channel aggregation returns timeseries (preserved dimensions)."""
         marker = SpindlesDetection(feature="Duration", channel_method="mean")
-        assert marker.get_output_type("EEG", "spindlesdetection") == "vector"
+        assert (
+            marker.get_output_type("EEG", "spindlesdetection") == "timeseries"
+        )
 
-    def test_trial_aggregation_returns_vector(self):
-        """Test trial aggregation returns vector."""
+    def test_trial_aggregation_returns_timeseries(self):
+        """Test trial aggregation returns timeseries (preserved dimensions)."""
         marker = SpindlesDetection(feature="Duration", trial_method="mean")
-        assert marker.get_output_type("EEG", "spindlesdetection") == "vector"
+        assert (
+            marker.get_output_type("EEG", "spindlesdetection") == "timeseries"
+        )
 
-    def test_both_aggregations_returns_scalar(self):
-        """Test both aggregations returns scalar_table."""
+    def test_both_aggregations_returns_timeseries(self):
+        """Test both aggregations returns timeseries (preserved dimensions)."""
         marker = SpindlesDetection(
             feature="Duration",
             channel_method="mean",
             trial_method="mean",
         )
         assert (
-            marker.get_output_type("EEG", "spindlesdetection")
-            == "scalar_table"
+            marker.get_output_type("EEG", "spindlesdetection") == "timeseries"
         )
 
 

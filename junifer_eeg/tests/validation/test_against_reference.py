@@ -60,7 +60,11 @@ def check_shapes_and_compare(
 ):
     """Check shapes match and compare values.
 
-    This follows the exact comparison logic from validate_all_markers_raw.py
+    This follows the exact comparison logic from validate_all_markers_raw.py.
+
+    Note: Junifer markers now preserve dimensions with size 1 for consistency.
+    This function squeezes both arrays to remove singleton dimensions before
+    comparison, ensuring backward compatibility with NICE reference data.
 
     Args:
         nice_data: Output from NICE marker
@@ -87,6 +91,24 @@ def check_shapes_and_compare(
     nice_arr = np.atleast_1d(nice_data)
     junifer_arr = np.atleast_1d(junifer_data)
 
+    # Squeeze both arrays to remove singleton dimensions for comparison
+    # Junifer markers now preserve dimensions with size 1, while NICE reference
+    # data may have collapsed dimensions
+    nice_arr = np.squeeze(nice_arr)
+    junifer_arr = np.squeeze(junifer_arr)
+
+    # Handle scalar case after squeeze
+    nice_arr = np.atleast_1d(nice_arr)
+    junifer_arr = np.atleast_1d(junifer_arr)
+
+    # Handle TimeLockedTopography case: NICE stores raw 3D (epochs, channels, times)
+    # while Junifer returns time-averaged 2D (epochs, channels)
+    if nice_arr.ndim == 3 and junifer_arr.ndim == 2:
+        if nice_arr.shape[:2] == junifer_arr.shape:
+            # Time-average NICE data for comparison
+            print("  Note: Time-averaging NICE 3D data for comparison")
+            nice_arr = np.mean(nice_arr, axis=2)
+
     assert nice_arr.shape == junifer_arr.shape, (
         f"Shape mismatch: NICE {nice_arr.shape} vs Junifer {junifer_arr.shape}"
     )
@@ -105,7 +127,7 @@ def check_shapes_and_compare(
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
-    assert max_rel_error < 1.0, (
+    assert max_rel_error < 0.1, (
         f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\n  Worst case at index {np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else 'scalar'}\n  NICE value: {nice_arr[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6f}\n  Junifer value: {junifer_arr[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6f}\n  Absolute diff: {abs_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.6e}\n  Relative diff: {rel_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape) if nice_arr.size > 1 else ()]:.4f}%"
     )
 
@@ -1799,21 +1821,15 @@ class TestSymbolicMutualInformation:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        # SMI returns flattened upper triangular - unflatten to 3D tensor
-        junifer_data_flat = junifer_result["symbolicmutualinformation"]["data"]
-        n_epochs = junifer_data_flat.shape[0]
-        n_channels = self.reference_data["nice_output"].shape[0]
-        # Reconstruct full symmetric matrices from upper triangular
-        junifer_data_3d = np.zeros((n_epochs, n_channels, n_channels))
-        upper_tri_indices = np.triu_indices(n_channels, k=1)
-        for epoch_idx in range(n_epochs):
-            upper_tri_values = junifer_data_flat[epoch_idx]
-            junifer_data_3d[epoch_idx][upper_tri_indices] = upper_tri_values
-            junifer_data_3d[epoch_idx] = (
-                junifer_data_3d[epoch_idx] + junifer_data_3d[epoch_idx].T
-            )
-        # Transpose to match NICE format: (n_channels, n_channels, n_epochs)
-        junifer_output = junifer_data_3d.transpose(1, 2, 0)
+        # SMI now returns 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        junifer_data_4d = junifer_result["symbolicmutualinformation"]["data"]
+        # Squeeze tau dimension and transpose to match NICE format: (n_channels, n_channels, n_epochs)
+        junifer_data_3d = np.squeeze(
+            junifer_data_4d, axis=0
+        )  # (n_epochs, n_channels, n_channels)
+        junifer_output = junifer_data_3d.transpose(
+            1, 2, 0
+        )  # (n_channels, n_channels, n_epochs)
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1872,18 +1888,15 @@ class TestSymbolicMutualInformationTheta:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_data_flat = junifer_result["symbolicmutualinformation"]["data"]
-        n_epochs = junifer_data_flat.shape[0]
-        n_channels = self.reference_data["nice_output"].shape[0]
-        junifer_data_3d = np.zeros((n_epochs, n_channels, n_channels))
-        upper_tri_indices = np.triu_indices(n_channels, k=1)
-        for epoch_idx in range(n_epochs):
-            upper_tri_values = junifer_data_flat[epoch_idx]
-            junifer_data_3d[epoch_idx][upper_tri_indices] = upper_tri_values
-            junifer_data_3d[epoch_idx] = (
-                junifer_data_3d[epoch_idx] + junifer_data_3d[epoch_idx].T
-            )
-        junifer_output = junifer_data_3d.transpose(1, 2, 0)
+        # SMI now returns 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        junifer_data_4d = junifer_result["symbolicmutualinformation"]["data"]
+        # Squeeze tau dimension and transpose to match NICE format: (n_channels, n_channels, n_epochs)
+        junifer_data_3d = np.squeeze(
+            junifer_data_4d, axis=0
+        )  # (n_epochs, n_channels, n_channels)
+        junifer_output = junifer_data_3d.transpose(
+            1, 2, 0
+        )  # (n_channels, n_channels, n_epochs)
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -1942,18 +1955,15 @@ class TestSymbolicMutualInformationAlpha:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_data_flat = junifer_result["symbolicmutualinformation"]["data"]
-        n_epochs = junifer_data_flat.shape[0]
-        n_channels = self.reference_data["nice_output"].shape[0]
-        junifer_data_3d = np.zeros((n_epochs, n_channels, n_channels))
-        upper_tri_indices = np.triu_indices(n_channels, k=1)
-        for epoch_idx in range(n_epochs):
-            upper_tri_values = junifer_data_flat[epoch_idx]
-            junifer_data_3d[epoch_idx][upper_tri_indices] = upper_tri_values
-            junifer_data_3d[epoch_idx] = (
-                junifer_data_3d[epoch_idx] + junifer_data_3d[epoch_idx].T
-            )
-        junifer_output = junifer_data_3d.transpose(1, 2, 0)
+        # SMI now returns 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        junifer_data_4d = junifer_result["symbolicmutualinformation"]["data"]
+        # Squeeze tau dimension and transpose to match NICE format: (n_channels, n_channels, n_epochs)
+        junifer_data_3d = np.squeeze(
+            junifer_data_4d, axis=0
+        )  # (n_epochs, n_channels, n_channels)
+        junifer_output = junifer_data_3d.transpose(
+            1, 2, 0
+        )  # (n_channels, n_channels, n_epochs)
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -2012,18 +2022,15 @@ class TestSymbolicMutualInformationBeta:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_data_flat = junifer_result["symbolicmutualinformation"]["data"]
-        n_epochs = junifer_data_flat.shape[0]
-        n_channels = self.reference_data["nice_output"].shape[0]
-        junifer_data_3d = np.zeros((n_epochs, n_channels, n_channels))
-        upper_tri_indices = np.triu_indices(n_channels, k=1)
-        for epoch_idx in range(n_epochs):
-            upper_tri_values = junifer_data_flat[epoch_idx]
-            junifer_data_3d[epoch_idx][upper_tri_indices] = upper_tri_values
-            junifer_data_3d[epoch_idx] = (
-                junifer_data_3d[epoch_idx] + junifer_data_3d[epoch_idx].T
-            )
-        junifer_output = junifer_data_3d.transpose(1, 2, 0)
+        # SMI now returns 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        junifer_data_4d = junifer_result["symbolicmutualinformation"]["data"]
+        # Squeeze tau dimension and transpose to match NICE format: (n_channels, n_channels, n_epochs)
+        junifer_data_3d = np.squeeze(
+            junifer_data_4d, axis=0
+        )  # (n_epochs, n_channels, n_channels)
+        junifer_output = junifer_data_3d.transpose(
+            1, 2, 0
+        )  # (n_channels, n_channels, n_epochs)
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(
@@ -2082,18 +2089,15 @@ class TestSymbolicMutualInformationGamma:
             },
         }
         junifer_result = junifer_marker.compute(input_dict)
-        junifer_data_flat = junifer_result["symbolicmutualinformation"]["data"]
-        n_epochs = junifer_data_flat.shape[0]
-        n_channels = self.reference_data["nice_output"].shape[0]
-        junifer_data_3d = np.zeros((n_epochs, n_channels, n_channels))
-        upper_tri_indices = np.triu_indices(n_channels, k=1)
-        for epoch_idx in range(n_epochs):
-            upper_tri_values = junifer_data_flat[epoch_idx]
-            junifer_data_3d[epoch_idx][upper_tri_indices] = upper_tri_values
-            junifer_data_3d[epoch_idx] = (
-                junifer_data_3d[epoch_idx] + junifer_data_3d[epoch_idx].T
-            )
-        junifer_output = junifer_data_3d.transpose(1, 2, 0)
+        # SMI now returns 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        junifer_data_4d = junifer_result["symbolicmutualinformation"]["data"]
+        # Squeeze tau dimension and transpose to match NICE format: (n_channels, n_channels, n_epochs)
+        junifer_data_3d = np.squeeze(
+            junifer_data_4d, axis=0
+        )  # (n_epochs, n_channels, n_channels)
+        junifer_output = junifer_data_3d.transpose(
+            1, 2, 0
+        )  # (n_channels, n_channels, n_epochs)
         nice_output = self.reference_data["nice_output"]
         tolerance = self.reference_data["comparison_tolerance"]
         match = check_shapes_and_compare(

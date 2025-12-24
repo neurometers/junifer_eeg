@@ -7,7 +7,7 @@ from junifer.api.decorators import register_marker
 from junifer.utils import logger
 
 from ..base import EEGEpochsMarker, format_marker_result
-from ..utils import filter_to_eeg_channels
+from ..utils import apply_aggregation_preserve_dims, filter_to_eeg_channels
 from ._spectral_power_base import SpectralPowerBase
 
 __all__ = ["SpectralPowerBands"]
@@ -116,6 +116,9 @@ class SpectralPowerBands(EEGEpochsMarker):
     ) -> dict[str, Any]:
         """Compute spectral power in frequency bands.
 
+        Always returns a 3D tensor with shape (n_bands, n_epochs, n_channels).
+        Even when dimensions have size 1, they are preserved for consistency.
+
         Parameters
         ----------
         input : dict
@@ -127,9 +130,9 @@ class SpectralPowerBands(EEGEpochsMarker):
         -------
         dict
             Spectral power with keys:
-            - 'data': array of shape (n_epochs, n_channels) for single band
-                      or (n_bands, n_epochs, n_channels) for multiple bands
+            - 'data': array of shape (n_bands, n_epochs, n_channels)
             - 'col_names': channel names
+            - 'row_names': band names
 
         """
         logger.debug("Computing spectral power bands")
@@ -247,32 +250,27 @@ class SpectralPowerBands(EEGEpochsMarker):
                 band_data = np.maximum(band_data, threshold)
                 all_band_powers[band_name] = 10 * np.log10(band_data)
 
-        # Format output - unify single and multiple bands then apply aggregation
-        if len(all_band_powers) == 1:
-            # Single band - shape (n_epochs, n_channels)
-            band_name = next(iter(all_band_powers.keys()))
-            output_data = all_band_powers[band_name]
-        else:
-            # Multiple bands - stack into tensor (n_bands, n_epochs, n_channels)
-            band_order = list(all_band_powers.keys())
-            output_data = np.stack(
-                [all_band_powers[band] for band in band_order],
-                axis=0,
-            )
+        # Format output - always return 3D tensor
+        band_order = list(all_band_powers.keys())
+        output_data = np.stack(
+            [all_band_powers[band] for band in band_order],
+            axis=0,
+        )  # Shape: (n_bands, n_epochs, n_channels)
 
         output_ch_names = ch_names
 
-        # Apply aggregation using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        output_data = apply_channel_trial_aggregation(
-            output_data, self.channel_method, self.trial_method
+        # Apply aggregation while preserving 3D structure
+        # Use trial→channel order (matches original NICE behavior)
+        output_data = apply_aggregation_preserve_dims(
+            output_data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+            aggregation_order="trial_channel",
         )
 
-        # Use centralized format_marker_result to ensure consistent col_names storage
         return format_marker_result(
             feature_name="spectralpower",
-            data=output_data,
+            data=output_data,  # Shape: (n_bands, n_epochs, n_channels)
             col_names=output_ch_names,
             channel_aggregated=(self.channel_method is not None),
         )

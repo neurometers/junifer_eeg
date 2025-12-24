@@ -10,7 +10,6 @@ from scipy.signal import butter, filtfilt
 
 from ..base import EEGEpochsMarker, format_marker_result
 from ..utils import (
-    create_connectivity_pair_column_names,
     filter_to_eeg_channels,
 )
 from ._symbolic_mutual_information_base import SymbolicMutualInformationBase
@@ -109,6 +108,9 @@ class SymbolicMutualInformation(EEGEpochsMarker):
     ) -> dict[str, Any]:
         """Compute symbolic mutual information.
 
+        Always returns a 4D tensor with shape (n_taus, n_epochs, n_channels, n_channels).
+        Even when dimensions have size 1, they are preserved for consistency.
+
         Parameters
         ----------
         input : dict
@@ -120,8 +122,8 @@ class SymbolicMutualInformation(EEGEpochsMarker):
         -------
         dict
             SMI connectivity with keys:
-            - 'data': array of shape (n_epochs, n_channel_pairs)
-            - 'col_names': channel pair names
+            - 'data': array of shape (n_taus, n_epochs, n_channels, n_channels)
+            - 'col_names': channel names
 
         """
         logger.debug("Computing symbolic mutual information")
@@ -227,9 +229,8 @@ class SymbolicMutualInformation(EEGEpochsMarker):
 
         # Compute SMI for each tau value (different temporal scales)
         # Always use adaptive lowpass filtering: filter_freq = sfreq / (kernel * tau)
-        all_tau_smi = {}
+        all_tau_smi = []
         smi_base = SymbolicMutualInformationBase()
-        col_names = create_connectivity_pair_column_names(picked_ch_names)
 
         for tau in self.taus:
             logger.debug(f"Computing SMI for tau={tau}")
@@ -264,43 +265,23 @@ class SymbolicMutualInformation(EEGEpochsMarker):
                 )
 
             # Compute SMI using base class (with caching)
+            # Returns: (n_channels, n_channels, n_epochs)
             connectivity_matrix = smi_base.compute(
                 fdata_masked, self.kernel, tau, self.weighted
             )
 
-            # Convert to per-epoch format: (n_epochs, n_channel_pairs)
-            indices_use = np.triu_indices(n_channels, k=1)
+            # Rearrange to (n_epochs, n_channels, n_channels) for stacking
+            connectivity_matrix = connectivity_matrix.transpose(2, 0, 1)
+            all_tau_smi.append(connectivity_matrix)
 
-            # Extract upper triangular values for each epoch
-            epoch_data = []
-            for epoch_idx in range(n_epochs):
-                epoch_matrix = connectivity_matrix[:, :, epoch_idx]
-                upper_tri_values = epoch_matrix[indices_use]
-                epoch_data.append(upper_tri_values)
+        # Stack all taus into 4D tensor: (n_taus, n_epochs, n_channels, n_channels)
+        full_tensor = np.stack(all_tau_smi, axis=0)
 
-            all_tau_smi[f"tau_{tau}"] = np.array(epoch_data)
-
-        # Format output using centralized format_marker_result
-        if len(all_tau_smi) == 1:
-            # Single tau - return 2D array (n_epochs, n_channel_pairs)
-            tau_name = next(iter(all_tau_smi.keys()))
-            return format_marker_result(
-                feature_name="symbolicmutualinformation",
-                data=all_tau_smi[tau_name],
-                col_names=col_names,
-                channel_aggregated=False,
-            )
-
-        # Multiple taus - stack into 3D tensor (n_taus, n_epochs, n_channel_pairs)
-        tau_order = [f"tau_{tau}" for tau in self.taus]
-        tensor = np.stack(
-            [all_tau_smi[tau_name] for tau_name in tau_order],
-            axis=0,
-        )
-
+        # Always return 4D tensor, even for single tau
+        # Use channel names instead of pair names for full matrix representation
         return format_marker_result(
             feature_name="symbolicmutualinformation",
-            data=tensor,
-            col_names=col_names,
+            data=full_tensor,
+            col_names=picked_ch_names,
             channel_aggregated=False,
         )

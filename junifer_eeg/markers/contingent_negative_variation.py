@@ -6,7 +6,7 @@ import numpy as np
 from junifer.api.decorators import register_marker
 from junifer.markers import BaseMarker
 
-from .utils import aggregate_data, get_data_for_rois
+from .utils import apply_aggregation_preserve_dims, get_data_for_rois
 
 
 @register_marker
@@ -218,7 +218,10 @@ class ContingentNegativeVariation(BaseMarker):
     def _aggregate_output(
         self, data: np.ndarray, ch_names: List[str], prefix: str
     ) -> dict[str, Any]:
-        """Aggregate CNV data (slope or intercept).
+        """Aggregate CNV data (slope or intercept) while preserving dimensions.
+
+        Always returns a 2D tensor with shape (n_epochs, n_channels).
+        Even when dimensions have size 1, they are preserved for consistency.
 
         Parameters
         ----------
@@ -234,24 +237,12 @@ class ContingentNegativeVariation(BaseMarker):
         dict
             Dictionary with 'data' and 'col_names' keys.
         """
-        result_data = data
-
-        # Channel aggregation
-        if self.channel_method is not None:
-            result_data = aggregate_data(
-                result_data, self.channel_method, axis=1
-            )
-
-        # Trial aggregation
-        if self.trial_method is not None:
-            if result_data.ndim == 1:
-                result_data = aggregate_data(
-                    result_data, self.trial_method, axis=None
-                )
-            else:
-                result_data = aggregate_data(
-                    result_data, self.trial_method, axis=0
-                )
+        # Use centralized aggregation function
+        result_data = apply_aggregation_preserve_dims(
+            data,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+        )
 
         # Generate column names
         if self.channel_method is not None and self.trial_method is not None:

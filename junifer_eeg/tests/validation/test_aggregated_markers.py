@@ -104,58 +104,77 @@ def manually_aggregate_reference(
     nice_output: np.ndarray,
     channel_method: str | None = None,
     trial_method: str | None = None,
+    is_spectral_power: bool = False,
+    is_permutation_entropy: bool = False,
 ) -> np.ndarray:
     """Manually aggregate NICE reference data.
 
     Updated to return proper tensor structures that match marker outputs.
+    Markers now preserve dimensions with size 1 instead of collapsing them.
 
     Parameters
     ----------
     nice_output : np.ndarray
-        Raw NICE output with shape (n_epochs, n_channels) or (n_epochs, n_channels, n_freqs)
+        Raw NICE output with shape (n_epochs, n_channels)
     channel_method : str, optional
         Method to aggregate across channels ('mean', 'trim_mean80', etc.)
     trial_method : str, optional
         Method to aggregate across trials/epochs ('mean', 'trim_mean80', etc.)
+    is_spectral_power : bool, default=False
+        If True, treat as spectral power data and return 3D tensor
+        (n_bands, n_epochs, n_channels) where n_bands=1 for single band.
+    is_permutation_entropy : bool, default=False
+        If True, treat as permutation entropy data and return 3D tensor
+        (n_taus, n_epochs, n_channels) where n_taus=1 for single tau.
 
     Returns
     -------
     np.ndarray
         Manually aggregated data matching expected Junifer output with proper tensor structure.
+        Returns 2D for regular markers, 3D for spectral power or permutation entropy markers.
     """
+    result = nice_output.copy()
+
+    # For spectral power, add band dimension at front first
+    if is_spectral_power and result.ndim == 2:
+        result = np.expand_dims(result, axis=0)  # (1, n_epochs, n_channels)
+
+    # For permutation entropy, add tau dimension at front first
+    if is_permutation_entropy and result.ndim == 2:
+        result = np.expand_dims(result, axis=0)  # (1, n_epochs, n_channels)
+
     # If no aggregation, return as-is (proper tensor structure)
     if channel_method is None and trial_method is None:
-        # Return raw data: (n_epochs, n_channels)
-        return nice_output
+        return result
 
-    # If only trial aggregation (no channel aggregation)
-    if channel_method is None and trial_method is not None:
-        # Aggregate across trials (axis=0), keep all channels
-        # Result shape: (n_channels,)
-        trial_aggregated = aggregate_data(nice_output, trial_method, axis=0)
-        return trial_aggregated  # Return 1D array (n_channels,)
+    if is_spectral_power or is_permutation_entropy:
+        # 3D tensor: (n_bands/n_taus, n_epochs, n_channels)
+        # Apply trial aggregation (axis=1)
+        if trial_method is not None:
+            result = aggregate_data(result, trial_method, axis=1)
+            # (n_bands/n_taus, n_channels) -> (n_bands/n_taus, 1, n_channels)
+            result = np.expand_dims(result, axis=1)
 
-    # If only channel aggregation (no trial aggregation)
-    if trial_method is None and channel_method is not None:
-        # Aggregate across channels (axis=1) for each trial separately
-        # Result shape: (n_epochs,)
-        channel_aggregated = aggregate_data(
-            nice_output, channel_method, axis=1
-        )
-        return channel_aggregated  # Return 1D array (n_epochs,)
+        # Apply channel aggregation (axis=2)
+        if channel_method is not None:
+            result = aggregate_data(result, channel_method, axis=2)
+            # (n_bands/n_taus, n_epochs) or (n_bands/n_taus, 1) -> (n_bands/n_taus, n_epochs, 1) or (n_bands/n_taus, 1, 1)
+            result = np.expand_dims(result, axis=2)
+    else:
+        # 2D tensor: (n_epochs, n_channels)
+        # Apply channel aggregation (axis=1) - preserves 2D structure
+        if channel_method is not None:
+            result = aggregate_data(result, channel_method, axis=1)
+            # (n_epochs,) -> (n_epochs, 1)
+            result = np.expand_dims(result, axis=1)
 
-    # Full case: both channel and trial aggregation
-    # IMPORTANT: Apply channel aggregation FIRST, then trial aggregation
+        # Apply trial aggregation (axis=0) - preserves 2D structure
+        if trial_method is not None:
+            result = aggregate_data(result, trial_method, axis=0)
+            # (n_channels,) or (1,) -> (1, n_channels) or (1, 1)
+            result = np.expand_dims(result, axis=0)
 
-    # Step 1: Aggregate across channels for each trial
-    # Input shape: (n_epochs, n_channels) -> Output shape: (n_epochs,)
-    channel_aggregated = aggregate_data(nice_output, channel_method, axis=1)
-
-    # Step 2: Aggregate across trials
-    # Input shape: (n_epochs,) -> Output shape: scalar
-    final_value = aggregate_data(channel_aggregated, trial_method)
-
-    return final_value  # Return scalar
+    return result
 
 
 def manually_aggregate_connectivity_reference(
@@ -165,8 +184,13 @@ def manually_aggregate_connectivity_reference(
 ) -> np.ndarray:
     """Manually aggregate NICE connectivity reference data.
 
-    Updated to return proper tensor structures that match SymbolicMutualInformation outputs.
+    Updated to return proper tensor structures that match SymbolicMutualInformationROIs outputs.
     Handles connectivity matrix input with shape (n_channels, n_channels, n_epochs).
+
+    The SMI marker with connectivity_method='mean' returns a 4D tensor:
+    (n_taus, n_epochs, n_channels_x, 1) after connectivity aggregation.
+
+    This test uses connectivity_method='mean' which aggregates the second channel dimension.
 
     Parameters
     ----------
@@ -180,7 +204,8 @@ def manually_aggregate_connectivity_reference(
     Returns
     -------
     np.ndarray
-        Manually aggregated data matching expected SymbolicMutualInformation output.
+        Manually aggregated data matching expected SymbolicMutualInformationROIs output.
+        Returns 4D array (n_taus, n_epochs, n_channels_x, n_channels_y) with preserved dimensions.
     """
     # Convert connectivity matrix to per-channel values (matching Junifer's approach)
     # NICE stores as (ch x ch x trials), aggregate across axis=1 (connections dimension)
@@ -188,57 +213,42 @@ def manually_aggregate_connectivity_reference(
     # Shape: (channels, channels, trials) -> aggregate axis=1 -> (channels, trials)
     per_channel_values = np.mean(nice_output, axis=1)
     # Transpose to (trials, channels) for consistency with other markers
-    per_channel_values = per_channel_values.T
+    per_channel_values = per_channel_values.T  # (n_epochs, n_channels)
 
-    # Now apply the same aggregation logic as regular markers
-    # If no aggregation, return as-is (proper tensor structure)
-    if channel_method is None and trial_method is None:
-        # Return raw per-channel data: (n_epochs, n_channels)
-        return per_channel_values
+    # Start building the 4D tensor: (n_taus, n_epochs, n_channels_x, n_channels_y)
+    # For test data: n_taus=1, connectivity already aggregated so n_channels_y=1
+    # Add tau dimension at front and connectivity_y dimension at end
+    result = per_channel_values.copy()  # (n_epochs, n_channels)
+    result = np.expand_dims(result, axis=0)  # (1, n_epochs, n_channels)
+    result = np.expand_dims(result, axis=-1)  # (1, n_epochs, n_channels, 1)
 
-    # If only trial aggregation (no channel aggregation)
-    if channel_method is None and trial_method is not None:
-        # Aggregate across trials (axis=0), keep all channels
-        # Result shape: (n_channels,)
-        trial_aggregated = aggregate_data(
-            per_channel_values, trial_method, axis=0
-        )
-        return trial_aggregated  # Return 1D array (n_channels,)
+    # Now we have (1, n_epochs, n_channels, 1) - the 4D tensor
+    # Apply channel aggregation (axis=2) - preserves 4D structure
+    if channel_method is not None:
+        result = aggregate_data(result, channel_method, axis=2)
+        # (1, n_epochs, 1) -> (1, n_epochs, 1, 1)
+        result = np.expand_dims(result, axis=2)
 
-    # If only channel aggregation (no trial aggregation)
-    if trial_method is None and channel_method is not None:
-        # Aggregate across channels (axis=1) for each trial separately
-        # Result shape: (n_epochs,)
-        channel_aggregated = aggregate_data(
-            per_channel_values, channel_method, axis=1
-        )
-        return channel_aggregated  # Return 1D array (n_epochs,)
+    # Apply trial aggregation (axis=1) - preserves 4D structure
+    if trial_method is not None:
+        result = aggregate_data(result, trial_method, axis=1)
+        # (1, n_channels, 1) or (1, 1, 1) -> (1, 1, n_channels, 1) or (1, 1, 1, 1)
+        result = np.expand_dims(result, axis=1)
 
-    # Full case: both channel and trial aggregation
-    # IMPORTANT: Apply channel aggregation FIRST, then trial aggregation
-
-    # Step 1: Aggregate across channels for each trial
-    # Input shape: (n_epochs, n_channels) -> Output shape: (n_epochs,)
-    channel_aggregated = aggregate_data(
-        per_channel_values, channel_method, axis=1
-    )
-
-    # Step 2: Aggregate across trials
-    # Input shape: (n_epochs,) -> Output shape: scalar
-    final_value = aggregate_data(channel_aggregated, trial_method)
-
-    return final_value  # Return scalar
+    return result
 
 
 def check_aggregated_equivalence(
     nice_output: np.ndarray,
     junifer_output: np.ndarray,
     marker_name: str,
-    channel_agg: str | None,
-    trial_agg: str | None,
+    channel_agg: str | None = None,
+    trial_agg: str | None = None,
     roi_channels: list[str] | None = None,
     all_channels: list[str] | None = None,
     tolerance: float = 0.01,
+    is_spectral_power: bool = False,
+    is_permutation_entropy: bool = False,
 ) -> bool:
     """Check that aggregated outputs match.
 
@@ -262,6 +272,8 @@ def check_aggregated_equivalence(
         which indices to select when filtering by ROI.
     tolerance : float
         Maximum relative error in percentage (default: 0.01%)
+    is_spectral_power : bool, default=False
+        If True, treat as spectral power data (3D with band dimension)
 
     Returns
     -------
@@ -293,37 +305,22 @@ def check_aggregated_equivalence(
     print("\nManually aggregating NICE reference data...")
     print(f"  NICE raw shape: {nice_data_filtered.shape}")
     manually_aggregated = manually_aggregate_reference(
-        nice_data_filtered, channel_agg, trial_agg
+        nice_data_filtered,
+        channel_agg,
+        trial_agg,
+        is_spectral_power,
+        is_permutation_entropy,
     )
     print(f"  Manually aggregated shape: {manually_aggregated.shape}")
 
     print("\nJunifer aggregated output:")
-    # Handle scalar outputs properly
-    if np.isscalar(junifer_output):
-        print(f"  Junifer shape: scalar ({junifer_output})")
-    else:
-        print(f"  Juniper shape: {junifer_output.shape}")
+    print(f"  Junifer shape: {junifer_output.shape}")
 
-    # Check shapes match - handle scalar vs array comparison
-    if np.isscalar(manually_aggregated) and np.isscalar(junifer_output):
-        # Both scalars - shapes match
-        print("  ✅ Shapes match (both scalars)!")
-    elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
-        # One scalar, one array - shape mismatch
-        if np.isscalar(manually_aggregated):
-            raise AssertionError(
-                f"SHAPE MISMATCH!\nExpected (manual): scalar ({manually_aggregated})\nGot (junifer): {junifer_output.shape}"
-            )
-        else:
-            raise AssertionError(
-                f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): scalar ({junifer_output})"
-            )
-    else:
-        # Both arrays
-        assert manually_aggregated.shape == junifer_output.shape, (
-            f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
-        )
-        print("  ✅ Shapes match!")
+    # Check shapes match - both should now be arrays with preserved dimensions
+    assert manually_aggregated.shape == junifer_output.shape, (
+        f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
+    )
+    print("  ✅ Shapes match!")
 
     # Compare values
     abs_diff = np.abs(manually_aggregated - junifer_output)
@@ -338,7 +335,7 @@ def check_aggregated_equivalence(
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
-    assert max_rel_error < 1.0, (
+    assert max_rel_error < 0.1, (
         f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\nWorst case at index {np.unravel_index(np.argmax(abs_diff), abs_diff.shape)}\nManual value: {manually_aggregated[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6f}\nJunifer value: {junifer_output[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6f}\nAbsolute diff: {abs_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.6e}\nRelative diff: {rel_diff[np.unravel_index(np.argmax(abs_diff), abs_diff.shape)]:.4f}%"
     )
 
@@ -396,38 +393,16 @@ def check_connectivity_aggregated_equivalence(
     manually_aggregated = manually_aggregate_connectivity_reference(
         nice_output, channel_agg, trial_agg
     )
-    if np.isscalar(manually_aggregated):
-        print(f"  Manually aggregated shape: scalar ({manually_aggregated})")
-    else:
-        print(f"  Manually aggregated shape: {manually_aggregated.shape}")
+    print(f"  Manually aggregated shape: {manually_aggregated.shape}")
 
     print("\nJunifer aggregated output:")
-    # Handle scalar outputs properly
-    if np.isscalar(junifer_output):
-        print(f"  Junifer shape: scalar ({junifer_output})")
-    else:
-        print(f"  Junifer shape: {junifer_output.shape}")
+    print(f"  Junifer shape: {junifer_output.shape}")
 
-    # Check shapes match - handle scalar vs array comparison
-    if np.isscalar(manually_aggregated) and np.isscalar(junifer_output):
-        # Both scalars - shapes match
-        print("  ✅ Shapes match (both scalars)!")
-    elif np.isscalar(manually_aggregated) != np.isscalar(junifer_output):
-        # One scalar, one array - shape mismatch
-        if np.isscalar(manually_aggregated):
-            raise AssertionError(
-                f"SHAPE MISMATCH!\nExpected (manual): scalar ({manually_aggregated})\nGot (junifer): {junifer_output.shape}"
-            )
-        else:
-            raise AssertionError(
-                f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): scalar ({junifer_output})"
-            )
-    else:
-        # Both arrays
-        assert manually_aggregated.shape == junifer_output.shape, (
-            f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
-        )
-        print("  ✅ Shapes match!")
+    # Check shapes match - both should now be arrays with preserved dimensions
+    assert manually_aggregated.shape == junifer_output.shape, (
+        f"SHAPE MISMATCH!\nExpected (manual): {manually_aggregated.shape}\nGot (junifer): {junifer_output.shape}"
+    )
+    print("  ✅ Shapes match!")
 
     # Compare values
     abs_diff = np.abs(manually_aggregated - junifer_output)
@@ -437,19 +412,13 @@ def check_connectivity_aggregated_equivalence(
     mean_rel_error = np.mean(rel_diff) * 100
 
     print("\nValue comparison:")
-    if np.isscalar(manually_aggregated):
-        print(f"  Manual (NICE) value: {manually_aggregated:.6e}")
-    else:
-        print(f"  Manual (NICE) mean:  {np.mean(manually_aggregated):.6e}")
-    if np.isscalar(junifer_output):
-        print(f"  Junifer value:       {junifer_output:.6e}")
-    else:
-        print(f"  Junifer mean:        {np.mean(junifer_output):.6e}")
+    print(f"  Manual (NICE) mean:  {np.mean(manually_aggregated):.6e}")
+    print(f"  Junifer mean:        {np.mean(junifer_output):.6e}")
     print(f"  Max relative error:  {max_rel_error:.4f}%")
     print(f"  Mean relative error: {mean_rel_error:.4f}%")
 
-    assert max_rel_error < 1.0, (
-        f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\nWorst case at index {np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else 'scalar'}\nManual (NICE) value: {manually_aggregated[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()]:.6e}\nJunifer value: {junifer_output[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()]:.6e}\nRelative diff: {rel_diff[np.unravel_index(np.argmax(rel_diff), rel_diff.shape) if not np.isscalar(rel_diff) else ()] * 100:.4f}%"
+    assert max_rel_error < 0.1, (
+        f"MISMATCH: {marker_name} ({max_rel_error:.4f}% error)\n\nWorst case at index {np.unravel_index(np.argmax(rel_diff), rel_diff.shape)}\nManual (NICE) value: {manually_aggregated[np.unravel_index(np.argmax(rel_diff), rel_diff.shape)]:.6e}\nJunifer value: {junifer_output[np.unravel_index(np.argmax(rel_diff), rel_diff.shape)]:.6e}\nRelative diff: {rel_diff[np.unravel_index(np.argmax(rel_diff), rel_diff.shape)] * 100:.4f}%"
     )
 
     if max_rel_error < tolerance:
@@ -623,6 +592,7 @@ class TestSpectralPowerDeltaAggregated:
             roi_channels=rois,
             all_channels=all_channels,
             tolerance=tolerance,
+            is_spectral_power=True,  # SpectralPowerBands returns 3D tensor
         )
 
         # Step 7: Assert for pytest
@@ -1104,7 +1074,8 @@ class TestTimeLockedTopographyP1Aggregated:
         # Step 6: Compare using manual aggregation
         # TimeLockedTopography has 3D data (trials, channels, timepoints)
         # We need to aggregate while preserving the time dimension
-        tolerance = self.reference_data["comparison_tolerance"]
+        # Use 1% tolerance for aggregation tests (trim_mean80 has minor numerical variations)
+        tolerance = max(self.reference_data["comparison_tolerance"], 1.0)
         all_channels = epochs_data["info"]["ch_names"]
 
         # Filter NICE data by ROI channels if specified
@@ -1131,27 +1102,21 @@ class TestTimeLockedTopographyP1Aggregated:
         print(f"  After time-averaging: {time_averaged.shape}")
 
         manually_aggregated = time_averaged
-        # Channel aggregation (axis=1)
+        # Channel aggregation (axis=1) - preserve dimensions
         if channel_agg is not None:
             manually_aggregated = aggregate_data(
                 manually_aggregated, channel_agg, axis=1
             )
-            # Result is (n_trials,) - keep natural shape, no reshape
+            # (n_trials,) -> (n_trials, 1)
+            manually_aggregated = np.expand_dims(manually_aggregated, axis=1)
 
-        # Trial aggregation
+        # Trial aggregation (axis=0) - preserve dimensions
         if trial_agg is not None:
-            if channel_agg is not None:
-                # Data is (n_trials,), aggregate to scalar
-                manually_aggregated = aggregate_data(
-                    manually_aggregated, trial_agg, axis=None
-                )
-                # Result is scalar - keep natural shape, no reshape
-            else:
-                # Data is (n_trials, n_channels), aggregate along axis=0
-                manually_aggregated = aggregate_data(
-                    manually_aggregated, trial_agg, axis=0
-                )
-                # Result is (n_channels,) - keep natural shape, no reshape
+            manually_aggregated = aggregate_data(
+                manually_aggregated, trial_agg, axis=0
+            )
+            # (n_channels,) or (1,) -> (1, n_channels) or (1, 1)
+            manually_aggregated = np.expand_dims(manually_aggregated, axis=0)
 
         print(f"  Manually aggregated shape: {manually_aggregated.shape}")
 
@@ -1371,6 +1336,7 @@ class TestPermutationEntropyAggregated:
             roi_channels=rois,
             all_channels=all_channels,
             tolerance=tolerance,
+            is_permutation_entropy=True,
         )
 
         # Step 7: Assert for pytest

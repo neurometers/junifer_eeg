@@ -4,7 +4,6 @@
 from .base import (
     EEGBaseMarker,
     EEGEpochsMarker,
-    EEGRawMarker,
     format_marker_result,
 )
 
@@ -13,7 +12,6 @@ from .contingent_negative_variation import ContingentNegativeVariation
 
 # Decoding markers
 from .decoding import TimeDecoding, WindowDecoding
-from .eeg_roi_aggregation import EEGROIAggregation
 
 # Kolmogorov Complexity
 from .kolmogorov_complexity import KolmogorovComplexity
@@ -66,8 +64,6 @@ __all__ = [
     "ContingentNegativeVariation",
     "EEGBaseMarker",
     "EEGEpochsMarker",
-    "EEGROIAggregation",
-    "EEGRawMarker",
     "KolmogorovComplexity",
     "KolmogorovComplexityBase",
     "PermutationEntropy",

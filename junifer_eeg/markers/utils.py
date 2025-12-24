@@ -204,8 +204,14 @@ def get_data_for_rois(
             seen.add(idx)
             unique_indices.append(idx)
 
-    # Return single ROI with all selected channels
-    return {"selected_channels": data[unique_indices]}
+    # Get channel names for selected indices
+    selected_ch_names = [ch_names[idx] for idx in unique_indices]
+
+    # Return single ROI with all selected channels and their names
+    return {
+        "selected_channels": data[unique_indices],
+        "selected_channels_names": selected_ch_names,
+    }
 
 
 def aggregate_data(
@@ -260,78 +266,139 @@ def aggregate_data(
     raise ValueError(f"Unknown aggregation method: {method}")
 
 
-def apply_channel_trial_aggregation(
+def apply_aggregation_preserve_dims(
     data: np.ndarray,
-    channel_method: str | None,
-    trial_method: str | None,
+    channel_method: Optional[str] = None,
+    trial_method: Optional[str] = None,
+    connectivity_method: Optional[str] = None,
+    aggregation_order: str = "channel_trial",
 ) -> np.ndarray:
-    """Apply channel and trial aggregation to EEG marker data.
+    """Apply aggregation while preserving tensor dimensions.
 
-    This is a unified helper to reduce code duplication across markers that
-    need to aggregate across channels and/or trials/epochs.
+    This unified helper reduces code duplication across EEG markers.
+    After aggregation, dimensions are preserved using expand_dims,
+    resulting in size-1 dimensions where aggregation was applied.
 
     Handles data shapes:
-    - 2D: (n_epochs, n_channels) - simple epoch/channel data
-    - 3D: (n_bands, n_epochs, n_channels) - multi-band/tau data
+    - 2D: (n_epochs, n_channels)
+    - 3D: (n_bands/n_taus, n_epochs, n_channels)
+    - 4D: (n_taus, n_epochs, n_channels_x, n_channels_y) for connectivity
 
     Parameters
     ----------
     data : np.ndarray
-        Input data with shape (n_epochs, n_channels) or (n_bands, n_epochs, n_channels)
+        Input data array.
     channel_method : str or None
-        Method to aggregate across channels ('mean', 'std', 'median', etc.)
-        If None, no channel aggregation is applied.
+        Method to aggregate across channels (last axis for 2D/3D, axis 2 for 4D).
+        Options: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
     trial_method : str or None
-        Method to aggregate across trials/epochs ('mean', 'std', 'median', etc.)
-        If None, no trial aggregation is applied.
+        Method to aggregate across trials/epochs (axis 0 for 2D, axis 1 for 3D/4D).
+        Options: 'mean', 'std', 'median', 'trim_mean80', 'trim_mean90', etc.
+    connectivity_method : str or None
+        Method to aggregate across connectivity dimension (axis 3 for 4D data).
+        Only applicable to 4D connectivity data.
+        Options: 'mean', 'median', etc.
+    aggregation_order : str, default='channel_trial'
+        Order of aggregation operations. Options:
+        - 'channel_trial': Apply channel aggregation first, then trial (default)
+        - 'trial_channel': Apply trial aggregation first, then channel
+        Note: Order matters for methods like trim_mean80 that remove outliers.
 
     Returns
     -------
     np.ndarray
-        Aggregated data. Shape depends on aggregation applied:
-        - No aggregation: same as input
-        - Channel only: (n_epochs,) or (n_bands, n_epochs)
-        - Trial only: (n_channels,) or (n_bands, n_channels)
-        - Both: scalar or (n_bands,)
+        Aggregated data with preserved dimensions. Aggregated axes have size 1.
+
+    Examples
+    --------
+    >>> # 2D: (100 epochs, 64 channels) -> (100, 1) after channel aggregation
+    >>> data_2d = np.random.randn(100, 64)
+    >>> result = apply_aggregation_preserve_dims(data_2d, channel_method='mean')
+    >>> result.shape
+    (100, 1)
+
+    >>> # 3D: (5 bands, 100 epochs, 64 channels) -> (5, 1, 1) after both
+    >>> data_3d = np.random.randn(5, 100, 64)
+    >>> result = apply_aggregation_preserve_dims(
+    ...     data_3d, channel_method='mean', trial_method='mean'
+    ... )
+    >>> result.shape
+    (5, 1, 1)
 
     Notes
     -----
     This helper implements the common aggregation pattern used by:
-    - SpectralPowerBands
-    - PermutationEntropy
-    - TimeLockedTopography
     - KolmogorovComplexity
+    - PermutationEntropy
+    - SpectralPowerBands
+    - TimeLockedTopography
+    - TimeLockedContrast
+    - ContingentNegativeVariation
     - PowerSpectralDensitySummary
-    - EEGROIAggregation
+    - SlowWavesDetection
+    - SpindlesDetection
+    - SymbolicMutualInformationROIs
     """
-    result_data = data
+    result = data.copy()
+    ndim = result.ndim
 
-    # Step 1: Channel aggregation (always last axis)
-    if channel_method is not None:
-        if result_data.ndim == 3:
-            # (n_bands, n_epochs, n_channels) -> (n_bands, n_epochs)
-            result_data = aggregate_data(result_data, channel_method, axis=2)
-        elif result_data.ndim == 2:
-            # (n_epochs, n_channels) -> (n_epochs,)
-            result_data = aggregate_data(result_data, channel_method, axis=1)
+    if ndim == 2:
+        # Shape: (n_epochs, n_channels)
+        # Channel aggregation: axis=1
+        if channel_method is not None:
+            result = aggregate_data(result, channel_method, axis=1)
+            result = np.expand_dims(
+                result, axis=1
+            )  # (n_epochs,) -> (n_epochs, 1)
 
-    # Step 2: Trial aggregation (middle axis for 3D, first for 2D)
-    if trial_method is not None:
-        if result_data.ndim == 3:
-            # (n_bands, n_epochs, n_channels) -> (n_bands, n_channels)
-            result_data = aggregate_data(result_data, trial_method, axis=1)
-        elif result_data.ndim == 2:
-            if channel_method is None:
-                # (n_epochs, n_channels) -> (n_channels,)
-                result_data = aggregate_data(result_data, trial_method, axis=0)
-            else:
-                # (n_bands, n_epochs) -> (n_bands,) [after channel agg on 3D]
-                result_data = aggregate_data(result_data, trial_method, axis=1)
-        elif result_data.ndim == 1:
-            # (n_epochs,) -> scalar
-            result_data = aggregate_data(result_data, trial_method, axis=None)
+        # Trial aggregation: axis=0
+        if trial_method is not None:
+            result = aggregate_data(result, trial_method, axis=0)
+            result = np.expand_dims(result, axis=0)  # -> (1, ...)
 
-    return result_data
+    elif ndim == 3:
+        # Shape: (n_bands/n_taus, n_epochs, n_channels)
+        if aggregation_order == "trial_channel":
+            # Trial aggregation first (axis=1)
+            if trial_method is not None:
+                result = aggregate_data(result, trial_method, axis=1)
+                result = np.expand_dims(result, axis=1)  # -> (n_bands, 1, ...)
+
+            # Channel aggregation second (axis=2)
+            if channel_method is not None:
+                result = aggregate_data(result, channel_method, axis=2)
+                result = np.expand_dims(result, axis=2)  # -> (..., 1)
+        else:
+            # Channel aggregation first (axis=2) - default
+            if channel_method is not None:
+                result = aggregate_data(result, channel_method, axis=2)
+                result = np.expand_dims(result, axis=2)  # -> (..., 1)
+
+            # Trial aggregation second (axis=1)
+            if trial_method is not None:
+                result = aggregate_data(result, trial_method, axis=1)
+                result = np.expand_dims(result, axis=1)  # -> (n_bands, 1, ...)
+
+    elif ndim == 4:
+        # Shape: (n_taus, n_epochs, n_channels_x, n_channels_y)
+        # Connectivity aggregation: axis=3 (across channels_y)
+        if connectivity_method is not None:
+            result = aggregate_data(result, connectivity_method, axis=3)
+            result = np.expand_dims(result, axis=3)  # -> (..., 1)
+
+        # Channel aggregation: axis=2 (across channels_x)
+        if channel_method is not None:
+            result = aggregate_data(result, channel_method, axis=2)
+            result = np.expand_dims(
+                result, axis=2
+            )  # -> (n_taus, n_epochs, 1, ...)
+
+        # Trial aggregation: axis=1
+        if trial_method is not None:
+            result = aggregate_data(result, trial_method, axis=1)
+            result = np.expand_dims(result, axis=1)  # -> (n_taus, 1, ...)
+
+    return result
 
 
 def apply_roi_filtering_to_epochs(

@@ -10,7 +10,6 @@ from junifer.utils import raise_error
 __all__ = [
     "EEGBaseMarker",
     "EEGEpochsMarker",
-    "EEGRawMarker",
     "format_marker_result",
 ]
 
@@ -213,48 +212,5 @@ class EEGEpochsMarker(EEGBaseMarker):
         if len(data_obj) == 0:
             raise_error(
                 msg=f"Cannot compute {self.__class__.__name__} on empty epochs.",
-                klass=ValueError,
-            )
-
-
-class EEGRawMarker(EEGBaseMarker):
-    """Abstract base class for markers that work on Raw data.
-
-    Provides validation to ensure input data is MNE Raw continuous data.
-
-    Parameters
-    ----------
-    tmin : float, optional
-        Start time for analysis in seconds. If None, use start of recording
-        (default None).
-    tmax : float, optional
-        End time for analysis in seconds. If None, use end of recording
-        (default None).
-    equipment : str, optional
-        Equipment configuration for ROI resolution (default "egi256").
-    on : str or list of str, optional
-        Data types to apply the marker to (default "EEG").
-    name : str, optional
-        Name of the marker. If None, will use class name (default None).
-
-    """
-
-    def _validate_input(self, data_obj) -> None:
-        """Validate input is Raw data.
-
-        Parameters
-        ----------
-        data_obj : mne.io.Raw
-            MNE Raw object to validate.
-
-        Raises
-        ------
-        ValueError
-            If data_obj is not Raw continuous data.
-
-        """
-        if not hasattr(data_obj, "times"):
-            raise_error(
-                msg=f"{self.__class__.__name__} requires Raw continuous data.",
                 klass=ValueError,
             )

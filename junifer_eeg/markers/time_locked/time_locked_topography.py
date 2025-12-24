@@ -11,6 +11,7 @@ from typing import Any, ClassVar, List, Union
 from junifer.api.decorators import register_marker
 
 from ..base import format_marker_result
+from ..utils import apply_aggregation_preserve_dims, filter_to_eeg_channels
 from ._time_locked_base import TimeLockedBase
 
 
@@ -103,28 +104,13 @@ class TimeLockedTopography(TimeLockedBase):
         )
 
     def get_output_type(self, input_type: str, output_feature: str) -> str:
-        """Get output type based on aggregation settings.
+        """Get output type - always returns timeseries for 2D tensor data.
 
-        Returns:
-        - 'timeseries': 3D tensor data (no aggregation)
-        - 'vector': 1D array (one aggregation applied)
-        - 'scalar_table': scalar value (both aggregations applied)
-
-        Dimensionality:
-        - No aggregation: (epochs, channels, times) → 3D → timeseries
-        - One aggregation: time-averaged → then aggregated → 1D → vector
-        - Both aggregations: time-averaged → fully aggregated → scalar → scalar_table
+        Always returns 'timeseries' since we now always return
+        2D tensors with shape (n_epochs, n_channels)
+        where dimensions can be size 1 when aggregated.
         """
-        # No aggregation → 3D tensor (epochs, channels, times) → use timeseries
-        if self.channel_method is None and self.trial_method is None:
-            return "timeseries"
-
-        # Both aggregations → scalar → use scalar_table
-        if self.channel_method is not None and self.trial_method is not None:
-            return "scalar_table"
-
-        # One aggregation → 1D array → use vector
-        return "vector"
+        return "timeseries"
 
     def compute(
         self,
@@ -150,8 +136,6 @@ class TimeLockedTopography(TimeLockedBase):
         ValueError
             If input data is not Epochs or if epochs are empty.
         """
-        from ..utils import filter_to_eeg_channels
-
         # Get the MNE data object - must be Epochs
         data_obj = input["data"]
 
@@ -190,46 +174,25 @@ class TimeLockedTopography(TimeLockedBase):
         # Get data dimensions
         n_epochs, n_channels, n_times = data.shape
 
-        # Check if we should return raw temporal data without aggregation
-        if self.channel_method is None and self.trial_method is None:
-            # Return raw per-epoch, per-channel, per-time results (matching NICE)
-            # Shape: (n_epochs, n_channels, n_times)
-            # Use centralized format_marker_result to ensure consistent col_names storage
-            return format_marker_result(
-                feature_name="timelockedtopo",
-                data=data,
-                col_names=ch_names,
-                channel_aggregated=False,
-            )
-
-        # For aggregation, average across time first using base class helper
+        # Always average across time first using base class helper
+        # This is the semantic meaning of time-locked topography (ERP)
         time_averaged = self._average_across_time(
             data
         )  # Shape: (n_epochs, n_channels)
 
-        # Apply aggregation using common helper
-        from ..utils import apply_channel_trial_aggregation
-
-        result_data = apply_channel_trial_aggregation(
-            time_averaged, self.channel_method, self.trial_method
+        # Apply aggregation while preserving 2D structure
+        # Use trial→channel order (matches original NICE behavior)
+        result_data = apply_aggregation_preserve_dims(
+            time_averaged,
+            channel_method=self.channel_method,
+            trial_method=self.trial_method,
+            aggregation_order="trial_channel",
         )
-
-        # Generate column names based on aggregation and result shape
-        if self.channel_method is not None and self.trial_method is not None:
-            col_names = ["all_channels_all_trials"]
-        elif self.channel_method is not None:
-            # result_data shape: (n_trials,) after channel aggregation
-            n_trials = result_data.shape[0] if result_data.ndim >= 1 else 1
-            col_names = [f"trial_{i}" for i in range(n_trials)]
-        elif self.trial_method is not None:
-            col_names = [f"{ch}" for ch in ch_names]
-        else:
-            col_names = [f"{ch}" for ch in ch_names]
 
         # Use centralized format_marker_result to ensure consistent col_names storage
         return format_marker_result(
             feature_name="timelockedtopo",
-            data=result_data,
-            col_names=col_names,
+            data=result_data,  # Shape: (n_epochs, n_channels) with size-1 for aggregated dims
+            col_names=ch_names,
             channel_aggregated=(self.channel_method is not None),
         )
