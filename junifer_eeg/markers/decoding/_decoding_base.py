@@ -146,14 +146,15 @@ class DecodingBase(EEGEpochsMarker):
             epochs_a = epochs_a.copy().crop(tmin=self.tmin, tmax=self.tmax)
             epochs_b = epochs_b.copy().crop(tmin=self.tmin, tmax=self.tmax)
 
-        # Combine epochs
-        import mne
+        # Extract data arrays FIRST to avoid baseline validation issues
+        X_a = epochs_a.get_data()  # (n_epochs_a, n_channels, n_times)
+        X_b = epochs_b.get_data()  # (n_epochs_b, n_channels, n_times)
 
-        combined_epochs = mne.concatenate_epochs([epochs_a, epochs_b])
-
-        # Get data: (n_epochs, n_channels, n_times)
-        X = combined_epochs.get_data()
-        ch_names = list(combined_epochs.ch_names)
+        # Concatenate data arrays (not Epochs objects)
+        X = np.concatenate(
+            [X_a, X_b], axis=0
+        )  # (n_epochs_total, n_channels, n_times)
+        ch_names = list(epochs_a.ch_names)
 
         # Create labels
         y = np.concatenate(

@@ -40,7 +40,7 @@ markers:
     tmin: null
     tmax: 0.6
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================
@@ -53,7 +53,7 @@ markers:
     tmax: 0.6
     nbins: 32
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================
@@ -77,7 +77,7 @@ markers:
     tmin: 0.064
     tmax: 0.112
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedTopography
@@ -85,7 +85,7 @@ markers:
     tmin: 0.876
     tmax: 0.936
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedTopography
@@ -93,7 +93,7 @@ markers:
     tmin: 0.996
     tmax: 1.196
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================
@@ -107,7 +107,7 @@ markers:
     condition_a: ["LSGS"]
     condition_b: ["LDGD"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -117,7 +117,7 @@ markers:
     condition_a: ["LSGD"]
     condition_b: ["LDGS"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -127,7 +127,7 @@ markers:
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -137,7 +137,7 @@ markers:
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -147,7 +147,7 @@ markers:
     condition_a: ["LDGS", "LDGD"]
     condition_b: ["LSGS", "LSGD"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -157,7 +157,7 @@ markers:
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   - kind: TimeLockedContrast
@@ -167,7 +167,7 @@ markers:
     condition_a: ["LSGD", "LDGD"]
     condition_b: ["LSGS", "LDGS"]
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================

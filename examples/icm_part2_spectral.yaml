@@ -47,7 +47,7 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_method: null  # No ROI aggregation - keep per-channel
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================
@@ -71,7 +71,7 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
 
   # ========================================
@@ -90,5 +90,5 @@ markers:
     n_overlap: 100
     n_per_seg: 128
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG

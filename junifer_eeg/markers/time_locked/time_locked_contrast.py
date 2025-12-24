@@ -1,7 +1,7 @@
 """Time-locked contrast marker for EEG analysis - refactored version.
 
 This marker computes contrasts between different experimental conditions
-in specific time windows, following the NICE pattern:
+in specific time windows:
 
 1. Process condition_a through TimeLockedTopography pipeline
 2. Process condition_b through TimeLockedTopography pipeline
@@ -17,7 +17,6 @@ from typing import Any, ClassVar, Dict, List, Optional, Union
 from junifer.api.decorators import register_marker
 
 from ..base import format_marker_result
-from ..utils import apply_aggregation_preserve_dims
 from ._time_locked_base import TimeLockedBase
 
 
@@ -26,7 +25,7 @@ class TimeLockedContrast(TimeLockedBase):
     """Time-locked contrast marker for condition comparisons.
 
     This marker computes contrasts between different experimental conditions
-    in specific time windows, following the NICE pattern:
+    in specific time windows:
 
     1. Process condition_a through TimeLockedTopography pipeline
     2. Process condition_b through TimeLockedTopography pipeline
@@ -117,7 +116,6 @@ class TimeLockedContrast(TimeLockedBase):
     ) -> Dict[str, Any]:
         """Compute time-locked contrast between conditions.
 
-        Following NICE pattern:
         1. Process condition_a through TimeLockedTopography pipeline
         2. Process condition_b through TimeLockedTopography pipeline
         3. Compute contrast: A - B
@@ -238,7 +236,12 @@ class TimeLockedContrast(TimeLockedBase):
 
             This replicates TimeLockedTopography pipeline for one condition
             using the shared base class functionality.
+
+            average across epochs FIRST within each condition,
+            then compute contrast. This allows conditions with different epoch counts.
             """
+            import numpy as np
+
             # Prepare epochs data using base class helper
             data = self._prepare_epochs_data(epochs_cond, self.tmin, self.tmax)
             ch_names = list(epochs_cond.ch_names)
@@ -251,35 +254,43 @@ class TimeLockedContrast(TimeLockedBase):
             # Average across time using base class helper
             time_averaged = self._average_across_time(data)
 
-            return time_averaged, ch_names
+            # Average across epochs (axis 0)
+            # This allows conditions with different epoch counts
+            epoch_averaged = np.mean(
+                time_averaged, axis=0
+            )  # Shape: (n_channels,)
 
-        # Check if we should return raw temporal data without aggregation
-        # Always process conditions separately with time averaging
+            return epoch_averaged, ch_names
+
+        # Process conditions separately - each averaged across its own epochs
         data_a, ch_names_a = process_condition(epochs_a)
         data_b, ch_names_b = process_condition(epochs_b)
 
-        # Check if both conditions have the same number of epochs
-        if data_a.shape[0] != data_b.shape[0]:
-            raise ValueError(
-                f"Conditions must have the same number of epochs. "
-                f"Condition A has {data_a.shape[0]} epochs, "
-                f"Condition B has {data_b.shape[0]} epochs."
-            )
+        # Now compute contrast: averaged_A - averaged_B (per channel)
+        # No longer requires same epoch count!
+        contrast_result = data_a - data_b  # Shape: (n_channels,)
 
-        # Now compute contrast: A - B (per epoch, per channel)
-        contrast_result = data_a - data_b  # Shape: (n_epochs, n_channels)
+        # Apply channel aggregation if specified
+        # Note: trial_method doesn't apply since we already averaged across epochs
+        if self.channel_method is not None:
+            import numpy as np
 
-        # Apply aggregation while preserving 2D structure
-        contrast_result = apply_aggregation_preserve_dims(
-            contrast_result,
-            channel_method=self.channel_method,
-            trial_method=self.trial_method,
-        )
+            if self.channel_method == "mean":
+                contrast_result = np.array([np.mean(contrast_result)])
+            elif self.channel_method == "median":
+                contrast_result = np.array([np.median(contrast_result)])
+            else:
+                raise ValueError(
+                    f"Unsupported channel_method: {self.channel_method}"
+                )
+            ch_names_final = None  # Single aggregated value
+        else:
+            ch_names_final = ch_names_a
 
         # Use centralized format_marker_result to ensure consistent col_names storage
         return format_marker_result(
             feature_name="timelockedcontrast",
             data=contrast_result,
-            col_names=ch_names_a,
+            col_names=ch_names_final,
             channel_aggregated=(self.channel_method is not None),
         )

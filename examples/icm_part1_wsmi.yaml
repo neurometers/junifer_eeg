@@ -41,5 +41,5 @@ markers:
     tmin: null
     tmax: 0.6
     channel_method: null
-    trial_method: "trim_mean80"
+    trial_method: null
     on: EEG
