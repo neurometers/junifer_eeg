@@ -92,3 +92,31 @@ markers:
     channel_method: null
     trial_method: null
     on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: sef90
+    percentile: 0.9
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: PowerSpectralDensitySummary
+    name: sef95
+    percentile: 0.95
+    tmin: null
+    tmax: 0.6
+    fmin: 1.0
+    fmax: 45.0
+    n_fft: 4096
+    n_overlap: 100
+    n_per_seg: 128
+    channel_method: null
+    trial_method: null
+    on: EEG
