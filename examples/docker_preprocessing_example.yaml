@@ -1,6 +1,10 @@
-# Docker Preprocessing Example
-# This configuration demonstrates how to use paths mapped inside a Docker container (/app/...).
-# It performs a standard preprocessing pipeline: Filter -> Epoch -> Artifact Rejection -> Reference -> Interpolation.
+# ICM Local-Global Preprocessing Example
+# This configuration implements the 4-step adaptive artifact rejection pipeline
+# matching the _adaptive_egi function from NICE:
+#   1. BadChannelsThreshold - Find bad channels by threshold
+#   2. BadChannelsVariance - Find bad channels by variance z-scoring
+#   3. BadEpochsThreshold - Find bad epochs by threshold
+#   4. BadChannelsHighFrequency - Find bad channels by high-frequency variance
 
 with:
   - "junifer_eeg"
@@ -11,61 +15,98 @@ datagrabber:
   kind: EEGDataGrabber
   patterns:
     EEG:
-      pattern: "sub-{subject}/eeg/*.fif"
+      pattern: "sub-NF304/ses-01/eeg/sub-NF304_ses-01_task-lg_acq-01_run-01_eeg.mff"
       space: "native"
-  replacements:
-    - "subject"
+  replacements: []
   types:
     - EEG
-  # In Docker, data is typically mounted to /app/data
-  datadir: "/app/data"
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/test_trini/"
 
 preprocess:
-  # Step 1: Filter
+  # Step 1: Filter and Resample
+  # EGI equipment: 0.1-40Hz bandpass, 60Hz notch (US line frequency)
   - kind: EEGFilter
-    low_freq: 45.0
-    high_freq: 0.5
-    notches: [50, 100]
-    resample_freq: 250
-    dump_path: /app/output/{element}/01_filtered_eeg
+    high_freq: 0.1       # High-pass cutoff (l_freq in MNE)
+    low_freq: 40.0       # Low-pass cutoff (h_freq in MNE)
+    notches: [60]        # US line frequency
+    resample_freq: 250   # Downsample to 250 Hz
+    dump_path: output/{element}/01_filtered_eeg
     on: EEG
 
-  # Step 2: Epoch
+  # Step 2: Create Epochs
+  # ICM Local-Global paradigm event codes
   - kind: EEGEpoching
     tmin: -0.2
-    tmax: 1.0
+    tmax: 1.34
     baseline: [-0.2, 0.0]
-    # Example event_id (adjust as needed)
     event_id:
-      "Stimulus": 1
-    exclude_channels: ["STI 014"]
-    dump_path: /app/output/{element}/02_epoched_eeg
+      "HSTD": 12   # High Standard
+      "HDVT": 15   # High Deviant
+      "LSGS": 18   # Low Standard Global Standard
+      "LSGD": 21   # Low Standard Global Deviant
+      "LDGS": 13   # Low Deviant Global Standard
+      "LDGD": 16   # Low Deviant Global Deviant
+    dump_path: output/{element}/02_epoched_eeg
     on: EEG
 
-  # Step 3: Artifact Rejection (Detection)
-  # Using BadChannelsHighFrequency as an example
+  # Step 3: Adaptive Artifact Rejection (4 steps from _adaptive_egi)
+  
+  # 3a. Bad Channels - Threshold
+  # Find channels where range (max-min) exceeds threshold in >50% of epochs
+  - kind: BadChannelsThreshold
+    reject:
+      eeg: 100.0e-6   # 100 µV threshold
+    n_epochs_bad_ch: 0.5
+    min_channels: 0.7
+    interpolate: false  # Don't interpolate yet - defer until after all detection
+    on: EEG
+
+  # 3b. Bad Channels - Variance
+  # Find channels with outlier variance using z-score
+  - kind: BadChannelsVariance
+    zscore_thresh: 4.0
+    max_iter: 2
+    min_channels: 0.7
+    interpolate: false  # Don't interpolate yet
+    on: EEG
+
+  # 3c. Bad Epochs - Threshold
+  # Find epochs where >10% of channels exceed threshold
+  - kind: BadEpochsThreshold
+    reject:
+      eeg: 100.0e-6   # 100 µV threshold
+    n_channels_bad_epoch: 0.1
+    min_events: 0.3
+    drop_bad_epochs: true
+    on: EEG
+
+  # 3d. Bad Channels - High Frequency
+  # Find channels with outlier high-frequency (>25 Hz) variance
   - kind: BadChannelsHighFrequency
     zscore_thresh: 4.0
+    max_iter: 2
     min_channels: 0.7
-    interpolate: false  # Defer interpolation until after referencing
+    interpolate: false  # Don't interpolate yet
+    dump_path: output/{element}/03_artifact_rejected_eeg
     on: EEG
 
-  # Step 4: Reference (Average)
+  # Step 4: Average Reference
   - kind: EEGReference
     ref_channels: "average"
     projection: true
     on: EEG
 
-  # Step 5: Interpolation
+  # Step 5: Interpolate Bad Channels
+  # Interpolate all detected bad channels after referencing
   - kind: EEGInterpolation
     reset_bads: true
-    dump_path: /app/output/{element}/03_clean_eeg
+    dump_path: output/{element}/04_clean_eeg
     on: EEG
 
 markers: []
 
 storage:
   kind: HDF5FeatureStorage
-  # Store results in the output directory mounted to /app/output
-  uri: /app/output/preprocessing_results.h5
+  uri: output/preprocessing_results.h5
+  single_output: true
 

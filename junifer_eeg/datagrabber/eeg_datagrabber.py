@@ -39,7 +39,7 @@ def _read_brainvision(file_path: Path, **kwargs) -> Any:
 def _read_fif(file_path: Path, **kwargs) -> Any:
     """Read FIF file using MNE."""
     # Handle both raw and epochs FIF files
-    if "_epo.fif" in str(file_path):
+    if "_epo.fif" in str(file_path) or "-epo.fif" in str(file_path):
         # It's an epochs file - try preload=True first, fallback to preload=False
         try:
             epochs = mne.read_epochs(file_path, preload=True, verbose=False)
@@ -67,6 +67,18 @@ def _read_fif(file_path: Path, **kwargs) -> Any:
     return raw
 
 
+def _read_egi_mff(file_path: Path, **kwargs) -> Any:
+    """Read EGI MFF file using MNE."""
+    raw = mne.io.read_raw_egi(file_path, preload=True, verbose=False)
+
+    # Set montage for EGI data
+    from .utils import detect_and_set_equipment
+
+    detect_and_set_equipment(raw)
+
+    return raw
+
+
 # Add EEG file extensions
 default_module._extensions.update(
     {
@@ -74,6 +86,7 @@ default_module._extensions.update(
         ".bdf": "EDF",
         ".fif": "FIF",
         ".vhdr": "BrainVision",  # BrainVision header files
+        ".mff": "EGI_MFF",  # EGI MFF format (directory-based)
     },
 )
 
@@ -82,6 +95,10 @@ default_module._readers["EDF"] = {"func": _read_edf, "params": None}
 default_module._readers["FIF"] = {"func": _read_fif, "params": None}
 default_module._readers["BrainVision"] = {
     "func": _read_brainvision,
+    "params": None,
+}
+default_module._readers["EGI_MFF"] = {
+    "func": _read_egi_mff,
     "params": None,
 }
 
