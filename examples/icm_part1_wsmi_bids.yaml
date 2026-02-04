@@ -1,0 +1,46 @@
+---
+
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-{session}_task-{task}_acq-{acq}_epo.fif"
+      space: "native"
+  replacements: ["subject", "session", "task", "acq"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: BIDSFeatureStorage
+  uri: output/wsmi.h5
+  suffix: connectivity
+  single_output: false
+  output_pickle: true
+  delete_h5_after_pickle: false
+
+markers:
+
+  # ========================================
+  # SYMBOLIC MUTUAL INFORMATION (4 taus in 1 marker!)
+  # ========================================
+  
+  - kind: SymbolicMutualInformationROIs
+    name: wsmi_multiscale
+    kernel: 3
+    taus: [8, 4, 2, 1]  # theta, alpha, beta, gamma timescales
+    weighted: true
+    csd: true
+    tmin: null
+    tmax: 0.6
+    channel_method: null
+    trial_method: null
+    on: EEG

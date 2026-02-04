@@ -47,14 +47,92 @@ def register_mne_dumpers():
         AssetDumperDispatcher,
     )
 
-    # Register dumpers for all MNE raw data types
+    # Register dumpers for all MNE epochs types
     AssetDumperDispatcher()[mne.Epochs] = MNEEpochsAsset
-    AssetDumperDispatcher()[mne.epochs.EpochsFIF] = (
-        MNEEpochsAsset  # Add EpochsFIF specifically
-    )
+    AssetDumperDispatcher()[mne.epochs.EpochsFIF] = MNEEpochsAsset
+
+    # Register base raw type
     AssetDumperDispatcher()[mne.io.BaseRaw] = MNERawAsset
 
-    # Register MFF format specifically
-    import mne.io.egi.egimff
+    # Register all specific raw format types
+    # These need explicit registration as some don't match BaseRaw properly
+    try:
+        import mne.io.edf.edf
 
-    AssetDumperDispatcher()[mne.io.egi.egimff.RawMff] = MNERawAsset
+        AssetDumperDispatcher()[mne.io.edf.edf.RawEDF] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.eeglab.eeglab
+
+        AssetDumperDispatcher()[mne.io.eeglab.eeglab.RawEEGLAB] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.brainvision.brainvision
+
+        AssetDumperDispatcher()[
+            mne.io.brainvision.brainvision.RawBrainVision
+        ] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.fif.raw
+
+        AssetDumperDispatcher()[mne.io.fif.raw.Raw] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.egi.egimff
+
+        AssetDumperDispatcher()[mne.io.egi.egimff.RawMff] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.cnt.cnt
+
+        AssetDumperDispatcher()[mne.io.cnt.cnt.RawCNT] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.gdf.gdf
+
+        AssetDumperDispatcher()[mne.io.gdf.gdf.RawGDF] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.nihon.nihon
+
+        AssetDumperDispatcher()[mne.io.nihon.nihon.RawNihon] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.kit.kit
+
+        AssetDumperDispatcher()[mne.io.kit.kit.RawKIT] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.curry.curry
+
+        AssetDumperDispatcher()[mne.io.curry.curry.RawCurry] = MNERawAsset
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        import mne.io.nicolet.nicolet
+
+        AssetDumperDispatcher()[mne.io.nicolet.nicolet.RawNicolet] = (
+            MNERawAsset
+        )
+    except (ImportError, AttributeError):
+        pass

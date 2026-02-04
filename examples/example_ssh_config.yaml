@@ -1,0 +1,57 @@
+---
+# Example config for SSH-mounted data
+# This shows how to use junifer-eeg with remote data via SSHFS
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      # Pattern works with any path, including SSH mounts
+      pattern: "{subject}/epochs/{subject}_ses-{session}_task-{task}_acq-{acq}_epo.fif"
+      space: "native"
+  replacements: ["subject", "session", "task", "acq"]
+  types:
+    - EEG
+  # Example SSH mount point - change to your actual mount
+  # Works with spaces in path: "/home/user/My SSH Mounts/Remote Data"
+  datadir: "/home/user/mounts/remote_data"
+
+preprocess: []
+
+storage:
+  kind: BIDSFeatureStorage
+  # Output can also be on SSH mount
+  # Example: "/home/user/mounts/remote_results/analysis.h5"
+  uri: /home/user/mounts/remote_results/analysis.h5
+  suffix: markers
+  single_output: false
+  output_pickle: true
+  delete_h5_after_pickle: false
+
+markers:
+  # Use fast marker for testing SSH connection
+  - kind: KolmogorovComplexity
+    name: kolmogorov
+    tmin: null
+    tmax: 0.6
+    nbins: 32
+    channel_method: "mean"
+    trial_method: "mean"
+    on: EEG
+
+# To use this config:
+# 1. Mount your SSH directory:
+#    sshfs user@server:/data ~/mounts/remote_data
+#    sshfs user@server:/results ~/mounts/remote_results
+#
+# 2. Update paths above to match your mounts
+#
+# 3. Run:
+#    ./docker-junifer.sh run examples/example_ssh_config.yaml
+#
+# 4. Data is processed without copying to local disk!

@@ -1,0 +1,191 @@
+---
+
+
+with:
+  - "junifer_eeg"
+
+workdir: "."
+
+datagrabber:
+  kind: EEGDataGrabber
+  patterns:
+    EEG:
+      pattern: "{subject}/epochs/{subject}_ses-{session}_task-{task}_acq-{acq}_epo.fif"
+      space: "native"
+  replacements: ["subject", "session", "task", "acq"]
+  types:
+    - EEG
+  datadir: "/home/gio/Documents/Repos/junifer_eeg/site/bckp/ground_truth"
+
+preprocess: []
+
+storage:
+  kind: BIDSFeatureStorage
+  uri: output/fast.h5
+  suffix: markers
+  single_output: false
+  output_pickle: true
+  delete_h5_after_pickle: false
+
+markers:
+
+  # ========================================
+  # 4. PERMUTATION ENTROPY (4 taus in 1 marker!)
+  # ========================================
+  
+  - kind: PermutationEntropy
+    name: permutation_entropy_multiscale
+    taus: [8, 4, 2, 1]
+    kernel: 3
+    tmin: null
+    tmax: 0.6
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 6. KOLMOGOROV COMPLEXITY
+  # ========================================
+  
+  - kind: KolmogorovComplexity
+    name: kolmogorov_complexity
+    tmin: null
+    tmax: 0.6
+    nbins: 32
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 7. CONTINGENT NEGATIVE VARIATION
+  # ========================================
+  
+  - kind: ContingentNegativeVariation
+    name: cnv_detailed
+    tmin: -0.004
+    tmax: 0.596
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 8. TIME-LOCKED TOPOGRAPHY (3 markers)
+  # ========================================
+  
+  - kind: TimeLockedTopography
+    name: p1_topography
+    tmin: 0.064
+    tmax: 0.112
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3a_topography
+    tmin: 0.876
+    tmax: 0.936
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedTopography
+    name: p3b_topography
+    tmin: 0.996
+    tmax: 1.196
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 9. TIME-LOCKED CONTRAST (7 markers)
+  # ========================================
+  
+  - kind: TimeLockedContrast
+    name: tlc_lsgs_ldgd
+    tmin: null
+    tmax: null
+    condition_a: ["LSGS"]
+    condition_b: ["LDGD"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_lsgd_ldgs
+    tmin: null
+    tmax: null
+    condition_a: ["LSGD"]
+    condition_b: ["LDGS"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_ld_ls
+    tmin: null
+    tmax: null
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_mmn
+    tmin: 0.736
+    tmax: 0.788
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_p3a
+    tmin: 0.876
+    tmax: 0.936
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_gd_gs
+    tmin: null
+    tmax: null
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  - kind: TimeLockedContrast
+    name: tlc_p3b
+    tmin: 0.996
+    tmax: 1.196
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    channel_method: null
+    trial_method: null
+    on: EEG
+
+  # ========================================
+  # 10. WINDOW DECODING (2 markers)
+  # ========================================
+  
+  - kind: WindowDecoding
+    name: window_decoding_local
+    condition_a: ["LDGS", "LDGD"]
+    condition_b: ["LSGS", "LSGD"]
+    tmin: 0.6
+    tmax: 0.967
+    on: EEG
+
+  - kind: WindowDecoding
+    name: window_decoding_global
+    condition_a: ["LSGD", "LDGD"]
+    condition_b: ["LSGS", "LDGS"]
+    tmin: 0.967
+    tmax: 1.336
+    on: EEG

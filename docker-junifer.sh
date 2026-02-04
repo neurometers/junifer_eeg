@@ -80,7 +80,7 @@ extract_paths_from_yaml() {
     printf '%s\n' "${paths[@]}" | sort -u
 }
 
-# Function to mount path appropriately
+# Function to mount path appropriately (handles spaces and SSH mounts)
 mount_path() {
     local path="$1"
     
@@ -99,11 +99,12 @@ mount_path() {
         local container_path="/app/$path"
         
         # Create directory if it doesn't exist
-        mkdir -p "$host_path"
+        mkdir -p "$host_path" 2>/dev/null || true
         
-        echo "-v $host_path:$container_path"
+        # Use proper quoting for paths with spaces
+        echo "-v \"$host_path:$container_path\""
     else
-        # Absolute path
+        # Absolute path (could be SSH mount)
         local host_path="$path"
         
         # Check if this absolute path is within the repo
@@ -116,14 +117,18 @@ mount_path() {
                 mkdir -p "$host_path" 2>/dev/null || true
             fi
             
-            echo "-v $host_path:$container_path"
+            # Use proper quoting for paths with spaces
+            echo "-v \"$host_path:$container_path\""
         else
-            # Path is outside repo - mount at same location
+            # Path is outside repo (SSH mount, network drive, etc.)
             local container_path="$path"
             
-            # Only mount if path exists on host
-            if [ -e "$host_path" ]; then
-                echo "-v $host_path:$container_path"
+            # Check if path exists OR is potentially an SSH mount
+            # SSH mounts might not show up with -e check immediately
+            if [ -e "$host_path" ] || [ -d "$(dirname "$host_path")" ]; then
+                echo "-v \"$host_path:$container_path\""
+            else
+                echo "Warning: Path not accessible: $host_path" >&2
             fi
         fi
     fi
@@ -166,8 +171,8 @@ if [ "$COMMAND" = "run" ] && [ -n "$1" ]; then
     if [ -f "$YAML_FILE" ]; then
         echo "Parsing YAML file: $YAML_FILE"
         
-        # Mount the YAML file
-        DOCKER_CMD="$DOCKER_CMD -v $YAML_FILE:/app/config.yaml"
+        # Mount the YAML file (with proper quoting for spaces)
+        DOCKER_CMD="$DOCKER_CMD -v \"$YAML_FILE:/app/config.yaml\""
         
         # Extract and mount all required paths
         while IFS= read -r path; do
@@ -191,11 +196,12 @@ if [ "$COMMAND" = "run" ] && [ -n "$1" ]; then
         [ $# -gt 0 ] && DOCKER_CMD="$DOCKER_CMD $@"
     else
         echo "Error: YAML file not found: $YAML_FILE"
+        echo "Note: If using SSH-mounted paths, ensure the mount is active"
         exit 1
     fi
 else
-    # For non-run commands, use simple mounting
-    DOCKER_CMD="$DOCKER_CMD -v $REPO_ROOT:/workspace"
+    # For non-run commands, use simple mounting (with proper quoting)
+    DOCKER_CMD="$DOCKER_CMD -v \"$REPO_ROOT:/workspace\""
     DOCKER_CMD="$DOCKER_CMD -w /workspace"
     DOCKER_CMD="$DOCKER_CMD $IMAGE_NAME"
     
@@ -217,64 +223,85 @@ eval $DOCKER_CMD
 # If --dump flag was set and we ran the 'run' command, dump HDF5 to pickle
 if [ "$DUMP_MODE" = true ] && [ "$COMMAND" = "run" ] && [ -n "$YAML_FILE" ]; then
     echo ""
-    echo "=== Dumping HDF5 to Pickle ==="
+    echo "=== Dumping HDF5 to Pickle (BIDS format) ==="
     
-    # Extract HDF5 output path from YAML
-    H5_FILE=$(grep -E '^\s*uri:' "$YAML_FILE" | sed -E 's/.*uri:\s*["'"'"']?([^"'"'"']+)["'"'"']?.*/\1/' | head -1 | tr -d ' ')
+    # Extract output directory from YAML
+    OUTPUT_URI=$(grep -E '^\s*uri:' "$YAML_FILE" | sed -E 's/.*uri:\s*["'"'"']?([^"'"'"']+)["'"'"']?.*/\1/' | head -1 | tr -d ' ')
     
-    if [ -z "$H5_FILE" ]; then
+    if [ -z "$OUTPUT_URI" ]; then
         echo "Warning: Could not find 'uri:' in YAML file. Skipping dump."
     else
         # Convert relative path to absolute
-        if [[ "$H5_FILE" != /* ]]; then
-            H5_FILE="$REPO_ROOT/$H5_FILE"
+        if [[ "$OUTPUT_URI" != /* ]]; then
+            OUTPUT_URI="$REPO_ROOT/$OUTPUT_URI"
         fi
         
-        if [ ! -f "$H5_FILE" ]; then
-            echo "Warning: HDF5 file not found: $H5_FILE. Skipping dump."
+        # Get the output directory (may be a file path, so get parent)
+        if [ -f "$OUTPUT_URI" ]; then
+            OUTPUT_DIR="$(dirname "$OUTPUT_URI")"
+        elif [ -d "$OUTPUT_URI" ]; then
+            OUTPUT_DIR="$OUTPUT_URI"
         else
-            # Create pickle filename (same path, .pkl extension)
-            PKL_FILE="${H5_FILE%.h5}.pkl"
+            OUTPUT_DIR="$(dirname "$OUTPUT_URI")"
+        fi
+        
+        # Check if the directory exists
+        if [ ! -d "$OUTPUT_DIR" ]; then
+            echo "Warning: Output directory not found: $OUTPUT_DIR. Skipping dump."
+        else
+            # Find all HDF5 files in the output directory
+            H5_FILES=$(find "$OUTPUT_DIR" -maxdepth 1 -name "*.h5" -type f)
             
-            H5_FILE_ABS="$H5_FILE"
-            H5_DIR="$(dirname "$H5_FILE_ABS")"
-            H5_NAME="$(basename "$H5_FILE_ABS")"
-            PKL_DIR="$(dirname "$PKL_FILE")"
-            PKL_NAME="$(basename "$PKL_FILE")"
-            
-            echo "Reading: $H5_FILE"
-            echo "Writing: $PKL_FILE"
-            
-            # Run the dump inside Docker
-            docker run --rm \
-                --user "$(id -u):$(id -g)" \
-                -v "$H5_DIR:/input:ro" \
-                -v "$PKL_DIR:/output" \
-                -v "$REPO_ROOT/junifer_eeg:/app/junifer_eeg:ro" \
-                -v "$CACHE_DIR:/cache" \
-                -e HOME=/cache \
-                --entrypoint python \
-                "$IMAGE_NAME" \
-                -c "
+            if [ -z "$H5_FILES" ]; then
+                echo "Warning: No HDF5 files found in $OUTPUT_DIR. Skipping dump."
+            else
+                echo "Found HDF5 files in: $OUTPUT_DIR"
+                
+                # Process each HDF5 file
+                while IFS= read -r H5_FILE; do
+                    # Create pickle filename (same path, .pkl extension)
+                    PKL_FILE="${H5_FILE%.h5}.pkl"
+                    
+                    H5_DIR="$(dirname "$H5_FILE")"
+                    H5_NAME="$(basename "$H5_FILE")"
+                    PKL_NAME="$(basename "$PKL_FILE")"
+                    
+                    echo ""
+                    echo "Converting: $H5_NAME"
+                    
+                    # Run the dump inside Docker
+                    docker run --rm \
+                        --user "$(id -u):$(id -g)" \
+                        -v "$H5_DIR:/data" \
+                        -v "$REPO_ROOT/junifer_eeg:/app/junifer_eeg:ro" \
+                        -v "$CACHE_DIR:/cache" \
+                        -e HOME=/cache \
+                        --entrypoint python \
+                        "$IMAGE_NAME" \
+                        -c "
 from junifer_eeg.reader import read_h5
-reader = read_h5('/input/$H5_NAME')
+reader = read_h5('/data/$H5_NAME')
 markers = reader.list_markers()
-print(f'Found {len(markers)} markers: {', '.join(markers)}')
-reader.dump_all_to_pkl('/output/$PKL_NAME')
+print(f'Found {len(markers)} markers: {\", \".join(markers)}')
+reader.dump_all_to_pkl('/data/$PKL_NAME')
 print('Successfully dumped all markers to pickle file')
 "
-            
-            # Delete HDF5 file
-            if [ -f "$PKL_FILE" ]; then
+                    
+                    # Check if pickle was created successfully
+                    if [ -f "$PKL_FILE" ]; then
+                        echo "✓ Created: $PKL_NAME"
+                        
+                        # Delete HDF5 file
+                        rm "$H5_FILE"
+                        echo "✓ Deleted: $H5_NAME"
+                    else
+                        echo "✗ Error: Pickle file was not created for $H5_NAME. Keeping HDF5 file."
+                    fi
+                done <<< "$H5_FILES"
+                
                 echo ""
-                echo "Pickle file created successfully. Deleting HDF5 file..."
-                rm "$H5_FILE"
-                echo "Deleted: $H5_FILE"
-                echo ""
-                echo "Done! Pickle file saved to: $PKL_FILE"
-            else
-                echo "Error: Pickle file was not created. Keeping HDF5 file."
-                exit 1
+                echo "=== Dump Complete ==="
+                echo "All pickle files saved to: $OUTPUT_DIR"
             fi
         fi
     fi

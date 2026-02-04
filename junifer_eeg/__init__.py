@@ -10,6 +10,7 @@ from . import (
     datagrabber,
     markers,
     preprocessors,
+    storage,
 )
 from .datagrabber import EEGDataGrabber
 from .markers import (
@@ -54,4 +55,5 @@ __all__ = [
     "datagrabber",
     "markers",
     "preprocessors",
+    "storage",
 ]
