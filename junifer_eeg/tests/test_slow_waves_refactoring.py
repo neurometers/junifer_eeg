@@ -6,6 +6,7 @@ Tests the slow waves detection marker that:
 3. Returns only the requested feature per epoch/channel
 """
 
+import pandas as pd
 import numpy as np
 import pytest
 from mne import create_info
@@ -154,6 +155,34 @@ class TestSlowWavesDetectionCaching:
 
         # Cache should have grown
         assert len(SlowWavesDetectionBase._cache) > initial_cache_size
+
+
+class TestSlowWavesDetectionFiltering:
+    """Test post-detection filtering criteria."""
+
+    def test_freq_threshold_removes_fast_waves(self):
+        """Waves above freq_threshold should be discarded before aggregation."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = pd.DataFrame(
+            {
+                "Epoch": [0, 0, 0],
+                "ChanIdx": [0, 0, 0],
+                "Channel": ["E1", "E1", "E1"],
+                "PTP": [10.0, 20.0, 30.0],
+                "Frequency": [6.5, 7.0, 8.5],
+                "Slope": [1.0, 2.0, 3.0],
+            }
+        )
+
+        filtered = sw_base._apply_dynamic_threshold(
+            sw_df,
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+        )
+
+        assert not filtered.empty
+        assert filtered["Frequency"].max() <= 7.0
+        assert 8.5 not in filtered["Frequency"].tolist()
 
 
 class TestSlowWavesDetectionAggregation:
