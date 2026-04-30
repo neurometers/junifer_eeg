@@ -51,6 +51,22 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         """Initialize slow waves detection base."""
         pass
 
+    @staticmethod
+    def _normalize_subject_id(subject_id: str | int | float | None) -> str | None:
+        """Normalize subject IDs for CSV matching.
+
+        Makes matching tolerant to common variants like ``03`` vs ``3`` or
+        ``sub-03`` vs ``03``.
+        """
+        if subject_id is None:
+            return None
+        value = str(subject_id).strip()
+        if value.lower().startswith("sub-"):
+            value = value[4:]
+        if value.isdigit():
+            value = str(int(value))
+        return value
+
     def __del__(self) -> None:  # pragma: no cover
         """Terminate and clear cache."""
         logger.debug("Clearing cache for slow waves detection computation")
@@ -64,6 +80,11 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         amp_ptp_initial: float,
         freq_threshold: float,
         artifact_threshold: float,
+        ptp_threshold_mode: Literal["adaptive", "fixed"],
+        ptp_percentile: float,
+        max_ptp_amplitude: float,
+        ptp_thresholds_path: str | None,
+        subject_id: str | None,
         reference_channels: Tuple[str, ...],
     ) -> Dict[str, np.ndarray]:
         """Compute slow wave detection with caching.
@@ -102,6 +123,11 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             amp_ptp_initial,
             freq_threshold,
             artifact_threshold,
+            ptp_threshold_mode,
+            ptp_percentile,
+            max_ptp_amplitude,
+            ptp_thresholds_path,
+            subject_id,
             reference_channels,
         )
 
@@ -123,6 +149,11 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             amp_ptp_initial,
             freq_threshold,
             artifact_threshold,
+            ptp_threshold_mode,
+            ptp_percentile,
+            max_ptp_amplitude,
+            ptp_thresholds_path,
+            subject_id,
             reference_channels,
         )
 
@@ -139,6 +170,11 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         amp_ptp_initial: float,
         freq_threshold: float,
         artifact_threshold: float,
+        ptp_threshold_mode: Literal["adaptive", "fixed"],
+        ptp_percentile: float,
+        max_ptp_amplitude: float,
+        ptp_thresholds_path: str | None,
+        subject_id: str | None,
         reference_channels: Tuple[str, ...],
     ) -> Dict[str, np.ndarray]:
         """Perform slow wave detection on epochs.
@@ -237,7 +273,14 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         # Apply post-processing filtering (Andrillon & Pinggal criteria)
         if not events_df.empty:
             events_df = self._apply_dynamic_threshold(
-                events_df, freq_threshold, artifact_threshold
+                events_df,
+                freq_threshold=freq_threshold,
+                artifact_threshold=artifact_threshold,
+                ptp_threshold_mode=ptp_threshold_mode,
+                ptp_percentile=ptp_percentile,
+                max_ptp_amplitude=max_ptp_amplitude,
+                ptp_thresholds_path=ptp_thresholds_path,
+                subject_id=subject_id,
             )
 
         # Get dimensions
@@ -444,14 +487,23 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         sw_df: pd.DataFrame,
         freq_threshold: float,
         artifact_threshold: float,
+        ptp_threshold_mode: Literal["adaptive", "fixed"],
+        ptp_percentile: float,
+        max_ptp_amplitude: float,
+        ptp_thresholds_path: str | None,
+        subject_id: str | None,
     ) -> pd.DataFrame:
         """Apply dynamic thresholding and filtering to slow waves.
 
-        This implements the Andrillon and Pinggal filtering criteria:
+        This implements a combined filtering stage for both backends:
         1. Remove waves with frequency > freq_threshold Hz
-        2. Calculate 90th percentile of PTP per channel
-        3. Keep only waves with PTP > channel-specific 90th percentile
-        4. Remove artifacts with positive peak > artifact_threshold µV
+        2. Remove waves with PTP >= max_ptp_amplitude µV
+        3. Remove artifacts with positive peak >= artifact_threshold µV
+        4. If available, remove waves whose positive half-period proxy falls
+           outside the expected range used by the legacy custom method
+        5. If ``ptp_threshold_mode="adaptive"``, keep only waves above a
+           per-channel PTP threshold, either loaded from CSV or computed from
+           the current element data.
 
         Parameters
         ----------
@@ -473,17 +525,69 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         if sw_df.empty:
             return sw_df
 
-        # Rule 2 & 3: Dynamic amplitude threshold (90th percentile per channel)
-        channel_thresholds = {}
-        for channel in sw_df["Channel"].unique():
-            channel_sw = sw_df[sw_df["Channel"] == channel]
-            channel_thresholds[channel] = np.percentile(channel_sw["PTP"], 90)
+        # Rule 2: Remove abnormally large PTP events
+        if "PTP" in sw_df.columns:
+            sw_df = sw_df[sw_df["PTP"] < max_ptp_amplitude].copy()
 
-        # Filter: keep only waves above channel-specific threshold
-        keep_mask = [
-            row["PTP"] >= channel_thresholds[row["Channel"]]
-            for _, row in sw_df.iterrows()
-        ]
+        if sw_df.empty:
+            return sw_df
+
+        # Rule 3: Positive-peak artifact rejection when the backend exposes it
+        if "ValPosPeak" in sw_df.columns:
+            sw_df = sw_df[sw_df["ValPosPeak"] < artifact_threshold].copy()
+
+        if sw_df.empty:
+            return sw_df
+
+        # Rule 4: Legacy custom-method half-period constraint, if available.
+        slope_col = None
+        if "pos_halfway_period" in sw_df.columns:
+            slope_col = "pos_halfway_period"
+        elif "PosHalfPeriod" in sw_df.columns:
+            slope_col = "PosHalfPeriod"
+
+        if slope_col is not None:
+            sw_df = sw_df[
+                (sw_df[slope_col] >= 0.143) & (sw_df[slope_col] <= 2.0)
+            ].copy()
+
+        if sw_df.empty or ptp_threshold_mode == "fixed":
+            return sw_df
+
+        if ptp_thresholds_path is not None:
+            if subject_id is None:
+                raise ValueError(
+                    "ptp_thresholds_path was provided but no subject metadata "
+                    "was found in extra_input."
+                )
+            thr_df = pd.read_csv(ptp_thresholds_path)
+            normalized_subject = self._normalize_subject_id(subject_id)
+            thr_df = thr_df[
+                thr_df["subject"]
+                .map(self._normalize_subject_id)
+                .eq(normalized_subject)
+            ]
+            if thr_df.empty:
+                raise ValueError(
+                    f"No PTP thresholds found for subject={subject_id} in "
+                    f"{ptp_thresholds_path}"
+                )
+            channel_thresholds = dict(
+                zip(thr_df["channel"], thr_df["ptp_threshold"])
+            )
+        else:
+            channel_thresholds = {}
+            for channel in sw_df["Channel"].unique():
+                channel_sw = sw_df[sw_df["Channel"] == channel]
+                channel_thresholds[channel] = np.percentile(
+                    channel_sw["PTP"], ptp_percentile
+                )
+
+        keep_mask = sw_df.apply(
+            lambda row: row["PTP"]
+            >= channel_thresholds.get(row["Channel"], np.inf),
+            axis=1,
+        )
         sw_df = sw_df[keep_mask].copy()
 
         return sw_df

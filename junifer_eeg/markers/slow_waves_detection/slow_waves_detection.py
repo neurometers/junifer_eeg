@@ -55,6 +55,19 @@ class SlowWavesDetection(EEGEpochsMarker):
         Maximum frequency threshold for filtering (Hz).
     artifact_threshold : float, default=75.0
         Positive peak amplitude threshold for artifact removal (µV).
+    ptp_threshold_mode : {"adaptive", "fixed"}, default="adaptive"
+        Strategy used after detection for peak-to-peak filtering. ``"adaptive"``
+        computes one threshold per channel. ``"fixed"`` skips this percentile
+        filtering stage.
+    ptp_percentile : float, default=90.0
+        Percentile used when ``ptp_threshold_mode="adaptive"`` and no
+        precomputed thresholds file is provided.
+    max_ptp_amplitude : float, default=150.0
+        Maximum peak-to-peak amplitude allowed during post-detection filtering.
+    ptp_thresholds_path : str, optional
+        Optional CSV with fixed per-subject, per-channel PTP thresholds.
+        When provided, adaptive percentile computation is skipped and the CSV
+        thresholds are applied instead.
     reference_channels : tuple of str, default=("TP7", "TP8")
         Reference channel names for re-referencing.
     channel_method : str, optional
@@ -102,6 +115,10 @@ class SlowWavesDetection(EEGEpochsMarker):
         amp_ptp_initial: float = 15.0,
         freq_threshold: float = 7.0,
         artifact_threshold: float = 75.0,
+        ptp_threshold_mode: Literal["adaptive", "fixed"] = "adaptive",
+        ptp_percentile: float = 90.0,
+        max_ptp_amplitude: float = 150.0,
+        ptp_thresholds_path: Optional[str] = None,
         reference_channels: Tuple[str, ...] = ("TP7", "TP8"),
         channel_method: Optional[str] = None,
         trial_method: Optional[str] = None,
@@ -126,6 +143,11 @@ class SlowWavesDetection(EEGEpochsMarker):
                 "'detection_method' must be 'yasa' or 'custom'. "
                 f"Got: '{detection_method}'"
             )
+        if ptp_threshold_mode not in {"adaptive", "fixed"}:
+            raise ValueError(
+                "'ptp_threshold_mode' must be 'adaptive' or 'fixed'. "
+                f"Got: '{ptp_threshold_mode}'"
+            )
 
         self.feature = feature
         self.detection_method = detection_method
@@ -133,6 +155,10 @@ class SlowWavesDetection(EEGEpochsMarker):
         self.amp_ptp_initial = amp_ptp_initial
         self.freq_threshold = freq_threshold
         self.artifact_threshold = artifact_threshold
+        self.ptp_threshold_mode = ptp_threshold_mode
+        self.ptp_percentile = ptp_percentile
+        self.max_ptp_amplitude = max_ptp_amplitude
+        self.ptp_thresholds_path = ptp_thresholds_path
         self.reference_channels = tuple(reference_channels)
         self.channel_method = channel_method
         self.trial_method = trial_method
@@ -169,6 +195,7 @@ class SlowWavesDetection(EEGEpochsMarker):
         # Filter to EEG channels only
         data_obj, _, _ = filter_to_eeg_channels(data_obj)
         ch_names = list(data_obj.ch_names)
+        subject_id = self._extract_subject_id(extra_input)
 
         # Compute all features using singleton (with caching)
         sw_base = SlowWavesDetectionBase()
@@ -179,6 +206,11 @@ class SlowWavesDetection(EEGEpochsMarker):
             self.amp_ptp_initial,
             self.freq_threshold,
             self.artifact_threshold,
+            self.ptp_threshold_mode,
+            self.ptp_percentile,
+            self.max_ptp_amplitude,
+            self.ptp_thresholds_path,
+            subject_id,
             self.reference_channels,
         )
 
@@ -201,6 +233,28 @@ class SlowWavesDetection(EEGEpochsMarker):
             col_names=ch_names,
             channel_aggregated=(self.channel_method is not None),
         )
+
+    @staticmethod
+    def _extract_subject_id(
+        extra_input: Optional[dict[str, Any]],
+    ) -> Optional[str]:
+        """Extract subject metadata from Junifer's extra_input structure."""
+        if not extra_input:
+            return None
+
+        element = extra_input.get("element")
+        if isinstance(element, dict):
+            for key in ("subject", "subject_id", "sub"):
+                value = element.get(key)
+                if value is not None:
+                    return str(value)
+
+        for key in ("subject", "subject_id", "sub"):
+            value = extra_input.get(key)
+            if value is not None:
+                return str(value)
+
+        return None
 
     def get_output_type(self, input_type: str, output_feature: str) -> str:
         """Get output type - always returns timeseries for 2D tensor data.

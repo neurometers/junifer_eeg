@@ -21,6 +21,10 @@ Detection runs once per unique parameter set and epochs object. Uses a **singlet
 | `amp_ptp_initial`     | `float`                  | `15.0`           | Minimum peak-to-peak amplitude threshold in µV. YASA receives `amp_ptp=(amp_ptp_initial, inf)`. |
 | `freq_threshold`      | `float`                  | `7.0`            | Maximum frequency (Hz) used in post-detection filtering: detected waves with `Frequency > freq_threshold` are removed. |
 | `artifact_threshold`  | `float`                  | `75.0`           | Accepted as a parameter and included in the detection cache key. |
+| `ptp_threshold_mode`  | `{"adaptive", "fixed"}` | `"adaptive"`     | Whether to apply per-channel PTP thresholding after detection. |
+| `ptp_percentile`      | `float`                  | `90.0`           | Percentile used for adaptive per-channel PTP thresholds when no CSV is provided. |
+| `max_ptp_amplitude`   | `float`                  | `150.0`          | Maximum PTP amplitude (µV) allowed during post-detection filtering. |
+| `ptp_thresholds_path` | `str` or `None`          | `None`           | Optional CSV containing fixed `(subject, channel, ptp_threshold)` values. |
 | `reference_channels`  | `tuple of str`           | `("TP7", "TP8")` | Channel names used for re-referencing before detection. The mean of these channels is subtracted from all channels. Falls back to unreferenced data if channels are missing or contain all zeros. |
 | `channel_method`      | `str` or `None`          | `None`           | Aggregation method applied **across channels**. If `None`, no channel aggregation. See [Aggregation Methods](#aggregation-methods). |
 | `trial_method`        | `str` or `None`          | `None`           | Aggregation method applied **across epochs/trials**. If `None`, no trial aggregation. See [Aggregation Methods](#aggregation-methods). |
@@ -93,7 +97,11 @@ Aggregation is applied in **channel-then-trial** order.
    - If `detection_method="custom"`, a Chebyshev type-II band-pass is applied and waves are built from successive zero-crossings around a negative trough followed by a positive rebound.
 4. **Post-detection filtering** (Andrillon & Pinggal criteria):
    - Waves with `Frequency > freq_threshold` are removed.
+   - Waves with `PTP >= max_ptp_amplitude` are removed.
+   - If a positive peak column is available, waves with positive peak `>= artifact_threshold` are removed.
+   - If a positive-half-period proxy is available, legacy custom-method bounds are applied.
    - For each channel, the 90th percentile of PTP across all remaining detected waves is computed. Only waves with `PTP ≥` that channel-specific threshold are retained.
+   - If `ptp_thresholds_path` is provided, the CSV thresholds are used instead of computing the percentile from the current element.
 5. **Feature extraction:** For each epoch × channel group of surviving waves:
    - `Duration`, `PTP`, `Frequency`, `Slope`: mean across detected waves in that group.
    - `Density`: count of detected waves in that group.
@@ -149,6 +157,18 @@ markers:
     channel_method: mean
     trial_method: mean
     name: sw_duration_collapsed
+```
+
+### Use precomputed thresholds from a reference condition
+
+```yaml
+markers:
+  - kind: SlowWavesDetection
+    feature: Density
+    detection_method: custom
+    freq_sw: [1.0, 10.0]
+    ptp_thresholds_path: /path/to/sw_thresholds.csv
+    name: sw_density_fixed_threshold
 ```
 
 ### Multiple features from one detection (shared cache)

@@ -79,6 +79,13 @@ class TestSlowWavesDetectionMandatoryFeature:
                 feature="Duration", detection_method="not_a_method"
             )
 
+    def test_invalid_ptp_threshold_mode_raises_error(self):
+        """Only supported PTP threshold modes should be accepted."""
+        with pytest.raises(ValueError, match="ptp_threshold_mode"):
+            SlowWavesDetection(
+                feature="Duration", ptp_threshold_mode="not_a_mode"
+            )
+
 
 class TestSlowWavesDetectionFeatureComputation:
     """Test that all features can be computed correctly."""
@@ -221,11 +228,86 @@ class TestSlowWavesDetectionFiltering:
             sw_df,
             freq_threshold=7.0,
             artifact_threshold=75.0,
+            ptp_threshold_mode="adaptive",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
         )
 
         assert not filtered.empty
         assert filtered["Frequency"].max() <= 7.0
         assert 8.5 not in filtered["Frequency"].tolist()
+
+    def test_precomputed_thresholds_are_used(self, tmp_path):
+        """Fixed per-subject thresholds should bypass percentile computation."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = pd.DataFrame(
+            {
+                "Epoch": [0, 0, 0, 0],
+                "ChanIdx": [0, 0, 1, 1],
+                "Channel": ["E1", "E1", "E2", "E2"],
+                "PTP": [30.0, 50.0, 20.0, 45.0],
+                "Frequency": [6.0, 6.0, 6.0, 6.0],
+                "Slope": [1.0, 2.0, 1.0, 2.0],
+            }
+        )
+        thr_path = tmp_path / "thresholds.csv"
+        pd.DataFrame(
+            {
+                "subject": ["03", "03"],
+                "channel": ["E1", "E2"],
+                "ptp_threshold": [45.0, 40.0],
+            }
+        ).to_csv(thr_path, index=False)
+
+        filtered = sw_base._apply_dynamic_threshold(
+            sw_df,
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="adaptive",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=str(thr_path),
+            subject_id="03",
+        )
+
+        assert sorted(filtered["Channel"].tolist()) == ["E1", "E2"]
+        assert sorted(filtered["PTP"].tolist()) == [45.0, 50.0]
+
+    def test_missing_subject_thresholds_raise(self, tmp_path):
+        """Providing a thresholds CSV without the current subject should fail."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = pd.DataFrame(
+            {
+                "Epoch": [0],
+                "ChanIdx": [0],
+                "Channel": ["E1"],
+                "PTP": [40.0],
+                "Frequency": [6.0],
+                "Slope": [1.0],
+            }
+        )
+        thr_path = tmp_path / "thresholds.csv"
+        pd.DataFrame(
+            {
+                "subject": ["99"],
+                "channel": ["E1"],
+                "ptp_threshold": [35.0],
+            }
+        ).to_csv(thr_path, index=False)
+
+        with pytest.raises(ValueError, match="No PTP thresholds found"):
+            sw_base._apply_dynamic_threshold(
+                sw_df,
+                freq_threshold=7.0,
+                artifact_threshold=75.0,
+                ptp_threshold_mode="adaptive",
+                ptp_percentile=90.0,
+                max_ptp_amplitude=150.0,
+                ptp_thresholds_path=str(thr_path),
+                subject_id="03",
+            )
 
 
 class TestSlowWavesDetectionAggregation:
