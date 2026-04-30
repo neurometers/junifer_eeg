@@ -585,7 +585,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
 
         keep_mask = sw_df.apply(
             lambda row: row["PTP"]
-            >= channel_thresholds.get(row["Channel"], np.inf),
+            > channel_thresholds.get(row["Channel"], np.inf),
             axis=1,
         )
         sw_df = sw_df[keep_mask].copy()
