@@ -5,7 +5,7 @@ Structure (2-file, matching kolmogorov_complexity_new):
 - slow_waves_detection.py: Main marker extending EEGEpochsMarker (this file)
 """
 
-from typing import Any, ClassVar, Optional, Tuple
+from typing import Any, ClassVar, Literal, Optional, Tuple
 
 from junifer.api.decorators import register_marker
 from junifer.utils import logger
@@ -22,7 +22,7 @@ __all__ = ["SlowWavesDetection"]
 
 @register_marker
 class SlowWavesDetection(EEGEpochsMarker):
-    """Sleep slow waves detection marker using YASA.
+    """Sleep slow waves detection marker using YASA or a custom detector.
 
     Detects slow waves in EEG data and returns the REQUESTED feature
     per epoch/channel. Uses singleton pattern with caching - multiple
@@ -41,8 +41,14 @@ class SlowWavesDetection(EEGEpochsMarker):
         - 'Frequency': Mean slow wave frequency per epoch/channel (Hz)
         - 'Slope': Mean slow wave slope per epoch/channel (µV/s)
         - 'Density': Count of slow waves per epoch/channel
+    detection_method : {"yasa", "custom"}, default="yasa"
+        Detection backend to use. ``"yasa"`` delegates detection to
+        :func:`yasa.sw_detect`. ``"custom"`` uses a zero-crossing detector
+        inspired by Andrillon et al. 2021.
     freq_sw : tuple of float, default=(0.3, 1.5)
-        Slow wave frequency range in Hz.
+        Slow wave frequency range in Hz. For ``detection_method="yasa"``
+        this is passed directly to YASA. For ``detection_method="custom"``,
+        it defines the band-pass used before zero-crossing detection.
     amp_ptp_initial : float, default=15.0
         Initial peak-to-peak amplitude threshold in µV.
     freq_threshold : float, default=7.0
@@ -83,7 +89,7 @@ class SlowWavesDetection(EEGEpochsMarker):
     ... )
     """
 
-    _DEPENDENCIES: ClassVar = {"mne", "yasa", "pandas", "numpy"}
+    _DEPENDENCIES: ClassVar = {"mne", "yasa", "pandas", "numpy", "scipy"}
     _MARKER_INOUT_MAPPINGS: ClassVar = {
         "EEG": {"slowwavesdetection": "timeseries"}
     }
@@ -91,6 +97,7 @@ class SlowWavesDetection(EEGEpochsMarker):
     def __init__(
         self,
         feature: str,
+        detection_method: Literal["yasa", "custom"] = "yasa",
         freq_sw: Tuple[float, float] = (0.3, 1.5),
         amp_ptp_initial: float = 15.0,
         freq_threshold: float = 7.0,
@@ -114,7 +121,14 @@ class SlowWavesDetection(EEGEpochsMarker):
                 f"{SLOW_WAVE_FEATURES}. Got: '{feature}'"
             )
 
+        if detection_method not in {"yasa", "custom"}:
+            raise ValueError(
+                "'detection_method' must be 'yasa' or 'custom'. "
+                f"Got: '{detection_method}'"
+            )
+
         self.feature = feature
+        self.detection_method = detection_method
         self.freq_sw = tuple(freq_sw)
         self.amp_ptp_initial = amp_ptp_initial
         self.freq_threshold = freq_threshold
@@ -160,6 +174,7 @@ class SlowWavesDetection(EEGEpochsMarker):
         sw_base = SlowWavesDetectionBase()
         all_features = sw_base.compute(
             data_obj,
+            self.detection_method,
             self.freq_sw,
             self.amp_ptp_initial,
             self.freq_threshold,

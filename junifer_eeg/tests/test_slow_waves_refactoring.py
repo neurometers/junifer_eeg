@@ -72,6 +72,13 @@ class TestSlowWavesDetectionMandatoryFeature:
         marker = SlowWavesDetection(feature=feature)
         assert marker.feature == feature
 
+    def test_invalid_detection_method_raises_error(self):
+        """Only the supported slow-wave backends should be accepted."""
+        with pytest.raises(ValueError, match="detection_method"):
+            SlowWavesDetection(
+                feature="Duration", detection_method="not_a_method"
+            )
+
 
 class TestSlowWavesDetectionFeatureComputation:
     """Test that all features can be computed correctly."""
@@ -89,6 +96,21 @@ class TestSlowWavesDetectionFeatureComputation:
         data = result["slowwavesdetection"]["data"]
 
         # Should return 2D array (n_epochs, n_channels)
+        assert data.shape == (5, 8), f"Expected (5, 8), got {data.shape}"
+        assert isinstance(data, np.ndarray)
+
+    def test_custom_method_computation(self, synthetic_sleep_epochs):
+        """The custom zero-crossing backend should also return 2D output."""
+        marker = SlowWavesDetection(
+            feature="Density",
+            detection_method="custom",
+            freq_sw=(1.0, 10.0),
+            channel_method=None,
+            trial_method=None,
+        )
+        result = marker.compute({"data": synthetic_sleep_epochs})
+        data = result["slowwavesdetection"]["data"]
+
         assert data.shape == (5, 8), f"Expected (5, 8), got {data.shape}"
         assert isinstance(data, np.ndarray)
 
@@ -154,6 +176,27 @@ class TestSlowWavesDetectionCaching:
         marker2.compute({"data": synthetic_sleep_epochs})
 
         # Cache should have grown
+        assert len(SlowWavesDetectionBase._cache) > initial_cache_size
+
+    def test_different_detection_method_new_cache_entry(
+        self, synthetic_sleep_epochs
+    ):
+        """Cache key should distinguish YASA from the custom backend."""
+        SlowWavesDetectionBase._cache.clear()
+
+        SlowWavesDetection(
+            feature="Duration",
+            detection_method="yasa",
+            freq_sw=(0.5, 4.0),
+        ).compute({"data": synthetic_sleep_epochs})
+        initial_cache_size = len(SlowWavesDetectionBase._cache)
+
+        SlowWavesDetection(
+            feature="Duration",
+            detection_method="custom",
+            freq_sw=(1.0, 10.0),
+        ).compute({"data": synthetic_sleep_epochs})
+
         assert len(SlowWavesDetectionBase._cache) > initial_cache_size
 
 

@@ -5,7 +5,7 @@ Structure (2-file, matching kolmogorov_complexity_new):
 - slow_waves_detection.py: Main marker extending EEGEpochsMarker
 """
 
-from typing import TYPE_CHECKING, ClassVar, Dict, Tuple
+from typing import TYPE_CHECKING, ClassVar, Dict, Literal, Tuple
 
 import numpy as np
 import pandas as pd
@@ -42,7 +42,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
     - Density: Count of slow waves per epoch/channel
     """
 
-    _DEPENDENCIES: ClassVar = {"numpy", "yasa", "pandas", "mne"}
+    _DEPENDENCIES: ClassVar = {"numpy", "yasa", "pandas", "mne", "scipy"}
 
     # Internal cache: {(epochs_id, params_tuple): {feature_name: array}}
     _cache: ClassVar[dict] = {}
@@ -59,6 +59,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
     def compute(
         self,
         epochs: "mne.Epochs",
+        detection_method: Literal["yasa", "custom"],
         freq_sw: Tuple[float, float],
         amp_ptp_initial: float,
         freq_threshold: float,
@@ -74,6 +75,8 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         ----------
         epochs : mne.Epochs
             MNE Epochs object (already filtered to desired channels).
+        detection_method : {"yasa", "custom"}
+            Detection backend to use.
         freq_sw : tuple of float
             Slow wave frequency range in Hz (fmin, fmax).
         amp_ptp_initial : float
@@ -94,6 +97,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         # Build cache key from hashable parameters
         cache_key = (
             id(epochs),
+            detection_method,
             freq_sw,
             amp_ptp_initial,
             freq_threshold,
@@ -108,12 +112,13 @@ class SlowWavesDetectionBase(metaclass=Singleton):
 
         logger.debug(
             f"SlowWaves cache miss: computing freq_sw={freq_sw}, "
-            f"amp_ptp={amp_ptp_initial}"
+            f"amp_ptp={amp_ptp_initial}, method={detection_method}"
         )
 
         # Perform actual computation
         features = self._detect_slow_waves(
             epochs,
+            detection_method,
             freq_sw,
             amp_ptp_initial,
             freq_threshold,
@@ -129,6 +134,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
     def _detect_slow_waves(
         self,
         epochs: "mne.Epochs",
+        detection_method: Literal["yasa", "custom"],
         freq_sw: Tuple[float, float],
         amp_ptp_initial: float,
         freq_threshold: float,
@@ -157,8 +163,6 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         features : dict of np.ndarray
             Dictionary with all computed features.
         """
-        import yasa
-
         # Make a copy to avoid modifying original data
         epochs_copy = epochs.copy()
 
@@ -204,35 +208,24 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         ch_names = epochs_copy.ch_names
         chan2idx = {ch: i for i, ch in enumerate(ch_names)}
 
-        # Collect all events from all epochs
-        all_events = []
-
-        # Process each epoch individually
-        for epoch_idx in range(len(epochs_copy)):
-            epoch_data = epochs_copy[epoch_idx].get_data()[0]
-
-            # Convert from volts to microvolts (YASA expects µV)
-            epoch_data_uV = epoch_data * 1e6
-
-            # Run YASA slow waves detection
-            res = yasa.sw_detect(
-                data=epoch_data_uV,
+        if detection_method == "yasa":
+            all_events = self._detect_with_yasa(
+                epochs_copy=epochs_copy,
                 sf=sf,
                 ch_names=ch_names,
+                chan2idx=chan2idx,
                 freq_sw=freq_sw,
-                amp_ptp=(amp_ptp_initial, np.inf),
-                coupling=False,
-                remove_outliers=False,
-                verbose=False,
+                amp_ptp_initial=amp_ptp_initial,
             )
-
-            # Collect events from this epoch
-            df = res.summary() if res is not None else None
-            if df is not None and len(df):
-                df = df.copy()
-                df["Epoch"] = epoch_idx
-                df["ChanIdx"] = df["Channel"].map(chan2idx)
-                all_events.append(df)
+        else:
+            all_events = self._detect_with_custom_method(
+                epochs_copy=epochs_copy,
+                sf=sf,
+                ch_names=ch_names,
+                chan2idx=chan2idx,
+                freq_sw=freq_sw,
+                amp_ptp_initial=amp_ptp_initial,
+            )
 
         # Combine all events from all epochs
         events_df = (
@@ -279,6 +272,172 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                     features["Density"][epoch_idx, chan_idx] = len(group)
 
         return features
+
+    def _detect_with_yasa(
+        self,
+        epochs_copy: "mne.Epochs",
+        sf: float,
+        ch_names: list[str],
+        chan2idx: Dict[str, int],
+        freq_sw: Tuple[float, float],
+        amp_ptp_initial: float,
+    ) -> list[pd.DataFrame]:
+        """Run the YASA backend epoch by epoch."""
+        import yasa
+
+        all_events = []
+        for epoch_idx in range(len(epochs_copy)):
+            epoch_data = epochs_copy[epoch_idx].get_data()[0]
+            epoch_data_uV = epoch_data * 1e6
+            res = yasa.sw_detect(
+                data=epoch_data_uV,
+                sf=sf,
+                ch_names=ch_names,
+                freq_sw=freq_sw,
+                amp_ptp=(amp_ptp_initial, np.inf),
+                coupling=False,
+                remove_outliers=False,
+                verbose=False,
+            )
+            df = res.summary() if res is not None else None
+            if df is not None and len(df):
+                df = df.copy()
+                df["Epoch"] = epoch_idx
+                df["ChanIdx"] = df["Channel"].map(chan2idx)
+                all_events.append(df)
+        return all_events
+
+    def _detect_with_custom_method(
+        self,
+        epochs_copy: "mne.Epochs",
+        sf: float,
+        ch_names: list[str],
+        chan2idx: Dict[str, int],
+        freq_sw: Tuple[float, float],
+        amp_ptp_initial: float,
+    ) -> list[pd.DataFrame]:
+        """Run a zero-crossing detector inspired by Andrillon et al. 2021."""
+        from scipy.signal import iirdesign, sosfiltfilt
+
+        all_events = []
+        wp = np.asarray(freq_sw, dtype=float)
+        if wp.shape != (2,):
+            raise ValueError(
+                f"freq_sw must be a length-2 tuple, got {freq_sw!r}"
+            )
+        ws = np.asarray(
+            [
+                max(0.01, wp[0] * 0.1),
+                min((sf / 2.0) - 0.5, max(wp[1] + 5.0, wp[1] * 1.5)),
+            ],
+            dtype=float,
+        )
+        if not (0 < ws[0] < wp[0] < wp[1] < ws[1] < (sf / 2.0)):
+            raise ValueError(
+                "Invalid custom slow-wave filter bounds derived from "
+                f"freq_sw={freq_sw} and sf={sf}"
+            )
+        sos = iirdesign(
+            wp=wp,
+            ws=ws,
+            gpass=3,
+            gstop=25,
+            ftype="cheby2",
+            output="sos",
+            fs=sf,
+        )
+
+        for epoch_idx in range(len(epochs_copy)):
+            epoch_data = epochs_copy[epoch_idx].get_data()[0]
+            epoch_data_uV = epoch_data * 1e6
+            filtered = sosfiltfilt(sos, epoch_data_uV, axis=-1)
+            events = []
+
+            for ch_idx, ch_name in enumerate(ch_names):
+                ch_events = self._detect_channel_zero_crossing(
+                    signal_uV=filtered[ch_idx],
+                    sf=sf,
+                    amp_ptp_initial=amp_ptp_initial,
+                    epoch_idx=epoch_idx,
+                    ch_name=ch_name,
+                    chan_idx=ch_idx,
+                )
+                if ch_events:
+                    events.extend(ch_events)
+
+            if events:
+                all_events.append(pd.DataFrame(events))
+
+        return all_events
+
+    def _detect_channel_zero_crossing(
+        self,
+        signal_uV: np.ndarray,
+        sf: float,
+        amp_ptp_initial: float,
+        epoch_idx: int,
+        ch_name: str,
+        chan_idx: int,
+    ) -> list[dict]:
+        """Detect zero-crossing slow waves on one channel."""
+        zero_crossings = np.where(np.diff(np.signbit(signal_uV)))[0]
+        if len(zero_crossings) < 3:
+            return []
+
+        events = []
+        for idx in range(len(zero_crossings) - 2):
+            start = zero_crossings[idx] + 1
+            mid = zero_crossings[idx + 1] + 1
+            end = zero_crossings[idx + 2] + 1
+            if not (start < mid < end):
+                continue
+
+            neg_segment = signal_uV[start:mid]
+            pos_segment = signal_uV[mid:end]
+            if neg_segment.size == 0 or pos_segment.size == 0:
+                continue
+
+            neg_rel = int(np.argmin(neg_segment))
+            neg_val = float(neg_segment[neg_rel])
+            if neg_val >= 0:
+                continue
+
+            pos_rel = int(np.argmax(pos_segment))
+            pos_val = float(pos_segment[pos_rel])
+            if pos_val <= 0:
+                continue
+
+            neg_idx = start + neg_rel
+            pos_idx = mid + pos_rel
+            duration = (end - start) / sf
+            if duration <= 0:
+                continue
+
+            ptp = pos_val - neg_val
+            if ptp < amp_ptp_initial:
+                continue
+
+            neg_to_pos = max((pos_idx - neg_idx) / sf, np.finfo(float).eps)
+            frequency = 1.0 / duration
+            slope = ptp / neg_to_pos
+
+            events.append(
+                {
+                    "Channel": ch_name,
+                    "Epoch": epoch_idx,
+                    "ChanIdx": chan_idx,
+                    "Start": start / sf,
+                    "End": end / sf,
+                    "Duration": duration,
+                    "NegPeak": neg_val,
+                    "PosPeak": pos_val,
+                    "PTP": ptp,
+                    "Frequency": frequency,
+                    "Slope": slope,
+                }
+            )
+
+        return events
 
     def _apply_dynamic_threshold(
         self,

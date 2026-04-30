@@ -2,7 +2,10 @@
 
 `junifer_eeg.markers.SlowWavesDetection`
 
-Detects **sleep slow waves** in EEG epochs using [YASA](https://raphaelvallat.com/yasa/build/html/index.html) and returns one requested feature per epoch and channel.
+Detects **sleep slow waves** in EEG epochs and returns one requested feature per epoch and channel. Two backends are available:
+
+- `detection_method: yasa` uses [YASA](https://raphaelvallat.com/yasa/build/html/index.html)
+- `detection_method: custom` uses a zero-crossing detector inspired by Andrillon et al. 2021
 
 Detection runs once per unique parameter set and epochs object. Uses a **singleton with internal caching** (`SlowWavesDetectionBase`): multiple `SlowWavesDetection` markers requesting different features on the same epochs with the same detection parameters will reuse the cached detection results.
 
@@ -13,7 +16,8 @@ Detection runs once per unique parameter set and epochs object. Uses a **singlet
 | Parameter             | Type                     | Default          | Description |
 |-----------------------|--------------------------|------------------|-------------|
 | `feature`             | `str`                    | **required**     | Feature to extract. Must be exactly one of: `"Duration"`, `"PTP"`, `"Frequency"`, `"Slope"`, `"Density"`. Raises `ValueError` at initialisation if missing or invalid. |
-| `freq_sw`             | `tuple of float`         | `(0.3, 1.5)`     | Slow wave frequency range in Hz `(fmin, fmax)` passed to YASA. |
+| `detection_method`    | `{"yasa", "custom"}`    | `"yasa"`         | Detection backend. |
+| `freq_sw`             | `tuple of float`         | `(0.3, 1.5)`     | Slow wave frequency range in Hz `(fmin, fmax)`. Passed to YASA for `detection_method="yasa"`; used as the custom band-pass for `detection_method="custom"`. |
 | `amp_ptp_initial`     | `float`                  | `15.0`           | Minimum peak-to-peak amplitude threshold in µV. YASA receives `amp_ptp=(amp_ptp_initial, inf)`. |
 | `freq_threshold`      | `float`                  | `7.0`            | Maximum frequency (Hz) used in post-detection filtering: detected waves with `Frequency > freq_threshold` are removed. |
 | `artifact_threshold`  | `float`                  | `75.0`           | Accepted as a parameter and included in the detection cache key. |
@@ -84,8 +88,9 @@ Aggregation is applied in **channel-then-trial** order.
 1. **EEG channel selection:** Non-EEG channels are dropped.
 2. **Re-referencing:** The mean signal of `reference_channels` is subtracted from all channels. If any reference channel is missing from the data or contains all-zero values, a warning is logged and the original unreferenced data is used instead. Re-referencing failures are caught and handled gracefully.
 3. **Per-epoch detection:** Each epoch is processed individually:
-   - Data is converted from volts to microvolts (YASA expects µV).
-   - YASA's `sw_detect` is called with `amp_ptp=(amp_ptp_initial, inf)`, `coupling=False`, `remove_outliers=False`.
+   - Data is converted from volts to microvolts.
+   - If `detection_method="yasa"`, YASA's `sw_detect` is called with `amp_ptp=(amp_ptp_initial, inf)`, `coupling=False`, `remove_outliers=False`.
+   - If `detection_method="custom"`, a Chebyshev type-II band-pass is applied and waves are built from successive zero-crossings around a negative trough followed by a positive rebound.
 4. **Post-detection filtering** (Andrillon & Pinggal criteria):
    - Waves with `Frequency > freq_threshold` are removed.
    - For each channel, the 90th percentile of PTP across all remaining detected waves is computed. Only waves with `PTP ≥` that channel-specific threshold are retained.
@@ -98,7 +103,7 @@ Aggregation is applied in **channel-then-trial** order.
 
 ### Caching
 
-`SlowWavesDetectionBase` is a **singleton** that caches detection results keyed by `(id(epochs), freq_sw, amp_ptp_initial, freq_threshold, artifact_threshold, reference_channels)`. The cache is valid as long as the epochs object remains in memory. All five features are computed and cached together in a single YASA run; subsequent markers requesting a different feature on the same epochs object simply look up the cache.
+`SlowWavesDetectionBase` is a **singleton** that caches detection results keyed by `(id(epochs), detection_method, freq_sw, amp_ptp_initial, freq_threshold, artifact_threshold, reference_channels)`. The cache is valid as long as the epochs object remains in memory. All five features are computed and cached together in a single detection run; subsequent markers requesting a different feature on the same epochs object simply look up the cache.
 
 ---
 
@@ -137,9 +142,10 @@ markers:
 markers:
   - kind: SlowWavesDetection
     feature: Duration
-    freq_sw: [0.5, 2.0]
+    detection_method: custom
+    freq_sw: [1.0, 10.0]
     amp_ptp_initial: 20.0
-    freq_threshold: 4.0
+    freq_threshold: 7.0
     channel_method: mean
     trial_method: mean
     name: sw_duration_collapsed
@@ -158,7 +164,7 @@ markers:
     name: sw_density
 ```
 
-When both markers share the same detection parameters, YASA runs only once.
+When both markers share the same detection parameters, the backend runs only once.
 
 ---
 
