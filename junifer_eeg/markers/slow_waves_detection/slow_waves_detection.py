@@ -68,6 +68,32 @@ class SlowWavesDetection(EEGEpochsMarker):
         Optional CSV with fixed per-subject, per-channel PTP thresholds.
         When provided, adaptive percentile computation is skipped and the CSV
         thresholds are applied instead.
+    ptp_thresholds_strict : bool, default=True
+        Behaviour when ``ptp_thresholds_path`` is set and the current
+        subject is not present in the CSV. ``True`` raises (preserves
+        previous behaviour). ``False`` logs a warning and emits empty
+        slow-wave results for the element so other markers in the same
+        MarkerCollection can still complete.
+    proximity_amplitude : float, optional
+        Opt-in (Pinggal 2022 / Andrillon 2021): if set, drop any wave whose
+        center falls within ``proximity_window`` seconds of a sample where
+        ``|filtered_signal| > proximity_amplitude`` (µV) on the same
+        epoch/channel. ``None`` (default) disables the rule.
+    proximity_window : float, default=1.0
+        Half-window in seconds for the proximity rule above. Only used when
+        ``proximity_amplitude`` is set.
+    filter_design : {"chebyshev2", "fir"}, default="chebyshev2"
+        Bandpass filter used by the custom detector and by the proximity
+        reference signal. ``"chebyshev2"`` keeps the previous Chebyshev II
+        IIR (default). ``"fir"`` uses an MNE zero-phase FIR (Le Coz 2025).
+    slope_uv_per_s_range : tuple of float, optional
+        Opt-in (Le Coz 2025): when set, drop any wave whose
+        ``AscendingSlope`` or ``DescendingSlope`` (µV/s, always emitted)
+        falls outside ``[lo, hi]``. ``None`` (default) disables the rule.
+    downsample_to : float, optional
+        Opt-in (Le Coz 2025): if set, resample the epochs to this sampling
+        frequency (Hz) before detection. ``None`` (default) leaves the
+        sampling frequency unchanged.
     reference_channels : tuple of str, default=("TP7", "TP8")
         Reference channel names for re-referencing.
     channel_method : str, optional
@@ -119,6 +145,12 @@ class SlowWavesDetection(EEGEpochsMarker):
         ptp_percentile: float = 90.0,
         max_ptp_amplitude: float = 150.0,
         ptp_thresholds_path: Optional[str] = None,
+        ptp_thresholds_strict: bool = True,
+        proximity_amplitude: Optional[float] = None,
+        proximity_window: float = 1.0,
+        filter_design: Literal["chebyshev2", "fir"] = "chebyshev2",
+        slope_uv_per_s_range: Optional[Tuple[float, float]] = None,
+        downsample_to: Optional[float] = None,
         reference_channels: Tuple[str, ...] = ("TP7", "TP8"),
         channel_method: Optional[str] = None,
         trial_method: Optional[str] = None,
@@ -148,6 +180,18 @@ class SlowWavesDetection(EEGEpochsMarker):
                 "'ptp_threshold_mode' must be 'adaptive' or 'fixed'. "
                 f"Got: '{ptp_threshold_mode}'"
             )
+        if filter_design not in {"chebyshev2", "fir"}:
+            raise ValueError(
+                "'filter_design' must be 'chebyshev2' or 'fir'. "
+                f"Got: '{filter_design}'"
+            )
+        if slope_uv_per_s_range is not None:
+            lo, hi = slope_uv_per_s_range
+            if not (lo < hi):
+                raise ValueError(
+                    "'slope_uv_per_s_range' must be (lo, hi) with lo < hi. "
+                    f"Got: {slope_uv_per_s_range}"
+                )
 
         self.feature = feature
         self.detection_method = detection_method
@@ -159,6 +203,16 @@ class SlowWavesDetection(EEGEpochsMarker):
         self.ptp_percentile = ptp_percentile
         self.max_ptp_amplitude = max_ptp_amplitude
         self.ptp_thresholds_path = ptp_thresholds_path
+        self.ptp_thresholds_strict = ptp_thresholds_strict
+        self.proximity_amplitude = proximity_amplitude
+        self.proximity_window = proximity_window
+        self.filter_design = filter_design
+        self.slope_uv_per_s_range = (
+            tuple(slope_uv_per_s_range)
+            if slope_uv_per_s_range is not None
+            else None
+        )
+        self.downsample_to = downsample_to
         self.reference_channels = tuple(reference_channels)
         self.channel_method = channel_method
         self.trial_method = trial_method
@@ -212,6 +266,12 @@ class SlowWavesDetection(EEGEpochsMarker):
             self.ptp_thresholds_path,
             subject_id,
             self.reference_channels,
+            proximity_amplitude=self.proximity_amplitude,
+            proximity_window=self.proximity_window,
+            ptp_thresholds_strict=self.ptp_thresholds_strict,
+            filter_design=self.filter_design,
+            slope_uv_per_s_range=self.slope_uv_per_s_range,
+            downsample_to=self.downsample_to,
         )
 
         # Extract the requested feature

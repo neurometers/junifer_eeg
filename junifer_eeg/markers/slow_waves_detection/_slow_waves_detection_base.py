@@ -86,6 +86,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         ptp_thresholds_path: str | None,
         subject_id: str | None,
         reference_channels: Tuple[str, ...],
+        proximity_amplitude: float | None = None,
+        proximity_window: float = 1.0,
+        ptp_thresholds_strict: bool = True,
+        filter_design: Literal["chebyshev2", "fir"] = "chebyshev2",
+        slope_uv_per_s_range: Tuple[float, float] | None = None,
+        downsample_to: float | None = None,
     ) -> Dict[str, np.ndarray]:
         """Compute slow wave detection with caching.
 
@@ -129,6 +135,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             ptp_thresholds_path,
             subject_id,
             reference_channels,
+            proximity_amplitude,
+            proximity_window,
+            ptp_thresholds_strict,
+            filter_design,
+            slope_uv_per_s_range,
+            downsample_to,
         )
 
         # Check cache first
@@ -155,6 +167,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             ptp_thresholds_path,
             subject_id,
             reference_channels,
+            proximity_amplitude,
+            proximity_window,
+            ptp_thresholds_strict,
+            filter_design,
+            slope_uv_per_s_range,
+            downsample_to,
         )
 
         # Store in cache
@@ -176,6 +194,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         ptp_thresholds_path: str | None,
         subject_id: str | None,
         reference_channels: Tuple[str, ...],
+        proximity_amplitude: float | None = None,
+        proximity_window: float = 1.0,
+        ptp_thresholds_strict: bool = True,
+        filter_design: Literal["chebyshev2", "fir"] = "chebyshev2",
+        slope_uv_per_s_range: Tuple[float, float] | None = None,
+        downsample_to: float | None = None,
     ) -> Dict[str, np.ndarray]:
         """Perform slow wave detection on epochs.
 
@@ -239,28 +263,37 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         except Exception as e:
             logger.warning(f"Re-referencing failed ({e}), using original data")
 
+        # Optional downsampling (Le Coz 2025) — opt-in, default disabled
+        if downsample_to is not None and downsample_to > 0:
+            current_sf = float(epochs_copy.info["sfreq"])
+            if downsample_to < current_sf:
+                epochs_copy.resample(downsample_to, npad="auto", verbose=False)
+
         # Get sampling frequency and channel info
         sf = epochs_copy.info["sfreq"]
         ch_names = epochs_copy.ch_names
         chan2idx = {ch: i for i, ch in enumerate(ch_names)}
 
         if detection_method == "yasa":
-            all_events = self._detect_with_yasa(
+            all_events, filtered_per_epoch = self._detect_with_yasa(
                 epochs_copy=epochs_copy,
                 sf=sf,
                 ch_names=ch_names,
                 chan2idx=chan2idx,
                 freq_sw=freq_sw,
                 amp_ptp_initial=amp_ptp_initial,
+                filter_design=filter_design,
+                need_filtered=proximity_amplitude is not None,
             )
         else:
-            all_events = self._detect_with_custom_method(
+            all_events, filtered_per_epoch = self._detect_with_custom_method(
                 epochs_copy=epochs_copy,
                 sf=sf,
                 ch_names=ch_names,
                 chan2idx=chan2idx,
                 freq_sw=freq_sw,
                 amp_ptp_initial=amp_ptp_initial,
+                filter_design=filter_design,
             )
 
         # Combine all events from all epochs
@@ -281,6 +314,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                 max_ptp_amplitude=max_ptp_amplitude,
                 ptp_thresholds_path=ptp_thresholds_path,
                 subject_id=subject_id,
+                proximity_amplitude=proximity_amplitude,
+                proximity_window=proximity_window,
+                ptp_thresholds_strict=ptp_thresholds_strict,
+                slope_uv_per_s_range=slope_uv_per_s_range,
+                filtered_per_epoch=filtered_per_epoch,
+                sf=sf,
             )
 
         # Get dimensions
@@ -324,14 +363,30 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         chan2idx: Dict[str, int],
         freq_sw: Tuple[float, float],
         amp_ptp_initial: float,
-    ) -> list[pd.DataFrame]:
-        """Run the YASA backend epoch by epoch."""
+        filter_design: Literal["chebyshev2", "fir"] = "chebyshev2",
+        need_filtered: bool = False,
+    ) -> Tuple[list[pd.DataFrame], Dict[int, np.ndarray]]:
+        """Run the YASA backend epoch by epoch.
+
+        Returns
+        -------
+        all_events : list of pd.DataFrame
+            One DataFrame per epoch with detected slow waves.
+        filtered_per_epoch : dict[int, np.ndarray]
+            Mapping epoch_idx → filtered signal in µV with shape
+            (n_channels, n_samples). Empty when ``need_filtered`` is False.
+        """
         import yasa
 
-        all_events = []
+        all_events: list[pd.DataFrame] = []
+        filtered_per_epoch: Dict[int, np.ndarray] = {}
         for epoch_idx in range(len(epochs_copy)):
             epoch_data = epochs_copy[epoch_idx].get_data()[0]
             epoch_data_uV = epoch_data * 1e6
+            if need_filtered:
+                filtered_per_epoch[epoch_idx] = self._bandpass_uv(
+                    epoch_data_uV, sf, freq_sw, filter_design
+                )
             res = yasa.sw_detect(
                 data=epoch_data_uV,
                 sf=sf,
@@ -347,8 +402,23 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                 df = df.copy()
                 df["Epoch"] = epoch_idx
                 df["ChanIdx"] = df["Channel"].map(chan2idx)
+                # Le Coz 2025 separable slopes — derived from YASA columns
+                # so the schema stays additive.
+                if {"Start", "NegPeak", "MidCrossing", "ValNegPeak"}.issubset(
+                    df.columns
+                ):
+                    desc_dt = (df["NegPeak"] - df["Start"]).replace(
+                        0.0, np.nan
+                    )
+                    asc_dt = (df["MidCrossing"] - df["NegPeak"]).replace(
+                        0.0, np.nan
+                    )
+                    df["DescendingSlope"] = (
+                        df["ValNegPeak"].abs() / desc_dt
+                    )
+                    df["AscendingSlope"] = df["ValNegPeak"].abs() / asc_dt
                 all_events.append(df)
-        return all_events
+        return all_events, filtered_per_epoch
 
     def _detect_with_custom_method(
         self,
@@ -358,16 +428,83 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         chan2idx: Dict[str, int],
         freq_sw: Tuple[float, float],
         amp_ptp_initial: float,
-    ) -> list[pd.DataFrame]:
-        """Run a zero-crossing detector inspired by Andrillon et al. 2021."""
-        from scipy.signal import iirdesign, sosfiltfilt
+        filter_design: Literal["chebyshev2", "fir"] = "chebyshev2",
+    ) -> Tuple[list[pd.DataFrame], Dict[int, np.ndarray]]:
+        """Run a zero-crossing detector inspired by Andrillon et al. 2021.
 
-        all_events = []
+        Returns
+        -------
+        all_events : list of pd.DataFrame
+        filtered_per_epoch : dict[int, np.ndarray]
+            Filtered signal in µV per epoch (n_channels, n_samples). Used
+            both for detection and for the optional proximity-to-artifact
+            rule downstream.
+        """
+        all_events: list[pd.DataFrame] = []
+        filtered_per_epoch: Dict[int, np.ndarray] = {}
+
+        for epoch_idx in range(len(epochs_copy)):
+            epoch_data = epochs_copy[epoch_idx].get_data()[0]
+            epoch_data_uV = epoch_data * 1e6
+            filtered = self._bandpass_uv(
+                epoch_data_uV, sf, freq_sw, filter_design
+            )
+            filtered_per_epoch[epoch_idx] = filtered
+            events = []
+
+            for ch_idx, ch_name in enumerate(ch_names):
+                ch_events = self._detect_channel_zero_crossing(
+                    signal_uV=filtered[ch_idx],
+                    sf=sf,
+                    amp_ptp_initial=amp_ptp_initial,
+                    epoch_idx=epoch_idx,
+                    ch_name=ch_name,
+                    chan_idx=ch_idx,
+                )
+                if ch_events:
+                    events.extend(ch_events)
+
+            if events:
+                all_events.append(pd.DataFrame(events))
+
+        return all_events, filtered_per_epoch
+
+    @staticmethod
+    def _bandpass_uv(
+        data_uV: np.ndarray,
+        sf: float,
+        freq_sw: Tuple[float, float],
+        filter_design: Literal["chebyshev2", "fir"],
+    ) -> np.ndarray:
+        """Bandpass-filter µV data in the slow-wave band.
+
+        ``"chebyshev2"`` (default) reproduces the previous behaviour
+        (scipy ``iirdesign`` Chebyshev II IIR + ``sosfiltfilt``).
+        ``"fir"`` uses ``mne.filter.filter_data`` zero-phase FIR
+        (Le Coz 2025).
+        """
         wp = np.asarray(freq_sw, dtype=float)
         if wp.shape != (2,):
             raise ValueError(
                 f"freq_sw must be a length-2 tuple, got {freq_sw!r}"
             )
+
+        if filter_design == "fir":
+            from mne.filter import filter_data
+
+            return filter_data(
+                data_uV.astype(np.float64, copy=False),
+                sfreq=sf,
+                l_freq=float(wp[0]),
+                h_freq=float(wp[1]),
+                method="fir",
+                phase="zero",
+                verbose=False,
+            )
+
+        # Default: Chebyshev II IIR (preserves pre-existing behaviour)
+        from scipy.signal import iirdesign, sosfiltfilt
+
         ws = np.asarray(
             [
                 max(0.01, wp[0] * 0.1),
@@ -389,29 +526,7 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             output="sos",
             fs=sf,
         )
-
-        for epoch_idx in range(len(epochs_copy)):
-            epoch_data = epochs_copy[epoch_idx].get_data()[0]
-            epoch_data_uV = epoch_data * 1e6
-            filtered = sosfiltfilt(sos, epoch_data_uV, axis=-1)
-            events = []
-
-            for ch_idx, ch_name in enumerate(ch_names):
-                ch_events = self._detect_channel_zero_crossing(
-                    signal_uV=filtered[ch_idx],
-                    sf=sf,
-                    amp_ptp_initial=amp_ptp_initial,
-                    epoch_idx=epoch_idx,
-                    ch_name=ch_name,
-                    chan_idx=ch_idx,
-                )
-                if ch_events:
-                    events.extend(ch_events)
-
-            if events:
-                all_events.append(pd.DataFrame(events))
-
-        return all_events
+        return sosfiltfilt(sos, data_uV, axis=-1)
 
     def _detect_channel_zero_crossing(
         self,
@@ -464,6 +579,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
             frequency = 1.0 / duration
             slope = ptp / neg_to_pos
 
+            # Le Coz 2025 separable slopes (always emitted; additive columns).
+            desc_dt = max((neg_idx - start) / sf, np.finfo(float).eps)
+            asc_dt = max((mid - neg_idx) / sf, np.finfo(float).eps)
+            descending_slope = abs(neg_val) / desc_dt
+            ascending_slope = abs(neg_val) / asc_dt
+
             events.append(
                 {
                     "Channel": ch_name,
@@ -471,12 +592,15 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                     "ChanIdx": chan_idx,
                     "Start": start / sf,
                     "End": end / sf,
+                    "MidCrossing": mid / sf,
                     "Duration": duration,
                     "ValNegPeak": neg_val,
                     "ValPosPeak": pos_val,
                     "PTP": ptp,
                     "Frequency": frequency,
                     "Slope": slope,
+                    "DescendingSlope": descending_slope,
+                    "AscendingSlope": ascending_slope,
                 }
             )
 
@@ -492,6 +616,12 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         max_ptp_amplitude: float,
         ptp_thresholds_path: str | None,
         subject_id: str | None,
+        proximity_amplitude: float | None = None,
+        proximity_window: float = 1.0,
+        ptp_thresholds_strict: bool = True,
+        slope_uv_per_s_range: Tuple[float, float] | None = None,
+        filtered_per_epoch: Dict[int, np.ndarray] | None = None,
+        sf: float | None = None,
     ) -> pd.DataFrame:
         """Apply dynamic thresholding and filtering to slow waves.
 
@@ -551,6 +681,46 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                 (sw_df[slope_col] >= 0.143) & (sw_df[slope_col] <= 2.0)
             ].copy()
 
+        if sw_df.empty:
+            return sw_df
+
+        # Rule 4b (opt-in, Le Coz 2025): drop waves whose ascending OR
+        # descending slope falls outside ``slope_uv_per_s_range``.
+        if slope_uv_per_s_range is not None and {
+            "AscendingSlope",
+            "DescendingSlope",
+        }.issubset(sw_df.columns):
+            lo, hi = float(slope_uv_per_s_range[0]), float(
+                slope_uv_per_s_range[1]
+            )
+            asc = sw_df["AscendingSlope"]
+            desc = sw_df["DescendingSlope"]
+            keep = (
+                asc.between(lo, hi, inclusive="both")
+                & desc.between(lo, hi, inclusive="both")
+            )
+            sw_df = sw_df[keep].copy()
+
+        if sw_df.empty:
+            return sw_df
+
+        # Rule 4c (opt-in, Pinggal 2022 / Andrillon 2021): drop waves whose
+        # center falls within ``proximity_window`` seconds of any sample where
+        # |filtered_signal| > proximity_amplitude on the same channel/epoch.
+        if (
+            proximity_amplitude is not None
+            and filtered_per_epoch
+            and sf
+            and sf > 0
+        ):
+            sw_df = self._apply_proximity_filter(
+                sw_df,
+                filtered_per_epoch=filtered_per_epoch,
+                sf=float(sf),
+                proximity_amplitude=float(proximity_amplitude),
+                proximity_window=float(proximity_window),
+            )
+
         if sw_df.empty or ptp_threshold_mode == "fixed":
             return sw_df
 
@@ -568,10 +738,17 @@ class SlowWavesDetectionBase(metaclass=Singleton):
                 .eq(normalized_subject)
             ]
             if thr_df.empty:
-                raise ValueError(
+                if ptp_thresholds_strict:
+                    raise ValueError(
+                        f"No PTP thresholds found for subject={subject_id} in "
+                        f"{ptp_thresholds_path}"
+                    )
+                logger.warning(
                     f"No PTP thresholds found for subject={subject_id} in "
-                    f"{ptp_thresholds_path}"
+                    f"{ptp_thresholds_path}; emitting empty slow-wave results "
+                    "for this element (ptp_thresholds_strict=False)."
                 )
+                return sw_df.iloc[0:0]
             channel_thresholds = dict(
                 zip(thr_df["channel"], thr_df["ptp_threshold"])
             )
@@ -591,3 +768,66 @@ class SlowWavesDetectionBase(metaclass=Singleton):
         sw_df = sw_df[keep_mask].copy()
 
         return sw_df
+
+    @staticmethod
+    def _apply_proximity_filter(
+        sw_df: pd.DataFrame,
+        filtered_per_epoch: Dict[int, np.ndarray],
+        sf: float,
+        proximity_amplitude: float,
+        proximity_window: float,
+    ) -> pd.DataFrame:
+        """Drop waves close to high-amplitude artifacts (Pinggal 2022).
+
+        For each (Epoch, ChanIdx), build an artifact mask where the absolute
+        value of the post-filter / post-reference signal in µV exceeds
+        ``proximity_amplitude``, dilate it by ``proximity_window`` seconds
+        on each side, and reject any wave whose center falls inside.
+        """
+        if sw_df.empty:
+            return sw_df
+
+        # Center used for proximity check: prefer MidCrossing when available,
+        # otherwise fall back to the midpoint of (Start, End).
+        if "MidCrossing" in sw_df.columns:
+            centers = sw_df["MidCrossing"].to_numpy()
+        else:
+            centers = (
+                sw_df["Start"].to_numpy() + sw_df["End"].to_numpy()
+            ) / 2.0
+
+        win_samples = max(1, int(round(proximity_window * sf)))
+        keep = np.ones(len(sw_df), dtype=bool)
+        epochs = sw_df["Epoch"].to_numpy()
+        chan_idxs = sw_df["ChanIdx"].to_numpy()
+
+        # Cache per-(epoch, channel) the dilated artifact mask
+        cache: Dict[tuple[int, int], np.ndarray] = {}
+        for i in range(len(sw_df)):
+            ep = int(epochs[i])
+            ch = int(chan_idxs[i])
+            sig = filtered_per_epoch.get(ep)
+            if sig is None or ch >= sig.shape[0]:
+                continue
+            mask_key = (ep, ch)
+            mask = cache.get(mask_key)
+            if mask is None:
+                base = np.abs(sig[ch]) > proximity_amplitude
+                if not base.any():
+                    cache[mask_key] = base
+                    continue
+                # Dilate ±win_samples via uniform_filter1d (boolean → bool)
+                from scipy.ndimage import maximum_filter1d
+
+                mask = maximum_filter1d(
+                    base.astype(np.uint8),
+                    size=2 * win_samples + 1,
+                    mode="nearest",
+                ).astype(bool)
+                cache[mask_key] = mask
+            n_samples = mask.shape[0]
+            sample = int(round(centers[i] * sf))
+            if 0 <= sample < n_samples and mask[sample]:
+                keep[i] = False
+
+        return sw_df[keep].copy()

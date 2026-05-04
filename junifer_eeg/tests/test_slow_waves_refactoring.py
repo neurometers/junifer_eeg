@@ -442,5 +442,242 @@ class TestSlowWavesDetectionFeatures:
             assert np.all(valid_dens >= 0), "Density should be non-negative"
 
 
+class TestSlowWavesDetectionOptInExtensions:
+    """Tests for opt-in extensions: proximity rule, strict flag, Le Coz support."""
+
+    @staticmethod
+    def _build_minimal_df():
+        """Two waves on the same epoch/channel at known centers."""
+        return pd.DataFrame(
+            {
+                "Epoch": [0, 0],
+                "ChanIdx": [0, 0],
+                "Channel": ["E1", "E1"],
+                "Start": [0.10, 1.20],
+                "End": [0.40, 1.50],
+                "MidCrossing": [0.20, 1.35],
+                "PTP": [30.0, 35.0],
+                "Frequency": [3.0, 3.0],
+                "Slope": [100.0, 110.0],
+                "AscendingSlope": [80.0, 60.0],
+                "DescendingSlope": [120.0, 90.0],
+            }
+        )
+
+    def test_default_behavior_unchanged_when_optins_absent(self):
+        """All new opt-in params default to None/False/identity values."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = self._build_minimal_df()
+
+        # Old call signature (no opt-in kwargs).
+        old = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="adaptive",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+        )
+        # Equivalent call passing all new kwargs at their documented defaults.
+        new = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="adaptive",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            proximity_amplitude=None,
+            proximity_window=1.0,
+            ptp_thresholds_strict=True,
+            slope_uv_per_s_range=None,
+            filtered_per_epoch=None,
+            sf=None,
+        )
+        pd.testing.assert_frame_equal(
+            old.reset_index(drop=True), new.reset_index(drop=True)
+        )
+
+    def test_proximity_rule_drops_waves_near_artifact(self):
+        """A wave whose center sits inside the artifact ±window is dropped."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = self._build_minimal_df()
+        sf = 100.0
+        n_samples = 200  # 0..2.0 s
+
+        # Inject a 200 µV spike at t=0.50 s (sample 50). Wave 1 (center=0.20 s)
+        # is >0.25 s away, so survives. Wave 2 (center=1.35 s) is also >0.25 s
+        # from the spike, so survives too. Use proximity_window=0.6 s to catch
+        # neither — then narrow the window and verify only the close wave goes.
+        sig = np.zeros((1, n_samples), dtype=float)
+        sig[0, 50] = 250.0  # large positive spike at 0.50 s
+        filtered_per_epoch = {0: sig}
+
+        # Window = 0.10 s → 0.50 ± 0.10 covers nothing near our centers.
+        keep_all = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="fixed",  # skip percentile to isolate effect
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            proximity_amplitude=150.0,
+            proximity_window=0.10,
+            filtered_per_epoch=filtered_per_epoch,
+            sf=sf,
+        )
+        assert len(keep_all) == 2
+
+        # Window = 0.40 s → 0.50 ± 0.40 = [0.10, 0.90] covers wave 1 (0.20 s).
+        keep_one = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="fixed",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            proximity_amplitude=150.0,
+            proximity_window=0.40,
+            filtered_per_epoch=filtered_per_epoch,
+            sf=sf,
+        )
+        assert len(keep_one) == 1
+        assert float(keep_one["MidCrossing"].iloc[0]) == pytest.approx(1.35)
+
+    def test_proximity_disabled_by_default(self):
+        """Without proximity_amplitude no waves are dropped even with artifacts."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = self._build_minimal_df()
+        sig = np.full((1, 200), 1000.0)  # huge artifact everywhere
+        out = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="fixed",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            filtered_per_epoch={0: sig},
+            sf=100.0,
+        )
+        assert len(out) == 2
+
+    def test_ptp_thresholds_strict_false_returns_empty(self, tmp_path):
+        """Non-strict mode warns and returns empty instead of raising."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = self._build_minimal_df()
+        thr_path = tmp_path / "thresholds.csv"
+        pd.DataFrame(
+            {
+                "subject": ["99"],
+                "channel": ["E1"],
+                "ptp_threshold": [35.0],
+            }
+        ).to_csv(thr_path, index=False)
+
+        out = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="adaptive",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=str(thr_path),
+            subject_id="03",
+            ptp_thresholds_strict=False,
+        )
+        assert out.empty
+        assert list(out.columns) == list(sw_df.columns)
+
+    def test_slope_range_filter_drops_out_of_range_waves(self):
+        """slope_uv_per_s_range drops waves whose slopes fall outside."""
+        sw_base = SlowWavesDetectionBase()
+        sw_df = self._build_minimal_df()
+        # AscendingSlope: [80, 60]; DescendingSlope: [120, 90]
+        # Range (70, 100) → wave 0 fails (Desc=120 > 100), wave 1 fails (Asc=60 < 70)
+        out = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="fixed",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            slope_uv_per_s_range=(70.0, 100.0),
+        )
+        assert out.empty
+
+        # Range (50, 130) → both waves pass
+        out2 = sw_base._apply_dynamic_threshold(
+            sw_df.copy(),
+            freq_threshold=7.0,
+            artifact_threshold=75.0,
+            ptp_threshold_mode="fixed",
+            ptp_percentile=90.0,
+            max_ptp_amplitude=150.0,
+            ptp_thresholds_path=None,
+            subject_id=None,
+            slope_uv_per_s_range=(50.0, 130.0),
+        )
+        assert len(out2) == 2
+
+    def test_custom_backend_emits_lecoz_columns(self, synthetic_sleep_epochs):
+        """The custom detector must emit MidCrossing + Asc/Desc slope columns."""
+        sw_base = SlowWavesDetectionBase()
+        epochs = synthetic_sleep_epochs.copy()
+        epochs._data -= epochs._data.mean(axis=1, keepdims=True)
+        all_events, filtered = sw_base._detect_with_custom_method(
+            epochs_copy=epochs,
+            sf=float(epochs.info["sfreq"]),
+            ch_names=list(epochs.ch_names),
+            chan2idx={ch: i for i, ch in enumerate(epochs.ch_names)},
+            freq_sw=(0.5, 4.0),
+            amp_ptp_initial=1.0,
+            filter_design="chebyshev2",
+        )
+        assert isinstance(filtered, dict)
+        assert all(
+            isinstance(v, np.ndarray) and v.ndim == 2
+            for v in filtered.values()
+        )
+        if all_events:
+            df = all_events[0]
+            for col in ("MidCrossing", "AscendingSlope", "DescendingSlope"):
+                assert col in df.columns
+
+    def test_filter_design_fir_changes_filtered_signal(
+        self, synthetic_sleep_epochs
+    ):
+        """FIR vs Chebyshev II should produce numerically different filtered signals."""
+        sw_base = SlowWavesDetectionBase()
+        sample = synthetic_sleep_epochs.get_data()[0] * 1e6
+        sf = float(synthetic_sleep_epochs.info["sfreq"])
+
+        cheby = sw_base._bandpass_uv(sample, sf, (0.5, 4.0), "chebyshev2")
+        fir = sw_base._bandpass_uv(sample, sf, (0.5, 4.0), "fir")
+        assert cheby.shape == fir.shape == sample.shape
+        # Different filter designs must not produce bit-identical outputs.
+        assert not np.allclose(cheby, fir)
+
+    def test_invalid_filter_design_raises(self):
+        with pytest.raises(ValueError, match="filter_design"):
+            SlowWavesDetection(feature="Density", filter_design="butter")
+
+    def test_invalid_slope_range_raises(self):
+        with pytest.raises(ValueError, match="slope_uv_per_s_range"):
+            SlowWavesDetection(
+                feature="Density", slope_uv_per_s_range=(2.0, 1.0)
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])
