@@ -679,5 +679,32 @@ class TestSlowWavesDetectionOptInExtensions:
             )
 
 
+class TestSlowWavesDetectionSubjectIdExtraction:
+    """Subject id is read from Junifer's canonical input['meta']['element']."""
+
+    def test_subject_id_read_from_input_meta_element(self):
+        """Regression: real datagrabbers populate input['meta']['element']."""
+        sid = SlowWavesDetection._extract_subject_id(
+            input={"data": object(), "meta": {"element": {"subject": "03"}}},
+            extra_input={},
+        )
+        assert sid == "03"
+
+    def test_subject_id_extra_input_fallback_still_works(self):
+        """Legacy/test code paths that pass element via extra_input."""
+        sid = SlowWavesDetection._extract_subject_id(
+            input={"data": object()},
+            extra_input={"element": {"subject": "07"}},
+        )
+        assert sid == "07"
+
+    def test_subject_id_input_meta_takes_precedence_over_extra_input(self):
+        sid = SlowWavesDetection._extract_subject_id(
+            input={"meta": {"element": {"subject": "from_meta"}}},
+            extra_input={"element": {"subject": "from_extra"}},
+        )
+        assert sid == "from_meta"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -249,7 +249,7 @@ class SlowWavesDetection(EEGEpochsMarker):
         # Filter to EEG channels only
         data_obj, _, _ = filter_to_eeg_channels(data_obj)
         ch_names = list(data_obj.ch_names)
-        subject_id = self._extract_subject_id(extra_input)
+        subject_id = self._extract_subject_id(input, extra_input)
 
         # Compute all features using singleton (with caching)
         sw_base = SlowWavesDetectionBase()
@@ -296,23 +296,36 @@ class SlowWavesDetection(EEGEpochsMarker):
 
     @staticmethod
     def _extract_subject_id(
+        input: Optional[dict[str, Any]],
         extra_input: Optional[dict[str, Any]],
     ) -> Optional[str]:
-        """Extract subject metadata from Junifer's extra_input structure."""
-        if not extra_input:
-            return None
+        """Extract subject metadata from Junifer's input/extra_input structure.
 
-        element = extra_input.get("element")
-        if isinstance(element, dict):
+        Junifer's canonical path is ``input["meta"]["element"]["subject"]``
+        (datagrabbers populate that). Legacy/test paths under ``extra_input``
+        are kept as fallbacks.
+        """
+        if isinstance(input, dict):
+            meta = input.get("meta")
+            if isinstance(meta, dict):
+                element = meta.get("element")
+                if isinstance(element, dict):
+                    for key in ("subject", "subject_id", "sub"):
+                        value = element.get(key)
+                        if value is not None:
+                            return str(value)
+
+        if extra_input:
+            element = extra_input.get("element")
+            if isinstance(element, dict):
+                for key in ("subject", "subject_id", "sub"):
+                    value = element.get(key)
+                    if value is not None:
+                        return str(value)
             for key in ("subject", "subject_id", "sub"):
-                value = element.get(key)
+                value = extra_input.get(key)
                 if value is not None:
                     return str(value)
-
-        for key in ("subject", "subject_id", "sub"):
-            value = extra_input.get(key)
-            if value is not None:
-                return str(value)
 
         return None
 
