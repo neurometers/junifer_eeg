@@ -251,5 +251,75 @@ class TestSpindlesDetectionOutputType:
         )
 
 
+class TestSpindlesDetectionDensityZeroSemantics:
+    """Density is a count: cells with no detected spindles must be 0, not NaN."""
+
+    @staticmethod
+    def _flat_epochs():
+        """Epochs with no detectable spindles on any (epoch, channel) cell."""
+        n_epochs, n_channels, n_times, sfreq = 3, 4, 1000, 250.0
+        data = np.zeros((n_epochs, n_channels, n_times))
+        ch_names = [f"E{i + 1}" for i in range(n_channels)]
+        info = create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+        events = np.array([[i * 1000, 0, 1] for i in range(n_epochs)])
+        return EpochsArray(data, info, events=events, tmin=0.0)
+
+    def test_density_is_zero_not_nan_when_no_spindles(self):
+        """Flat signal yields zero detections → Density=0 everywhere."""
+        SpindlesDetectionBase._cache.clear()
+        marker = SpindlesDetection(
+            feature="Density",
+            freq_sp=(11, 16),
+            freq_broad=(1, 30),
+            channel_method=None,
+            trial_method=None,
+        )
+        result = marker.compute({"data": self._flat_epochs()})
+        data = result["spindlesdetection"]["data"]
+
+        assert not np.any(np.isnan(data)), (
+            "Density returned NaN; should be 0 for cells with no detected spindles"
+        )
+        assert (data >= 0).all()
+        assert np.array_equal(data, data.astype(int))
+        assert np.all(data == 0)
+
+    def test_mean_features_remain_nan_when_no_spindles(self):
+        """Duration/Amplitude/Frequency are means; with no spindles they stay NaN."""
+        SpindlesDetectionBase._cache.clear()
+        epochs = self._flat_epochs()
+        for feature in ("Duration", "Amplitude", "Frequency"):
+            marker = SpindlesDetection(
+                feature=feature,
+                freq_sp=(11, 16),
+                freq_broad=(1, 30),
+                channel_method=None,
+                trial_method=None,
+            )
+            data = marker.compute({"data": epochs})["spindlesdetection"][
+                "data"
+            ]
+            assert np.all(np.isnan(data)), (
+                f"{feature}: expected all NaN with no detections, got {data}"
+            )
+
+    def test_density_no_nan_when_spindles_exist(self, synthetic_sleep_epochs):
+        """Where detections do exist, output must still be NaN-free integer counts."""
+        SpindlesDetectionBase._cache.clear()
+        marker = SpindlesDetection(
+            feature="Density",
+            freq_sp=(11, 16),
+            freq_broad=(1, 30),
+            channel_method=None,
+            trial_method=None,
+        )
+        data = marker.compute({"data": synthetic_sleep_epochs})[
+            "spindlesdetection"
+        ]["data"]
+        assert not np.any(np.isnan(data))
+        assert (data >= 0).all()
+        assert np.array_equal(data, data.astype(int))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -706,5 +706,94 @@ class TestSlowWavesDetectionSubjectIdExtraction:
         assert sid == "from_meta"
 
 
+class TestSlowWavesDetectionDensityZeroSemantics:
+    """Density is a count: cells with no detected waves must be 0, not NaN."""
+
+    @staticmethod
+    def _flat_epochs():
+        """Epochs with no detectable slow waves on any (epoch, channel) cell."""
+        n_epochs, n_channels, n_times, sfreq = 3, 4, 1000, 250.0
+        data = np.zeros((n_epochs, n_channels, n_times))
+        ch_names = [f"E{i + 1}" for i in range(n_channels)]
+        info = create_info(ch_names=ch_names, sfreq=sfreq, ch_types="eeg")
+        events = np.array([[i * 1000, 0, 1] for i in range(n_epochs)])
+        return EpochsArray(data, info, events=events, tmin=0.0)
+
+    def test_density_is_zero_not_nan_when_no_waves(self):
+        """Flat signal yields zero detections → Density=0 everywhere."""
+        SlowWavesDetectionBase._cache.clear()
+        marker = SlowWavesDetection(
+            feature="Density",
+            detection_method="custom",
+            freq_sw=(0.5, 4.0),
+            channel_method=None,
+            trial_method=None,
+        )
+        result = marker.compute({"data": self._flat_epochs()})
+        data = result["slowwavesdetection"]["data"]
+
+        assert not np.any(np.isnan(data)), (
+            "Density returned NaN; should be 0 for cells with no detected waves"
+        )
+        assert (data >= 0).all()
+        assert np.array_equal(data, data.astype(int))
+        assert np.all(data == 0)
+
+    def test_density_zero_yasa_backend(self):
+        """Same contract for the YASA backend."""
+        SlowWavesDetectionBase._cache.clear()
+        marker = SlowWavesDetection(
+            feature="Density",
+            detection_method="yasa",
+            freq_sw=(0.5, 4.0),
+            channel_method=None,
+            trial_method=None,
+        )
+        result = marker.compute({"data": self._flat_epochs()})
+        data = result["slowwavesdetection"]["data"]
+
+        assert not np.any(np.isnan(data))
+        assert np.all(data == 0)
+
+    def test_mean_features_remain_nan_when_no_waves(self):
+        """Duration/PTP/Frequency/Slope are means; with no waves they stay NaN."""
+        SlowWavesDetectionBase._cache.clear()
+        epochs = self._flat_epochs()
+        for feature in ("Duration", "PTP", "Frequency", "Slope"):
+            marker = SlowWavesDetection(
+                feature=feature,
+                detection_method="custom",
+                freq_sw=(0.5, 4.0),
+                channel_method=None,
+                trial_method=None,
+            )
+            data = marker.compute({"data": epochs})["slowwavesdetection"][
+                "data"
+            ]
+            assert np.all(np.isnan(data)), (
+                f"{feature}: expected all NaN with no detections, got {data}"
+            )
+
+    def test_density_count_matches_groups_when_waves_exist(
+        self, synthetic_sleep_epochs
+    ):
+        """The fix must not alter Density where detections do exist."""
+        SlowWavesDetectionBase._cache.clear()
+        marker = SlowWavesDetection(
+            feature="Density",
+            detection_method="custom",
+            freq_sw=(1.0, 10.0),
+            channel_method=None,
+            trial_method=None,
+        )
+        data = marker.compute({"data": synthetic_sleep_epochs})[
+            "slowwavesdetection"
+        ]["data"]
+        # No NaN anywhere now; all entries are non-negative integer counts.
+        assert not np.any(np.isnan(data))
+        assert (data >= 0).all()
+        assert np.array_equal(data, data.astype(int))
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

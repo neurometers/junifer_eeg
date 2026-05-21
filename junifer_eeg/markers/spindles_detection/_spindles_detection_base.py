@@ -262,12 +262,14 @@ class SpindlesDetectionBase(metaclass=Singleton):
         n_epochs = len(epochs_copy)
         n_channels = len(ch_names)
 
-        # Initialize feature arrays with NaN
+        # Means stay NaN when no spindles exist (mean of nothing is undefined).
+        # Density is a count: zero detections is 0, not missing. Upstream
+        # bad-channel/epoch rejection is responsible for true missingness.
         features = {
             "Duration": np.full((n_epochs, n_channels), np.nan),
             "Amplitude": np.full((n_epochs, n_channels), np.nan),
             "Frequency": np.full((n_epochs, n_channels), np.nan),
-            "Density": np.full((n_epochs, n_channels), np.nan),
+            "Density": np.zeros((n_epochs, n_channels)),
         }
 
         # Fill feature arrays
